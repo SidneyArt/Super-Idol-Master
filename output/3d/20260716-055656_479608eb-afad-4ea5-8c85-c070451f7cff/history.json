@@ -1,0 +1,1501 @@
+{
+  "prompt": [
+    86,
+    "479608eb-afad-4ea5-8c85-c070451f7cff",
+    {
+      "3": {
+        "inputs": {
+          "seed": [
+            "313",
+            0
+          ],
+          "steps": 12,
+          "cfg": 7.5,
+          "sampler_name": "euler",
+          "scheduler": "normal",
+          "denoise": 1.0,
+          "model": [
+            "108",
+            0
+          ],
+          "positive": [
+            "298",
+            0
+          ],
+          "negative": [
+            "298",
+            1
+          ],
+          "latent_image": [
+            "87",
+            0
+          ]
+        },
+        "class_type": "KSampler",
+        "_meta": {
+          "title": "K采样器"
+        }
+      },
+      "4": {
+        "inputs": {
+          "algorithm": "basic",
+          "threshold": 0.6,
+          "voxel": [
+            "119",
+            0
+          ]
+        },
+        "class_type": "VoxelToMesh",
+        "_meta": {
+          "title": "体素到网格"
+        }
+      },
+      "12": {
+        "inputs": {
+          "seed": [
+            "310",
+            1
+          ],
+          "steps": 12,
+          "cfg": 1.0,
+          "sampler_name": "euler",
+          "scheduler": "normal",
+          "denoise": 1.0,
+          "model": [
+            "40",
+            0
+          ],
+          "positive": [
+            "98",
+            0
+          ],
+          "negative": [
+            "98",
+            1
+          ],
+          "latent_image": [
+            "98",
+            2
+          ]
+        },
+        "class_type": "KSampler",
+        "_meta": {
+          "title": "K采样器"
+        }
+      },
+      "15": {
+        "inputs": {
+          "clip_name": "dino_v3_L_naf_fp32.safetensors"
+        },
+        "class_type": "CLIPVisionLoader",
+        "_meta": {
+          "title": "加载CLIP视觉"
+        }
+      },
+      "18": {
+        "inputs": {
+          "seed": [
+            "309",
+            0
+          ],
+          "steps": 20,
+          "cfg": 7.5,
+          "sampler_name": "euler",
+          "scheduler": "normal",
+          "denoise": 1.0,
+          "model": [
+            "126",
+            0
+          ],
+          "positive": [
+            "91",
+            0
+          ],
+          "negative": [
+            "91",
+            1
+          ],
+          "latent_image": [
+            "91",
+            2
+          ]
+        },
+        "class_type": "KSampler",
+        "_meta": {
+          "title": "K采样器"
+        }
+      },
+      "23": {
+        "inputs": {
+          "seed": [
+            "309",
+            0
+          ],
+          "steps": 12,
+          "cfg": 7.5,
+          "sampler_name": "euler",
+          "scheduler": "simple",
+          "denoise": 1.0,
+          "model": [
+            "126",
+            0
+          ],
+          "positive": [
+            "94",
+            0
+          ],
+          "negative": [
+            "94",
+            1
+          ],
+          "latent_image": [
+            "94",
+            2
+          ]
+        },
+        "class_type": "KSampler",
+        "_meta": {
+          "title": "K采样器"
+        }
+      },
+      "40": {
+        "inputs": {
+          "unet_name": "pixal3d_bf16.safetensors",
+          "weight_dtype": "default"
+        },
+        "class_type": "UNETLoader",
+        "_meta": {
+          "title": "UNet加载器"
+        }
+      },
+      "55": {
+        "inputs": {
+          "model_name": "moge-2-vitl-normal_fp16.safetensors"
+        },
+        "class_type": "LoadMoGeModel",
+        "_meta": {
+          "title": "加载 MoGe 模型"
+        }
+      },
+      "56": {
+        "inputs": {
+          "resolution_level": 9,
+          "fov_x_degrees": 0.0,
+          "batch_size": 4,
+          "force_projection": true,
+          "apply_mask": true,
+          "moge_model": [
+            "55",
+            0
+          ],
+          "image": [
+            "302",
+            0
+          ]
+        },
+        "class_type": "MoGeInference",
+        "_meta": {
+          "title": "MoGe 推理"
+        }
+      },
+      "87": {
+        "inputs": {
+          "batch_size": 1
+        },
+        "class_type": "EmptyTrellis2LatentStructure",
+        "_meta": {
+          "title": "EmptyTrellis2LatentStructure"
+        }
+      },
+      "91": {
+        "inputs": {
+          "positive": [
+            "298",
+            0
+          ],
+          "negative": [
+            "298",
+            1
+          ],
+          "voxel": [
+            "119",
+            0
+          ]
+        },
+        "class_type": "Trellis2ShapeStage",
+        "_meta": {
+          "title": "Trellis2ShapeStage"
+        }
+      },
+      "92": {
+        "inputs": {
+          "samples": [
+            "23",
+            0
+          ],
+          "vae": [
+            "117",
+            0
+          ]
+        },
+        "class_type": "VaeDecodeShapeTrellis",
+        "_meta": {
+          "title": "VaeDecodeShapeTrellis"
+        }
+      },
+      "93": {
+        "inputs": {
+          "samples": [
+            "12",
+            0
+          ],
+          "vae": [
+            "118",
+            0
+          ],
+          "shape_subdivides": [
+            "92",
+            1
+          ]
+        },
+        "class_type": "VaeDecodeTextureTrellis",
+        "_meta": {
+          "title": "VaeDecodeTextureTrellis"
+        }
+      },
+      "94": {
+        "inputs": {
+          "target_resolution": "1536",
+          "max_tokens": 49152,
+          "positive": [
+            "91",
+            0
+          ],
+          "negative": [
+            "91",
+            1
+          ],
+          "shape_latent": [
+            "18",
+            0
+          ],
+          "vae": [
+            "117",
+            0
+          ]
+        },
+        "class_type": "Trellis2UpsampleStage",
+        "_meta": {
+          "title": "Trellis2 Upsample Stage"
+        }
+      },
+      "98": {
+        "inputs": {
+          "positive": [
+            "94",
+            0
+          ],
+          "negative": [
+            "94",
+            1
+          ],
+          "shape_latent": [
+            "23",
+            0
+          ]
+        },
+        "class_type": "Trellis2TextureStage",
+        "_meta": {
+          "title": "Trellis2TextureStage"
+        }
+      },
+      "108": {
+        "inputs": {
+          "shift": 5.0,
+          "model": [
+            "125",
+            0
+          ]
+        },
+        "class_type": "ModelSamplingSD3",
+        "_meta": {
+          "title": "采样算法（SD3）"
+        }
+      },
+      "117": {
+        "inputs": {
+          "vae_name": "trellis_2_shape_vae_bf16.safetensors"
+        },
+        "class_type": "VAELoader",
+        "_meta": {
+          "title": "加载VAE"
+        }
+      },
+      "118": {
+        "inputs": {
+          "vae_name": "trellis_2_texture_vae_bf16.safetensors"
+        },
+        "class_type": "VAELoader",
+        "_meta": {
+          "title": "加载VAE"
+        }
+      },
+      "119": {
+        "inputs": {
+          "resolution": "32",
+          "samples": [
+            "3",
+            0
+          ],
+          "vae": [
+            "117",
+            0
+          ]
+        },
+        "class_type": "VaeDecodeStructureTrellis2",
+        "_meta": {
+          "title": "VaeDecodeStructureTrellis2"
+        }
+      },
+      "122": {
+        "inputs": {
+          "image": "node-60_01_Qwen-Image-2512_00028_.png"
+        },
+        "class_type": "LoadImage",
+        "_meta": {
+          "title": "加载图像"
+        }
+      },
+      "125": {
+        "inputs": {
+          "multiplier": 0.7,
+          "model": [
+            "199",
+            0
+          ]
+        },
+        "class_type": "RescaleCFG",
+        "_meta": {
+          "title": "缩放CFG"
+        }
+      },
+      "126": {
+        "inputs": {
+          "multiplier": 0.5,
+          "model": [
+            "279",
+            0
+          ]
+        },
+        "class_type": "RescaleCFG",
+        "_meta": {
+          "title": "缩放CFG"
+        }
+      },
+      "147": {
+        "inputs": {
+          "texture_size": [
+            "288",
+            0
+          ],
+          "mesh": [
+            "196",
+            0
+          ],
+          "voxel_colors": [
+            "93",
+            0
+          ],
+          "reference_mesh": [
+            "92",
+            0
+          ]
+        },
+        "class_type": "BakeTextureFromVoxel",
+        "_meta": {
+          "title": "Bake Texture From Voxel"
+        }
+      },
+      "164": {
+        "inputs": {
+          "images": [
+            "147",
+            0
+          ]
+        },
+        "class_type": "PreviewImage",
+        "_meta": {
+          "title": "预览图像"
+        }
+      },
+      "186": {
+        "inputs": {
+          "target_face_count": 700000,
+          "placement_mode": "midpoint",
+          "mesh": [
+            "241",
+            0
+          ]
+        },
+        "class_type": "DecimateMesh",
+        "_meta": {
+          "title": "Decimate Mesh"
+        }
+      },
+      "192": {
+        "inputs": {
+          "bg_removal_model": [
+            "193",
+            0
+          ],
+          "image": [
+            "122",
+            0
+          ]
+        },
+        "class_type": "RemoveBackground",
+        "_meta": {
+          "title": "移除背景"
+        }
+      },
+      "193": {
+        "inputs": {
+          "bg_removal_name": "birefnet.safetensors"
+        },
+        "class_type": "LoadBackgroundRemovalModel",
+        "_meta": {
+          "title": "加载背景移除模型"
+        }
+      },
+      "196": {
+        "inputs": {
+          "segmenter": "pec",
+          "resolution": [
+            "288",
+            0
+          ],
+          "padding": 1,
+          "weld_distance": 0.0002,
+          "mesh": [
+            "238",
+            0
+          ]
+        },
+        "class_type": "UnwrapMesh",
+        "_meta": {
+          "title": "Unwrap Mesh UVs"
+        }
+      },
+      "199": {
+        "inputs": {
+          "cfg": 1.0,
+          "start_percent": 0.667,
+          "end_percent": 1.0,
+          "model": [
+            "40",
+            0
+          ]
+        },
+        "class_type": "CFGOverride",
+        "_meta": {
+          "title": "CFG Override"
+        }
+      },
+      "202": {
+        "inputs": {
+          "mesh": [
+            "92",
+            0
+          ]
+        },
+        "class_type": "GetMeshInfo",
+        "_meta": {
+          "title": "Get Mesh Info"
+        }
+      },
+      "207": {
+        "inputs": {
+          "images": [
+            "147",
+            1
+          ]
+        },
+        "class_type": "PreviewImage",
+        "_meta": {
+          "title": "预览图像"
+        }
+      },
+      "208": {
+        "inputs": {
+          "images": [
+            "147",
+            2
+          ]
+        },
+        "class_type": "PreviewImage",
+        "_meta": {
+          "title": "预览图像"
+        }
+      },
+      "210": {
+        "inputs": {
+          "mesh": [
+            "196",
+            0
+          ],
+          "base_color": [
+            "147",
+            0
+          ],
+          "metallic": [
+            "147",
+            1
+          ],
+          "roughness": [
+            "147",
+            2
+          ]
+        },
+        "class_type": "ApplyTextureToMesh",
+        "_meta": {
+          "title": "Apply Texture to Mesh"
+        }
+      },
+      "238": {
+        "inputs": {
+          "crease_angle": 180.0,
+          "mesh": [
+            "186",
+            0
+          ]
+        },
+        "class_type": "MeshSmoothNormals",
+        "_meta": {
+          "title": "Smooth Mesh Normals"
+        }
+      },
+      "241": {
+        "inputs": {
+          "resolution": 768,
+          "sign_mode": "udf",
+          "sign_mode.qef": false,
+          "sign_mode.drop_inverted_components": false,
+          "sign_mode.drop_enclosed_components": false,
+          "band": 1.0,
+          "project_back": 0.0,
+          "fix_poles": false,
+          "smooth_iters": 20,
+          "drop_small_components": 0.01,
+          "precluster_max_verts": 20000000,
+          "mesh": [
+            "202",
+            0
+          ]
+        },
+        "class_type": "RemeshMesh",
+        "_meta": {
+          "title": "Remesh Mesh (Narrow-Band DC)"
+        }
+      },
+      "242": {
+        "inputs": {
+          "axis": "horizontal",
+          "unit": "degrees",
+          "moge_geometry": [
+            "56",
+            0
+          ]
+        },
+        "class_type": "MoGeGeometryToFOV",
+        "_meta": {
+          "title": "Get FoV from MoGe Geometry"
+        }
+      },
+      "246": {
+        "inputs": {
+          "viewport_state": {
+            "image": "",
+            "mask": "",
+            "normal": "",
+            "camera_info": {
+              "position": {
+                "x": 0.8192217374737438,
+                "y": -0.08500779385523252,
+                "z": 3.1193311150282903
+              },
+              "target": {
+                "x": -0.18539216968998096,
+                "y": -0.12940291071409174,
+                "z": 0.060075853302763965
+              },
+              "zoom": 1,
+              "cameraType": "perspective",
+              "quaternion": {
+                "x": -0.006806632959566013,
+                "y": 0.15797689660653294,
+                "z": 0.0010889916293618377,
+                "w": 0.9874187480413534
+              },
+              "fov": 35,
+              "aspect": null,
+              "near": 0.01,
+              "far": 10000,
+              "frustum": {
+                "left": -5,
+                "right": 5,
+                "top": 5,
+                "bottom": -5
+              }
+            },
+            "recording": "",
+            "model_3d_info": [
+              {
+                "position": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                },
+                "quaternion": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0,
+                  "w": 1
+                },
+                "scale": {
+                  "x": 1,
+                  "y": 1,
+                  "z": 1
+                }
+              }
+            ]
+          },
+          "width": 1024,
+          "height": 1024,
+          "model_3d": [
+            "247",
+            0
+          ]
+        },
+        "class_type": "Preview3DAdvanced",
+        "_meta": {
+          "title": "Preview 3D (Advanced)"
+        }
+      },
+      "247": {
+        "inputs": {
+          "mesh": [
+            "4",
+            0
+          ]
+        },
+        "class_type": "MeshToFile3D",
+        "_meta": {
+          "title": "Create 3D File (from Mesh)"
+        }
+      },
+      "248": {
+        "inputs": {
+          "switch": true,
+          "on_false": [
+            "122",
+            1
+          ],
+          "on_true": [
+            "192",
+            0
+          ]
+        },
+        "class_type": "ComfySwitchNode",
+        "_meta": {
+          "title": "Switch: Remove background"
+        }
+      },
+      "252": {
+        "inputs": {
+          "mesh": [
+            "238",
+            0
+          ],
+          "voxel_colors": [
+            "93",
+            0
+          ]
+        },
+        "class_type": "PaintMesh",
+        "_meta": {
+          "title": "Paint Mesh"
+        }
+      },
+      "260": {
+        "inputs": {
+          "crease_angle": 180.0,
+          "mesh": [
+            "210",
+            0
+          ]
+        },
+        "class_type": "MeshSmoothNormals",
+        "_meta": {
+          "title": "Smooth Mesh Normals"
+        }
+      },
+      "261": {
+        "inputs": {
+          "resolution": 1024,
+          "mesh": [
+            "196",
+            0
+          ]
+        },
+        "class_type": "RenderUVAtlas",
+        "_meta": {
+          "title": "Render UV Atlas"
+        }
+      },
+      "262": {
+        "inputs": {
+          "images": [
+            "261",
+            0
+          ]
+        },
+        "class_type": "PreviewImage",
+        "_meta": {
+          "title": "预览图像"
+        }
+      },
+      "279": {
+        "inputs": {
+          "cfg": 1.0,
+          "start_percent": 0.769,
+          "end_percent": 1.0,
+          "model": [
+            "40",
+            0
+          ]
+        },
+        "class_type": "CFGOverride",
+        "_meta": {
+          "title": "CFG Override"
+        }
+      },
+      "281": {
+        "inputs": {
+          "images": [
+            "290",
+            0
+          ]
+        },
+        "class_type": "PreviewImage",
+        "_meta": {
+          "title": "预览图像"
+        }
+      },
+      "282": {
+        "inputs": {
+          "mesh": [
+            "252",
+            0
+          ]
+        },
+        "class_type": "MeshToFile3D",
+        "_meta": {
+          "title": "Create 3D File (from Mesh)"
+        }
+      },
+      "283": {
+        "inputs": {
+          "viewport_state": {
+            "image": "",
+            "mask": "",
+            "normal": "",
+            "camera_info": {
+              "position": {
+                "x": 0.8829118385870891,
+                "y": 0.034970490908929716,
+                "z": 2.0322080588054936
+              },
+              "target": {
+                "x": 0.0045739282751259824,
+                "y": -0.03639551403905357,
+                "z": -0.0581791941069706
+              },
+              "zoom": 1,
+              "cameraType": "perspective",
+              "quaternion": {
+                "x": -0.015421301420743275,
+                "y": 0.19755716995056005,
+                "z": 0.003108240198225276,
+                "w": 0.9801651324682419
+              },
+              "fov": 35,
+              "aspect": null,
+              "near": 0.01,
+              "far": 10000,
+              "frustum": {
+                "left": -5,
+                "right": 5,
+                "top": 5,
+                "bottom": -5
+              }
+            },
+            "recording": "",
+            "model_3d_info": [
+              {
+                "position": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                },
+                "quaternion": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0,
+                  "w": 1
+                },
+                "scale": {
+                  "x": 1,
+                  "y": 1,
+                  "z": 1
+                }
+              }
+            ]
+          },
+          "width": 1024,
+          "height": 1024,
+          "model_3d": [
+            "282",
+            0
+          ]
+        },
+        "class_type": "Preview3DAdvanced",
+        "_meta": {
+          "title": "Preview 3D (Advanced)"
+        }
+      },
+      "284": {
+        "inputs": {
+          "viewport_state": {
+            "image": "",
+            "mask": "",
+            "normal": "",
+            "camera_info": {
+              "position": {
+                "x": -0.02411517059364579,
+                "y": 0.2557532969273826,
+                "z": 2.0306249774216734
+              },
+              "target": {
+                "x": -0.019855945145766527,
+                "y": 0.03846895683855522,
+                "z": -0.028533167725313762
+              },
+              "zoom": 1,
+              "cameraType": "perspective",
+              "quaternion": {
+                "x": -0.05254160895901152,
+                "y": -0.0010327850514001587,
+                "z": -5.433927430885127e-05,
+                "w": 0.9986182001797681
+              },
+              "fov": 35,
+              "aspect": null,
+              "near": 0.01,
+              "far": 10000,
+              "frustum": {
+                "left": -5,
+                "right": 5,
+                "top": 5,
+                "bottom": -5
+              }
+            },
+            "recording": "",
+            "model_3d_info": [
+              {
+                "position": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0
+                },
+                "quaternion": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0,
+                  "w": 1
+                },
+                "scale": {
+                  "x": 1,
+                  "y": 1,
+                  "z": 1
+                }
+              }
+            ]
+          },
+          "width": 1024,
+          "height": 1024,
+          "model_3d": [
+            "285",
+            0
+          ]
+        },
+        "class_type": "Preview3DAdvanced",
+        "_meta": {
+          "title": "Preview 3D (Advanced)"
+        }
+      },
+      "285": {
+        "inputs": {
+          "mesh": [
+            "260",
+            0
+          ]
+        },
+        "class_type": "MeshToFile3D",
+        "_meta": {
+          "title": "Create 3D File (from Mesh)"
+        }
+      },
+      "288": {
+        "inputs": {
+          "value": 4096
+        },
+        "class_type": "PrimitiveInt",
+        "_meta": {
+          "title": "texture size"
+        }
+      },
+      "290": {
+        "inputs": {
+          "mode": "texture",
+          "width": 1024,
+          "height": 1024,
+          "background": "#000000",
+          "mesh": [
+            "260",
+            0
+          ],
+          "camera_info": [
+            "283",
+            2
+          ]
+        },
+        "class_type": "RenderMesh",
+        "_meta": {
+          "title": "Render Mesh"
+        }
+      },
+      "298": {
+        "inputs": {
+          "camera_angle_x": [
+            "242",
+            0
+          ],
+          "clip_vision_model": [
+            "15",
+            0
+          ],
+          "image": [
+            "302",
+            0
+          ]
+        },
+        "class_type": "Pixal3DConditioning",
+        "_meta": {
+          "title": "Pixal3DConditioning"
+        }
+      },
+      "301": {
+        "inputs": {
+          "source": [
+            "242",
+            0
+          ]
+        },
+        "class_type": "PreviewAny",
+        "_meta": {
+          "title": "预览任意"
+        }
+      },
+      "302": {
+        "inputs": {
+          "images": [
+            "305",
+            0
+          ]
+        },
+        "class_type": "PreviewImage",
+        "_meta": {
+          "title": "预览图像"
+        }
+      },
+      "303": {
+        "inputs": {
+          "mask": [
+            "248",
+            0
+          ]
+        },
+        "class_type": "MaskPreview",
+        "_meta": {
+          "title": "预览遮罩"
+        }
+      },
+      "305": {
+        "inputs": {
+          "width": 1024,
+          "height": 1024,
+          "pad_factor": 1.1,
+          "mask_offset": 0,
+          "background": "#000000",
+          "image": [
+            "122",
+            0
+          ],
+          "mask": [
+            "248",
+            0
+          ]
+        },
+        "class_type": "ImageCropToMask",
+        "_meta": {
+          "title": "Image Crop to Mask"
+        }
+      },
+      "308": {
+        "inputs": {
+          "filename_prefix": "3d/pixal3d",
+          "image": "",
+          "mesh": [
+            "284",
+            0
+          ]
+        },
+        "class_type": "SaveGLB",
+        "_meta": {
+          "title": "保存GLB"
+        }
+      },
+      "309": {
+        "inputs": {
+          "seed": 2948923776
+        },
+        "class_type": "SeedNode",
+        "_meta": {
+          "title": "Seed"
+        }
+      },
+      "310": {
+        "inputs": {
+          "expression": "a + b",
+          "values.a": [
+            "309",
+            0
+          ],
+          "values.b": [
+            "312",
+            0
+          ]
+        },
+        "class_type": "ComfyMathExpression",
+        "_meta": {
+          "title": "数学表达式"
+        }
+      },
+      "312": {
+        "inputs": {
+          "value": 1
+        },
+        "class_type": "PrimitiveInt",
+        "_meta": {
+          "title": "整数"
+        }
+      },
+      "313": {
+        "inputs": {
+          "seed": 2948923778
+        },
+        "class_type": "SeedNode",
+        "_meta": {
+          "title": "Seed"
+        }
+      }
+    },
+    {
+      "create_time": 1784152459747
+    },
+    [
+      "208",
+      "246",
+      "164",
+      "284",
+      "303",
+      "283",
+      "308",
+      "281",
+      "262",
+      "302",
+      "301",
+      "207"
+    ]
+  ],
+  "outputs": {
+    "303": {
+      "images": [
+        {
+          "filename": "ComfyUI_temp_vznlt_00001_.png",
+          "subfolder": "",
+          "type": "temp"
+        }
+      ],
+      "animated": [
+        false
+      ]
+    },
+    "302": {
+      "images": [
+        {
+          "filename": "ComfyUI_temp_oprie_00001_.png",
+          "subfolder": "",
+          "type": "temp"
+        }
+      ]
+    },
+    "301": {
+      "text": [
+        "33.97485685151973"
+      ]
+    },
+    "246": {
+      "result": [
+        "preview3d_advanced_ab159fcb81ca429985a3861b2f313ac1.glb",
+        {
+          "position": {
+            "x": 0.8192217374737438,
+            "y": -0.08500779385523252,
+            "z": 3.1193311150282903
+          },
+          "target": {
+            "x": -0.18539216968998096,
+            "y": -0.12940291071409174,
+            "z": 0.060075853302763965
+          },
+          "zoom": 1,
+          "cameraType": "perspective",
+          "quaternion": {
+            "x": -0.006806632959566013,
+            "y": 0.15797689660653294,
+            "z": 0.0010889916293618377,
+            "w": 0.9874187480413534
+          },
+          "fov": 35,
+          "aspect": null,
+          "near": 0.01,
+          "far": 10000,
+          "frustum": {
+            "left": -5,
+            "right": 5,
+            "top": 5,
+            "bottom": -5
+          }
+        },
+        [
+          {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "quaternion": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          }
+        ]
+      ]
+    },
+    "202": {
+      "text": [
+        "Vertices:   4,193,200 (4.19M)\nFaces:      8,420,576 (8.42M)\nAttributes: none"
+      ]
+    },
+    "208": {
+      "images": [
+        {
+          "filename": "ComfyUI_temp_zffet_00001_.png",
+          "subfolder": "",
+          "type": "temp"
+        }
+      ]
+    },
+    "164": {
+      "images": [
+        {
+          "filename": "ComfyUI_temp_lyjlk_00001_.png",
+          "subfolder": "",
+          "type": "temp"
+        }
+      ]
+    },
+    "207": {
+      "images": [
+        {
+          "filename": "ComfyUI_temp_jcvxq_00001_.png",
+          "subfolder": "",
+          "type": "temp"
+        }
+      ]
+    },
+    "262": {
+      "images": [
+        {
+          "filename": "ComfyUI_temp_uttbu_00001_.png",
+          "subfolder": "",
+          "type": "temp"
+        }
+      ]
+    },
+    "283": {
+      "result": [
+        "preview3d_advanced_bb87937af22e4ef29856a3e905db923b.glb",
+        {
+          "position": {
+            "x": 0.8829118385870891,
+            "y": 0.034970490908929716,
+            "z": 2.0322080588054936
+          },
+          "target": {
+            "x": 0.0045739282751259824,
+            "y": -0.03639551403905357,
+            "z": -0.0581791941069706
+          },
+          "zoom": 1,
+          "cameraType": "perspective",
+          "quaternion": {
+            "x": -0.015421301420743275,
+            "y": 0.19755716995056005,
+            "z": 0.003108240198225276,
+            "w": 0.9801651324682419
+          },
+          "fov": 35,
+          "aspect": null,
+          "near": 0.01,
+          "far": 10000,
+          "frustum": {
+            "left": -5,
+            "right": 5,
+            "top": 5,
+            "bottom": -5
+          }
+        },
+        [
+          {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "quaternion": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          }
+        ]
+      ]
+    },
+    "284": {
+      "result": [
+        "preview3d_advanced_d1bd3a651065437a844fe986f8278b3c.glb",
+        {
+          "position": {
+            "x": -0.02411517059364579,
+            "y": 0.2557532969273826,
+            "z": 2.0306249774216734
+          },
+          "target": {
+            "x": -0.019855945145766527,
+            "y": 0.03846895683855522,
+            "z": -0.028533167725313762
+          },
+          "zoom": 1,
+          "cameraType": "perspective",
+          "quaternion": {
+            "x": -0.05254160895901152,
+            "y": -0.0010327850514001587,
+            "z": -5.433927430885127e-05,
+            "w": 0.9986182001797681
+          },
+          "fov": 35,
+          "aspect": null,
+          "near": 0.01,
+          "far": 10000,
+          "frustum": {
+            "left": -5,
+            "right": 5,
+            "top": 5,
+            "bottom": -5
+          }
+        },
+        [
+          {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "quaternion": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          }
+        ]
+      ]
+    },
+    "308": {
+      "3d": [
+        {
+          "filename": "pixal3d_00018_.glb",
+          "subfolder": "3d",
+          "type": "output"
+        }
+      ]
+    },
+    "281": {
+      "images": [
+        {
+          "filename": "ComfyUI_temp_avcih_00001_.png",
+          "subfolder": "",
+          "type": "temp"
+        }
+      ]
+    }
+  },
+  "status": {
+    "status_str": "success",
+    "completed": true,
+    "messages": [
+      [
+        "execution_start",
+        {
+          "prompt_id": "479608eb-afad-4ea5-8c85-c070451f7cff",
+          "timestamp": 1784152459749
+        }
+      ],
+      [
+        "execution_cached",
+        {
+          "nodes": [],
+          "prompt_id": "479608eb-afad-4ea5-8c85-c070451f7cff",
+          "timestamp": 1784152459769
+        }
+      ],
+      [
+        "execution_success",
+        {
+          "prompt_id": "479608eb-afad-4ea5-8c85-c070451f7cff",
+          "timestamp": 1784152610576
+        }
+      ]
+    ]
+  },
+  "meta": {
+    "303": {
+      "node_id": "303",
+      "display_node": "303",
+      "parent_node": null,
+      "real_node_id": "303"
+    },
+    "302": {
+      "node_id": "302",
+      "display_node": "302",
+      "parent_node": null,
+      "real_node_id": "302"
+    },
+    "301": {
+      "node_id": "301",
+      "display_node": "301",
+      "parent_node": null,
+      "real_node_id": "301"
+    },
+    "246": {
+      "node_id": "246",
+      "display_node": "246",
+      "parent_node": null,
+      "real_node_id": "246"
+    },
+    "202": {
+      "node_id": "202",
+      "display_node": "202",
+      "parent_node": null,
+      "real_node_id": "202"
+    },
+    "208": {
+      "node_id": "208",
+      "display_node": "208",
+      "parent_node": null,
+      "real_node_id": "208"
+    },
+    "164": {
+      "node_id": "164",
+      "display_node": "164",
+      "parent_node": null,
+      "real_node_id": "164"
+    },
+    "207": {
+      "node_id": "207",
+      "display_node": "207",
+      "parent_node": null,
+      "real_node_id": "207"
+    },
+    "262": {
+      "node_id": "262",
+      "display_node": "262",
+      "parent_node": null,
+      "real_node_id": "262"
+    },
+    "283": {
+      "node_id": "283",
+      "display_node": "283",
+      "parent_node": null,
+      "real_node_id": "283"
+    },
+    "284": {
+      "node_id": "284",
+      "display_node": "284",
+      "parent_node": null,
+      "real_node_id": "284"
+    },
+    "308": {
+      "node_id": "308",
+      "display_node": "308",
+      "parent_node": null,
+      "real_node_id": "308"
+    },
+    "281": {
+      "node_id": "281",
+      "display_node": "281",
+      "parent_node": null,
+      "real_node_id": "281"
+    }
+  }
+}

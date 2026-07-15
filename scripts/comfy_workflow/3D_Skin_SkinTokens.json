@@ -1,0 +1,158 @@
+{
+  "23": {
+    "inputs": {
+      "mesh_path": "/home/sidney/comfy/ComfyUI/output/3d/pixal3d_00002_.glb"
+    },
+    "class_type": "SkinTokensLoadMesh",
+    "_meta": {
+      "title": "Load SkinTokens Mesh"
+    }
+  },
+  "24": {
+    "inputs": {
+      "top_k": 5,
+      "top_p": 0.95,
+      "temperature": 1,
+      "repetition_penalty": 2,
+      "num_beams": 10,
+      "use_skeleton": false,
+      "use_transfer": true,
+      "use_postprocess": true,
+      "bone_names": "mixamo",
+      "output_format": ".glb",
+      "bpy_server_mode": "Headless (Blender)",
+      "model": [
+        "25",
+        0
+      ],
+      "input_mesh": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "SkinTokensGenerator",
+    "_meta": {
+      "title": "SkinTokens Rig Generator"
+    }
+  },
+  "25": {
+    "inputs": {
+      "model_name": "experiments/articulation_xl_quantization_256_token_4/grpo_1400.ckpt"
+    },
+    "class_type": "SkinTokensModelLoader",
+    "_meta": {
+      "title": "Load SkinTokens Model"
+    }
+  },
+  "27": {
+    "inputs": {
+      "model_file": "3d/pixal3d_00001_.glb",
+      "viewport_state": {
+        "camera_info": {
+          "position": {
+            "x": 0.379570081140306,
+            "y": 0.18518228389507851,
+            "z": 0.03694817940074452
+          },
+          "target": {
+            "x": 0.3376533244544022,
+            "y": 0.22741017544403022,
+            "z": -0.2609668262602155
+          },
+          "zoom": 1,
+          "cameraType": "perspective",
+          "quaternion": {
+            "x": 0.06949901795979749,
+            "y": 0.06966482535675501,
+            "z": -0.004865308239782117,
+            "w": 0.9951346780141714
+          },
+          "fov": 35,
+          "aspect": 1,
+          "near": 0.01,
+          "far": 10000,
+          "frustum": {
+            "left": -5,
+            "right": 5,
+            "top": 5,
+            "bottom": -5
+          }
+        },
+        "model_3d_info": [
+          {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "quaternion": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            }
+          }
+        ]
+      },
+      "width": 1024,
+      "height": 1024
+    },
+    "class_type": "Load3DAdvanced",
+    "_meta": {
+      "title": "Load 3D (Advanced)"
+    }
+  },
+  "28": {
+    "inputs": {
+      "source": [
+        "27",
+        1
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "预览任意"
+    }
+  },
+  "29": {
+    "inputs": {
+      "source": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "预览任意"
+    }
+  },
+  "30": {
+    "inputs": {
+      "mesh_path": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "SkinTokensRigPreviewer",
+    "_meta": {
+      "title": "SkinTokens Rig Previewer"
+    }
+  },
+  "31": {
+    "inputs": {
+      "source": [
+        "30",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "预览任意"
+    }
+  }
+}
