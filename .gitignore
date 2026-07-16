@@ -1,0 +1,13 @@
+# Generated ComfyUI workflow outputs
+/output/
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
