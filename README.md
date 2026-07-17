@@ -33,7 +33,7 @@ python -m pip install -r scripts/comfy_workflow/requirements.txt
 
 ```bash
 python scripts/comfy_workflow/run_2d_generation.py \
-  --positive "美式3d卡通，严格的T-Pose，全身出镜，纯白背景" \
+  --positive "美式3d卡通，1个3d女性角色，Ninjala风格，任天堂风格，潮流配色，(严格正视图:1.3)，完全正对镜头，(严格的T-Pose:1.3)，双臂水平伸展，全身出镜，纯白色背景，极简服装设计，纯净模型，1:1比例，高品质，杰作" \
   --negative "低分辨率，肢体畸形，画面过饱和"
 ```
 
@@ -68,7 +68,7 @@ python scripts/comfy_workflow/run_3d_skinning.py path/to/model.glb
 
 ```bash
 python scripts/comfy_workflow/run_comfy_workflows.py \
-  --positive "美式3d卡通，严格的T-Pose，全身出镜，纯白背景" \
+  --positive "美式3d卡通，1个3d女性角色，Ninjala风格，任天堂风格，潮流配色，(严格正视图:1.3)，完全正对镜头，(严格的T-Pose:1.3)，双臂水平伸展，全身出镜，纯白色背景，极简服装设计，纯净模型，1:1比例，高品质，杰作" \
   --negative "低分辨率，肢体畸形，画面过饱和"
 ```
 
