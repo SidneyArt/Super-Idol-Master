@@ -57,6 +57,9 @@ class ComfyUIClient:
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout = timeout
         self.session = requests.Session()
+        # ComfyUI is reached over the private Tailscale network.  Do not let a
+        # desktop HTTP proxy intercept requests to the DGX address.
+        self.session.trust_env = False
 
     def _url(self, path: str) -> str:
         return urljoin(self.base_url, path.lstrip("/"))

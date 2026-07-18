@@ -1,5 +1,13 @@
 # Super-Idol-Master 数字偶像管家
 
+## 文档与本地网站
+
+- 项目资料入口：[`docs/README.md`](docs/README.md)
+- 本地全栈网站：双击根目录的 `启动本地网站.cmd` 或 `start-local.cmd`
+- 网站地址：`http://localhost:3100`
+- 本地 API：`http://127.0.0.1:8787/api/health`
+- SQLite 数据库：`web/data/super-idol-master.db`
+
 ## ComfyUI 工作流调用
 
 脚本按 workflow 分开维护，共享 HTTP 客户端，总脚本只负责编排：
