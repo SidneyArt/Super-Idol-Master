@@ -8,6 +8,7 @@ import os
 import random
 import sys
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -56,6 +57,7 @@ class ComfyUIClient:
     def __init__(self, base_url: str, timeout: int = 1800) -> None:
         self.base_url = base_url.rstrip("/") + "/"
         self.timeout = timeout
+        self.client_id = uuid.uuid4().hex
         self.session = requests.Session()
         # ComfyUI is reached over the private Tailscale network.  Do not let a
         # desktop HTTP proxy intercept requests to the DGX address.
@@ -107,7 +109,10 @@ class ComfyUIClient:
 
     def submit(self, workflow: dict[str, Any]) -> str:
         response = self._request_with_api_fallback(
-            "POST", "prompt", json={"prompt": workflow}, timeout=30
+            "POST",
+            "prompt",
+            json={"prompt": workflow, "client_id": self.client_id},
+            timeout=30,
         )
         payload = response.json()
         if payload.get("error"):
@@ -291,7 +296,11 @@ def execute_workflow(
     workflow: dict[str, Any],
 ) -> WorkflowResult:
     prompt_id = client.submit(workflow)
-    print(f"[{kind}] submitted prompt_id={prompt_id}", file=sys.stderr)
+    print(
+        f"[{kind}] submitted prompt_id={prompt_id} client_id={client.client_id}",
+        file=sys.stderr,
+        flush=True,
+    )
     history = client.wait_for_completion(prompt_id)
     run_dir = _create_run_dir(kind, prompt_id)
     _save_json(run_dir / "submitted_workflow.json", workflow)

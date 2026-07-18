@@ -10,6 +10,8 @@
    - Tailscale、SSH、ComfyUI、两台 DGX 的访问关系和排障方法。
 3. [本地全栈网站实施方案](./local-fullstack-web.md)
    - Windows 本地启动方式、前后端边界、SQLite 数据库和 API 约定。
+4. [DGX / ComfyUI 全链路对应关系](./dgx-pipeline-integration.md)
+   - 四套真实工作流、自动 SDPose QA、状态机、产物校验与 E2E 证据。
 
 ## 产品与工程设计
 
@@ -23,4 +25,3 @@
 - 接口、数据库表或启动命令变化时，同步更新 `local-fullstack-web.md`。
 - 不在仓库中保存 SSH 私钥、密码、临时令牌或第三方 API Key。
 - 生成资源只写入项目 `output/`，数据库只写入 `web/data/`。
-

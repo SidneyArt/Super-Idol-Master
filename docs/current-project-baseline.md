@@ -17,6 +17,7 @@
 | 阶段 | 脚本 | 工作流 | 主要产物 |
 | --- | --- | --- | --- |
 | 2D 概念图 | `run_2d_generation.py` | `2D_Gen_QwenImage2512.json` | PNG |
+| 自动 T-Pose QA | `run_tpose_qa.py` | DGX SDPose Wholebody | 关键点 JSON、覆盖图、评分 |
 | 图片转 3D | `run_3d_generation.py` | `3D_Gen_Pixal3D.json` | GLB、纹理、预览 |
 | 自动绑骨 | `run_3d_skinning.py` | `3D_Skin_SkinTokens.json` | 带骨骼 GLB |
 | 全流程编排 | `run_comfy_workflows.py` | 依次调用以上三项 | 完整角色资产 |
@@ -27,14 +28,16 @@
 
 ## 3. 已验证的真实结果
 
-2D 生成已经成功。最近一次确认的产物：
+本地网站的 Qwen → SDPose → Pixal3D → SkinTokens 全链路已经真实跑通。固定验证任务：
 
 ```text
-output\2d\20260718-182703_375fd754-86f3-496e-bcf1-2e2eb22a27ce\
-node-60_01_Qwen-Image-2512_00048_.png
+run_id: 6251e426-c2a2-47c7-9a3c-4607555aba13
+SDPose: 94 分，Prompt 2a4bb12f-2f32-4a35-b739-31acf492f681
+Pixal3D: 36,807,352 bytes，Prompt 2bbe05b5-583a-45be-bae8-66ea66b88772
+SkinTokens: 45,726,624 bytes，1 skin / 49 joints，Prompt bc87f335-023d-4d2f-8f18-7074a532568b
 ```
 
-该图片能够证明 2D 工作流和远程 ComfyUI 调用正常，但人物手臂下垂，不满足严格 T-Pose。进入 3D 重建前应重新生成“双臂水平展开、全身完整、正视图、白色背景”的版本。
+完整证据见 `docs/dgx-pipeline-integration.md`。
 
 ## 4. 当前产品流程
 
@@ -51,13 +54,12 @@ T-Pose 检查是显式质量门，未通过时不应自动推进到 3D。
 
 ## 5. 本地网站现状与改造目标
 
-`web/` 已有一个流程可视化前端，展示六个生产阶段和最近一次 2D 图片。当前状态原本只是浏览器内演示，不具备真实持久化。
+`web/` 已是完整本地全栈系统，不再是浏览器内演示。当前能力：
 
-本轮改造目标：
-
-- 前端可创建、选择、推进、重置和删除角色任务。
-- 后端提供任务 CRUD、阶段推进、系统健康检查 API。
-- 2D 阶段可由网页后端实际调用 Python/ComfyUI 工作流，完成后自动进入 QA。
+- 前端可创建、选择、重置和删除角色任务；阶段卡片只能查看。
+- 后端以严格状态机控制流程，不提供手工阶段跳转和手工 QA 放行。
+- Qwen 2D 完成后自动调用 DGX SDPose；QA 通过才允许 Pixal3D。
+- Pixal3D 和 SkinTokens 均由网站实际提交，下载并登记真实 GLB。
 - SQLite 持久化任务、阶段状态和操作时间。
 - 使用 Windows CMD 脚本一键启动前端、后端并打开浏览器。
 - 默认只监听本机回环地址，不把管理服务暴露到公网。

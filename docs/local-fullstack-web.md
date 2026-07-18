@@ -1,152 +1,175 @@
-# 本地全栈网站实施方案
+# 本地全栈网站运行与维护
 
 更新日期：2026-07-18
 
-## 1. 目标
+## 1. 当前实现
 
-在 Windows 当前电脑上运行一个完整的 Super-Idol-Master 管理网站，包含：
+Super-Idol-Master 现在是可实际运行的本地全栈系统：
 
-- React/Vinext 前端。
-- 独立 Node.js HTTP API 后端。
-- SQLite 本地数据库。
-- 双击 `启动本地网站.cmd` 即可启动。
-- 浏览器访问 `http://localhost:3100`。
+- 前端：React 19 + Vinext，`http://localhost:3100`。
+- 后端：Node.js HTTP API，`http://127.0.0.1:8787`。
+- 数据库：Node 内置 SQLite，`web/data/super-idol-master.db`。
+- DGX：Tailscale 地址 `http://100.120.236.113:8188`。
+- 产物：只接受仓库 `output/` 下的真实文件，再由下载 API 交付。
 
-用户已明确要求本地运行，因此本轮不进行公网部署。
+前后端仅监听本机回环地址，不具备公网访问能力，也不会把管理接口暴露给局域网。
 
-## 2. SQLite 选择理由
+## 2. 启动
 
-- 单文件数据库，不需要安装 MySQL、PostgreSQL 或 Docker。
-- 适合单机比赛 Demo 和少量任务记录。
-- 支持事务、索引和结构化查询，比浏览器 LocalStorage 更可靠。
-- 数据文件可直接备份，迁移到服务端数据库时也容易导出。
-
-数据库计划位置：
-
-```text
-web\data\super-idol-master.db
-```
-
-该文件是运行数据，不提交 Git。
-
-## 3. 进程结构
-
-```text
-浏览器 http://localhost:3100
-          │
-          ├── Vinext 前端（3100）
-          │       │
-          │       └── HTTP JSON 请求
-          │
-          └── Node API（8787）
-                  │
-                  ├── SQLite 数据库
-                  └── DGX / ComfyUI 健康检查
-```
-
-前端和后端都只监听 `127.0.0.1`。后端通过允许列表处理跨端口请求，仅允许本地前端来源。
-
-## 4. 数据模型
-
-首版使用两张表：
-
-### `runs`
-
-| 字段 | 用途 |
-| --- | --- |
-| `id` | 任务唯一 ID |
-| `name` | 角色任务名称 |
-| `positive_prompt` | 正向提示词 |
-| `negative_prompt` | 反向提示词 |
-| `current_stage` | 当前阶段，0～5 |
-| `status` | `active`、`completed`、`failed` |
-| `qa_status` | `pending`、`passed`、`failed`；控制是否允许进入 3D |
-| `generation_status` | `idle`、`running`、`succeeded`、`failed` |
-| `generation_message` | 2D 生成进度或错误信息 |
-| `preview_path` | 最近预览图路径或 URL |
-| `created_at` | 创建时间 |
-| `updated_at` | 更新时间 |
-
-### `run_events`
-
-| 字段 | 用途 |
-| --- | --- |
-| `id` | 自增 ID |
-| `run_id` | 对应任务 |
-| `event_type` | 创建、推进、重置、失败等 |
-| `stage` | 事件发生阶段 |
-| `message` | 人类可读说明 |
-| `created_at` | 发生时间 |
-
-## 5. API 契约
-
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/api/health` | 后端和数据库健康检查 |
-| `GET` | `/api/system` | 检查 ComfyUI 是否可达 |
-| `GET` | `/api/runs` | 查询任务列表 |
-| `POST` | `/api/runs` | 新建任务 |
-| `GET` | `/api/runs/:id` | 查询任务和事件 |
-| `PATCH` | `/api/runs/:id/stage` | 推进或回退任务阶段 |
-| `PATCH` | `/api/runs/:id/qa` | 保存 T-Pose 通过/未通过判定 |
-| `POST` | `/api/runs/:id/regenerate` | 检查未通过后返回 2D 阶段 |
-| `POST` | `/api/runs/:id/generate-2d` | 调用 DGX 工作流重新生成 2D 图片 |
-| `POST` | `/api/runs/:id/reset` | 重置到第一阶段 |
-| `DELETE` | `/api/runs/:id` | 删除任务及事件 |
-
-所有写入 API 都校验输入；阶段只能是 `0` 到 `5`。`qa_status` 不是 `passed` 时，后端拒绝进入阶段 3 及之后的流程。
-
-## 6. 启动约定
-
-根启动脚本（两个入口功能相同）：
+双击任一文件：
 
 ```text
 D:\dgx比赛\Super-Idol-Master\启动本地网站.cmd
 D:\dgx比赛\Super-Idol-Master\start-local.cmd
 ```
 
-脚本职责：
+命令行方式：
 
-1. 检查 Node.js 和 npm。
-2. 缺少依赖时自动执行安装。
-3. 创建 `web\data`。
-4. 同时启动前端和后端。
-5. 服务就绪后打开默认浏览器。
-6. 用户按 `Ctrl+C` 时关闭两个服务。
-
-## 7. 当前执行边界
-
-2D 生成按钮已经接入固定的 Python 工作流 `run_2d_generation.py`。后端只允许使用数据库中的正向/负向提示词调用这一固定脚本，生成结果必须位于项目 `output/`，然后复制到网站预览目录。流程闭环如下：
-
-```text
-QA 未通过
-  → 返回 2D
-  → 点击重新生成
-  → 后端调用 DGX / ComfyUI
-  → 生成中锁定阶段切换
-  → 新图片保存成功
-  → 自动进入待 QA 状态
-  → QA 通过后解锁 3D
+```powershell
+cd "D:\dgx比赛\Super-Idol-Master\web"
+npm run local
 ```
 
-3D 和绑骨按钮尚未接入执行队列。继续接入时需要增加：
+验证：
 
-- 固定参数白名单。
-- 长任务队列和取消机制。
-- 日志与进度推送。
-- 输出文件路径校验。
-- 对 3D、绑骨高成本动作的显式确认。
+```powershell
+Invoke-RestMethod http://127.0.0.1:8787/api/health
+Invoke-RestMethod http://127.0.0.1:8787/api/system?force=1
+```
 
-该边界可保证网站先稳定可用，同时避免在比赛机器上执行未经约束的远程命令。
+运行日志：
 
-## 8. 本地图片兼容说明
+```text
+web/data/runtime-out.log
+web/data/runtime-err.log
+```
 
-Vinext 本地运行时没有 Cloudflare 的 `ASSETS` 和 `IMAGES` 绑定。项目已关闭本地图片优化，预览图直接从 `public/` 提供。
+## 3. 严格状态机
 
-如果更新前已经打开过网站，并看到 `Cannot read properties of undefined (reading 'fetch')`：
+阶段卡片只用于查看，不能修改数据库状态。后端也不再提供任意 `PATCH stage` 或手工 QA 放行接口。
 
-1. 在启动窗口按 `Ctrl+C`，或直接关闭该窗口。
-2. 重新双击 `启动本地网站.cmd`。
-3. 浏览器按 `Ctrl+F5` 强制刷新。
+```text
+IDEA
+  --确认设定--> 2D
+  --Qwen Image 返回 PNG--> QA
+  --SDPose 自动检查通过--> 3D
+  --Pixal3D 返回静态 GLB--> RIG
+  --SkinTokens 返回带骨骼 GLB--> OUT / completed
+```
 
-该问题只影响旧版图片优化请求，不影响 SQLite 数据。
+失败行为：
+
+- 2D 失败：停留在 2D，可重试。
+- QA 未通过：停留在 QA，只能重新生成 2D 或重新检查。
+- 3D 失败：停留在 3D，上游 PNG 保留。
+- 绑骨失败：停留在 RIG，静态 GLB 保留。
+- 页面点击阶段卡片不会解锁后续阶段。
+
+## 4. API
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/api/health` | API 和 SQLite 健康检查 |
+| `GET` | `/api/system` | ComfyUI、队列、节点和模型依赖检查 |
+| `GET` | `/api/runs` | 任务列表 |
+| `POST` | `/api/runs` | 新建任务 |
+| `GET` | `/api/runs/:id` | 任务、自动 QA 和事件详情 |
+| `POST` | `/api/runs/:id/start` | 确认角色设定，进入 2D |
+| `POST` | `/api/runs/:id/generate-2d` | 执行 Qwen Image |
+| `POST` | `/api/runs/:id/check-tpose` | 执行 SDPose 自动检查 |
+| `POST` | `/api/runs/:id/generate-3d` | 执行 Pixal3D |
+| `POST` | `/api/runs/:id/rig` | 执行 SkinTokens |
+| `GET` | `/api/runs/:id/download/image` | 下载真实 PNG |
+| `GET` | `/api/runs/:id/download/model` | 下载真实静态 GLB |
+| `GET` | `/api/runs/:id/download/rigged` | 下载真实绑骨 GLB |
+| `POST` | `/api/runs/:id/reset` | 清除任务产物引用并回到 IDEA |
+| `DELETE` | `/api/runs/:id` | 删除任务和事件 |
+
+所有生成接口只运行仓库内固定 Python 脚本。用户提示词只作为脚本参数，不会作为 Shell 命令执行。
+
+## 5. 数据库字段
+
+`runs` 的关键字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `current_stage` | 严格状态机的当前阶段 |
+| `status` | `active` / `completed` / `failed` |
+| `job_type` | `2d` / `qa` / `3d` / `rig` / `none` |
+| `generation_status` | 当前 DGX Job 状态；历史字段名，现用于所有工作流 |
+| `generation_progress` | ComfyUI 实时事件计算的实际进度 |
+| `generation_prompt_id` | ComfyUI 真正的 prompt ID |
+| `generation_current_node` | 当前执行节点 |
+| `image_path` | 本机真实 PNG 路径 |
+| `model_path` | 本机真实静态 GLB 路径 |
+| `rigged_model_path` | 本机真实绑骨 GLB 路径 |
+| `qa_status` | SDPose 业务判定 |
+| `qa_score` | 自动检查得分 |
+| `qa_metrics` | 关键点置信度、角度、水平误差等 JSON |
+| `qa_overlay_path` | 姿态骨架覆盖图的 Web 路径 |
+
+`run_events` 只记录真实启动、成功、失败和清理事件。旧原型通过阶段卡片生成的手工推进记录已经从当前数据库清除。
+
+## 6. 真实进度
+
+Python 客户端提交工作流时携带唯一 `client_id`。Node 后端以同一 ID 连接 ComfyUI WebSocket，监听：
+
+- `execution_start`
+- `execution_cached`
+- `executing`
+- `executed`
+- `progress`
+
+百分比来自已完成节点数和节点内部 `value/max`。没有新事件时进度不会自行增长；Python 最终还会核对 `/history/:prompt_id` 并下载产物，完成后才写 100%。
+
+## 7. 系统健康检查
+
+`GET /api/system` 不只判断 8188 可达，还读取 `/object_info` 并逐一核对三个 JSON 工作流用到的节点。QA 额外检查：
+
+- `SDPoseKeypointExtractor`
+- `SDPoseDrawKeypoints`
+- `SavePoseKpsAsJsonFile`
+- `sdpose_wholebody_fp16.safetensors`
+
+页面顶部四项必须显示：
+
+```text
+Qwen Image READY
+SDPose READY
+Pixal3D READY
+SkinTokens READY
+```
+
+## 8. 构建验证
+
+```powershell
+cd "D:\dgx比赛\Super-Idol-Master\web"
+npm run lint
+npm run build
+
+cd "D:\dgx比赛\Super-Idol-Master"
+python -m py_compile scripts\comfy_workflow\*.py
+```
+
+Vinext 本地环境已关闭图片优化，避免缺少 Cloudflare `ASSETS/IMAGES` 绑定导致 `reading 'fetch'` 错误。
+
+## 9. 分阶段资产预览
+
+页面预览区与真实流程产物严格对应，不再用 2D 图片替代 3D 结果：
+
+| 页面阶段 | 预览内容 |
+| --- | --- |
+| IDEA / 2D | Qwen Image 生成的本地 PNG |
+| QA | SDPose 输出的关键点覆盖图 |
+| 3D | `/download/model` 返回的真实静态 GLB |
+| RIG / OUT | 优先使用 `/download/rigged` 返回的真实绑骨 GLB；绑骨尚未完成时暂看静态 GLB |
+
+3D 预览基于 Three.js 和 GLTFLoader，直接读取后端保存的 GLB，支持：
+
+- 左键旋转、滚轮缩放、右键平移；
+- 自动旋转开关和重置视角；
+- 绑骨模型的骨骼显示开关；
+- 实时展示 Mesh、Bone 和三角面数量；
+- 模型加载中和加载失败的明确状态提示。
+
+查看阶段卡片只改变展示内容，不会推进或回退数据库中的状态机。
