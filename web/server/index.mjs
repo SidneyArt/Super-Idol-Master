@@ -167,8 +167,8 @@ if (count === 0) {
   `).run(
     id,
     "特种兵 / 53 SHAPES",
-    "美式3D卡通，女性角色，严格正视图，全身，严格T-Pose，双臂水平伸展，纯白背景",
-    "低质量，肢体畸形，遮挡，裁切，多人",
+    "美式3d卡通，1个3d女性角色，Ninjala风格，任天堂风格，潮流配色，(严格正视图:1.3)，完全正对镜头，(严格的T-Pose:1.3)，双臂水平伸展，全身出镜，纯白色背景，极简服装设计，纯净模型，1:1比例，高品质，杰作",
+    "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲",
     now,
     now,
   );
@@ -417,7 +417,7 @@ function jobArguments(run, jobType) {
   if (jobType === "2d") {
     return [
       "--positive", run.positivePrompt,
-      "--negative", run.negativePrompt || "低质量，肢体畸形，遮挡，裁切，多人",
+      "--negative", run.negativePrompt || "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲",
     ];
   }
   if (jobType === "qa") return [run.imagePathInternal];

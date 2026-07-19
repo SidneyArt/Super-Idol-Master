@@ -6,6 +6,11 @@ import ModelViewer from "./components/ModelViewer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8787";
 
+const DEFAULT_POSITIVE_PROMPT =
+  "美式3d卡通，1个3d女性角色，Ninjala风格，任天堂风格，潮流配色，(严格正视图:1.3)，完全正对镜头，(严格的T-Pose:1.3)，双臂水平伸展，全身出镜，纯白色背景，极简服装设计，纯净模型，1:1比例，高品质，杰作";
+const DEFAULT_NEGATIVE_PROMPT =
+  "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲";
+
 const stages = [
   { short: "IDEA", title: "角色描述", subtitle: "定义人物与风格", input: "人物设定与提示词", output: "角色规格", action: "确认角色身份、服装、视角和背景。" },
   { short: "2D", title: "概念图生成", subtitle: "ComfyUI · Qwen Image", input: "角色规格", output: "PNG 概念图", action: "DGX 执行 Qwen Image 工作流并下载真实 PNG。" },
@@ -100,8 +105,8 @@ export default function Home() {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({
     name: "",
-    positivePrompt: "",
-    negativePrompt: "低质量，肢体畸形，遮挡，裁切，多人",
+    positivePrompt: DEFAULT_POSITIVE_PROMPT,
+    negativePrompt: DEFAULT_NEGATIVE_PROMPT,
   });
 
   async function refreshRuns(preferredId?: string) {
@@ -231,7 +236,7 @@ export default function Home() {
         body: JSON.stringify(form),
       });
       setShowCreate(false);
-      setForm({ name: "", positivePrompt: "", negativePrompt: "低质量，肢体畸形，遮挡，裁切，多人" });
+      setForm({ name: "", positivePrompt: DEFAULT_POSITIVE_PROMPT, negativePrompt: DEFAULT_NEGATIVE_PROMPT });
       setDetail(data);
       setViewStage(0);
       await refreshRuns(data.run.id);
