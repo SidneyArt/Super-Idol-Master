@@ -349,6 +349,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 .asset-column { min-width: 0; }
 .preview-panel {
+  position: relative;
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -392,7 +393,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .asset-status-row { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--border); }
 .asset-status-row span { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 5px; color: var(--muted); background: var(--surface-soft); font-size: 12px; }
 .asset-status-row span.ready { color: var(--success); background: var(--success-soft); }
-.preview-workflow-footer { padding: 14px; border-top: 1px solid var(--border); background: var(--surface); }
+.preview-workflow-footer { position: absolute; z-index: 7; top: 52px; right: 0; bottom: 44px; left: 0; display: flex; align-items: flex-end; padding: 14px; pointer-events: none; }
+.preview-workflow-card { width: min(900px, 100%); max-height: 72%; padding: 14px; border: 1px solid color-mix(in srgb, var(--border-strong) 82%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--surface-raised) 90%, transparent); box-shadow: 0 14px 34px rgba(0,0,0,.24); backdrop-filter: blur(14px); overflow-y: auto; pointer-events: auto; }
 .current-stage-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .current-stage-heading { min-width: 0; }
 .current-stage-heading > span { color: var(--accent); font-size: 12px; }
@@ -406,7 +408,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .stage-prompt-editor label > span { display: block; margin-bottom: 6px; }
 .stage-prompt-editor textarea { width: 100%; min-height: 112px; display: block; padding: 10px 11px; border: 1px solid var(--border); border-radius: 6px; outline: 0; resize: vertical; background: var(--surface-soft); color: var(--text); font-size: 13px; line-height: 1.6; }
 .stage-prompt-editor textarea:focus { border-color: var(--accent); }
-.preview-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.preview-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
 .preview-panel.is-maximized {
   position: fixed;
@@ -415,7 +417,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   width: 100vw;
   height: calc(100vh - 60px);
   display: grid;
-  grid-template-rows: 60px minmax(0, 1fr) auto auto;
+  grid-template-rows: 60px minmax(0, 1fr) auto;
   border: 0;
   border-radius: 0;
   background: var(--surface);
@@ -423,7 +425,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .preview-panel.is-maximized .preview-frame { min-height: 0; height: 100%; }
 .preview-panel.is-maximized .preview-frame img { max-height: none; }
 .preview-panel.is-maximized .model-viewer-shell { min-height: 0; height: 100%; aspect-ratio: auto; }
-.preview-panel.is-maximized .preview-workflow-footer { max-height: 42vh; overflow-y: auto; }
+.preview-panel.is-maximized .preview-workflow-footer { top: 60px; }
+.preview-panel.is-maximized .preview-workflow-card { max-height: 62%; }
 
 .inspector-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(260px, .75fr); gap: 14px; margin-top: 14px; }
 .stage-inspector, .event-panel { border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }

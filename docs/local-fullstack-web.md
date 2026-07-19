@@ -51,10 +51,14 @@ web/data/runtime-err.log
 ```text
 IDEA
   --确认设定--> 2D
-  --Qwen Image 返回 PNG--> QA
-  --SDPose 自动检查通过--> 3D
-  --Pixal3D 返回静态 GLB--> RIG
-  --SkinTokens 返回带骨骼 GLB--> OUT / completed
+  --Qwen Image 返回 PNG--> 2D / 待确认
+  --用户确认--> QA
+  --SDPose 检查通过--> QA / 待确认
+  --用户确认--> 3D
+  --Pixal3D 返回静态 GLB--> 3D / 待确认
+  --用户确认--> RIG
+  --SkinTokens 返回带骨骼 GLB--> RIG / 待确认
+  --用户确认--> OUT / completed
 ```
 
 失败行为：
@@ -64,6 +68,7 @@ IDEA
 - 3D 失败：停留在 3D，上游 PNG 保留。
 - 绑骨失败：停留在 RIG，静态 GLB 保留。
 - 页面点击阶段卡片不会解锁后续阶段。
+- 任何生成或检查任务成功后都停留在当前阶段；只有用户调用完成确认才进入下一阶段。
 - 回退到 2D 会清除 PNG、QA 和 3D/RIG 引用；回退到 QA 保留 PNG；回退到 3D 保留已通过 QA；回退到 RIG 保留静态 GLB。
 
 ## 4. API
@@ -80,6 +85,7 @@ IDEA
 | `POST` | `/api/runs/:id/check-tpose` | 执行 SDPose 自动检查 |
 | `POST` | `/api/runs/:id/generate-3d` | 执行 Pixal3D |
 | `POST` | `/api/runs/:id/rig` | 执行 SkinTokens |
+| `POST` | `/api/runs/:id/advance` | 用户确认当前阶段完成并进入下一阶段 |
 | `POST` | `/api/runs/:id/revert` | 回退到指定已完成阶段并清除下游产物引用 |
 | `GET` | `/api/runs/:id/download/image` | 下载真实 PNG |
 | `GET` | `/api/runs/:id/download/model` | 下载真实静态 GLB |
@@ -110,7 +116,7 @@ IDEA
 | `qa_metrics` | 关键点置信度、角度、水平误差等 JSON |
 | `qa_overlay_path` | 姿态骨架覆盖图的 Web 路径 |
 
-`run_events` 只记录真实启动、成功、失败和清理事件。旧原型通过阶段卡片生成的手工推进记录已经从当前数据库清除。
+`run_events` 记录真实启动、成功、失败、用户阶段确认和清理事件。旧原型通过阶段卡片生成的任意推进记录已经从当前数据库清除。
 
 ## 6. 真实进度
 

@@ -125,33 +125,25 @@ db.prepare(`
   WHERE generation_status = 'running'
 `).run();
 
-// Repair state produced by the old clickable prototype. A stage is only restored
-// when a corresponding real local artifact or automatic QA record exists.
-for (const row of db.prepare("SELECT id, preview_path, image_path, model_path, rigged_model_path, qa_summary FROM runs").all()) {
+// Never advance a stage during startup repair. Only move backward when a stage's
+// required upstream artifact is missing.
+for (const row of db.prepare("SELECT id, current_stage, qa_status, preview_path, image_path, model_path, rigged_model_path FROM runs").all()) {
   let imagePath = row.image_path;
   const migratedImage = join(generatedDir, `${row.id}.png`);
   if (!imagePath && row.preview_path && existsSync(migratedImage)) imagePath = migratedImage;
   const hasImage = Boolean(imagePath && existsSync(imagePath));
   const hasModel = Boolean(row.model_path && existsSync(row.model_path));
   const hasRig = Boolean(row.rigged_model_path && existsSync(row.rigged_model_path));
-  let stage = 0;
-  let status = "active";
-  let qaStatus = "pending";
-  if (hasImage) stage = 2;
-  if (hasImage && row.qa_summary) {
-    const savedQa = db.prepare("SELECT qa_status AS qaStatus FROM runs WHERE id = ?").get(row.id);
-    qaStatus = savedQa.qaStatus;
-    if (qaStatus === "passed") stage = 3;
-  }
-  if (hasModel) stage = 4;
-  if (hasRig) {
-    stage = 5;
-    status = "completed";
-  }
+  let stage = Number(row.current_stage || 0);
+  if (stage >= 2 && !hasImage) stage = 1;
+  if (stage >= 3 && row.qa_status !== "passed") stage = 2;
+  if (stage >= 4 && !hasModel) stage = 3;
+  if (stage >= 5 && !hasRig) stage = 4;
+  const status = stage === 5 && hasRig ? "completed" : "active";
   db.prepare(`
-    UPDATE runs SET image_path = ?, current_stage = ?, status = ?, qa_status = ?, updated_at = updated_at
+    UPDATE runs SET image_path = ?, current_stage = ?, status = ?, updated_at = updated_at
     WHERE id = ?
-  `).run(imagePath || null, stage, status, qaStatus, row.id);
+  `).run(imagePath || null, stage, status, row.id);
 }
 
 const count = db.prepare("SELECT COUNT(*) AS count FROM runs").get().count;
@@ -279,6 +271,39 @@ function revertRun(runId, targetStage) {
       runId,
     );
     addEvent(runId, "stage_reverted", targetStage, `流程回退到“${stageNames[targetStage]}”，下游产物引用已清除`, now);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return runDetail(runId);
+}
+
+function advanceRun(runId) {
+  const run = getRunRow(runId);
+  if (!run) throw new Error("任务不存在");
+  if (activeJob?.runId === runId || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能确认阶段");
+
+  const stage = run.currentStage;
+  if (stage < 1 || stage > 4) throw new Error("当前阶段不能执行完成确认");
+  if (stage === 1 && (!run.imagePathInternal || !existsSync(run.imagePathInternal))) throw new Error("2D 概念图尚未生成完成");
+  if (stage === 2 && run.qaStatus !== "passed") throw new Error("T-Pose 检查尚未通过");
+  if (stage === 3 && (!run.modelPathInternal || !existsSync(run.modelPathInternal))) throw new Error("静态 GLB 尚未生成完成");
+  if (stage === 4 && (!run.riggedModelPathInternal || !existsSync(run.riggedModelPathInternal))) throw new Error("绑骨 GLB 尚未生成完成");
+
+  const nextStage = stage + 1;
+  const now = new Date().toISOString();
+  const stageNames = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动绑骨", "资产导出"];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`
+      UPDATE runs SET current_stage = ?, status = ?, job_type = 'none',
+        generation_status = 'idle', generation_message = '', generation_progress = 0,
+        generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ?
+      WHERE id = ?
+    `).run(nextStage, nextStage === 5 ? "completed" : "active", now, runId);
+    addEvent(runId, "stage_confirmed", stage, `用户确认“${stageNames[stage]}”已完成，进入“${stageNames[nextStage]}”`, now);
+    if (nextStage === 5) addEvent(runId, "pipeline_completed", 5, "角色资产流水线完成，可下载最终 GLB", now);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -485,8 +510,8 @@ function completeJob(runId, jobType, stdout) {
       copyFileSync(source, join(generatedDir, filename));
       const previewPath = `/generated/${filename}?v=${Date.now()}`;
       db.prepare(`
-        UPDATE runs SET current_stage = 2, status = 'active', qa_status = 'pending',
-          job_type = '2d', generation_status = 'succeeded', generation_message = '2D 图片生成完成，正在启动 SDPose 自动检查',
+        UPDATE runs SET current_stage = 1, status = 'active', qa_status = 'pending',
+          job_type = '2d', generation_status = 'succeeded', generation_message = '2D 图片生成完成，等待用户确认',
           generation_progress = 100, generation_current_node = NULL, preview_path = ?, image_path = ?,
           model_path = NULL, rigged_model_path = NULL, qa_score = NULL, qa_summary = '', qa_metrics = '{}',
           qa_overlay_path = NULL, updated_at = ? WHERE id = ?
@@ -503,14 +528,13 @@ function completeJob(runId, jobType, stdout) {
       }
       const passed = result.passed === true;
       db.prepare(`
-        UPDATE runs SET current_stage = ?, status = 'active', qa_status = ?, job_type = 'qa',
+        UPDATE runs SET current_stage = 2, status = 'active', qa_status = ?, job_type = 'qa',
           generation_status = 'succeeded', generation_message = ?, generation_progress = 100,
           generation_prompt_id = COALESCE(?, generation_prompt_id), generation_current_node = NULL,
           qa_score = ?, qa_summary = ?, qa_metrics = ?, qa_overlay_path = ?, updated_at = ? WHERE id = ?
       `).run(
-        passed ? 3 : 2,
         passed ? "passed" : "failed",
-        result.summary || "SDPose 自动检查完成",
+        passed ? `${result.summary || "SDPose 自动检查完成"}，等待用户确认` : result.summary || "SDPose 自动检查未通过",
         result.promptId || null,
         Number(result.score || 0),
         result.summary || "",
@@ -525,8 +549,8 @@ function completeJob(runId, jobType, stdout) {
       if (extname(modelPath).toLowerCase() !== ".glb") throw new Error("3D 工作流没有返回 GLB");
       const glb = inspectGlb(modelPath);
       db.prepare(`
-        UPDATE runs SET current_stage = 4, status = 'active', job_type = '3d',
-          generation_status = 'succeeded', generation_message = 'Pixal3D 已返回静态 GLB',
+        UPDATE runs SET current_stage = 3, status = 'active', job_type = '3d',
+          generation_status = 'succeeded', generation_message = 'Pixal3D 已返回静态 GLB，等待用户确认',
           generation_progress = 100, generation_current_node = NULL, model_path = ?,
           rigged_model_path = NULL, updated_at = ? WHERE id = ?
       `).run(modelPath, now, runId);
@@ -535,12 +559,11 @@ function completeJob(runId, jobType, stdout) {
       const riggedPath = findLatestGlb(lastLine);
       const glb = inspectGlb(riggedPath, true);
       db.prepare(`
-        UPDATE runs SET current_stage = 5, status = 'completed', job_type = 'rig',
-          generation_status = 'succeeded', generation_message = 'SkinTokens 已返回带骨骼 GLB',
+        UPDATE runs SET current_stage = 4, status = 'active', job_type = 'rig',
+          generation_status = 'succeeded', generation_message = 'SkinTokens 已返回带骨骼 GLB，等待用户确认',
           generation_progress = 100, generation_current_node = NULL, rigged_model_path = ?, updated_at = ? WHERE id = ?
       `).run(riggedPath, now, runId);
       addEvent(runId, "rig_succeeded", 4, `DGX SkinTokens 已返回真实带骨骼 GLB（${glb.skinCount} skin / ${glb.jointCount} joints）`, now);
-      addEvent(runId, "pipeline_completed", 5, "角色资产流水线完成，可下载最终 GLB", now);
     }
     db.exec("COMMIT");
   } catch (error) {
@@ -602,26 +625,21 @@ function launchJob(run, jobType) {
     } catch (error) {
       failJob(run.id, jobType, error instanceof Error ? error.message : "任务结果处理失败");
     }
-    if (success && jobType === "2d") {
-      setTimeout(() => {
-        try {
-          startJob(run.id, "qa", true);
-        } catch (error) {
-          failJob(run.id, "qa", error instanceof Error ? error.message : "自动检查启动失败");
-        }
-      }, 150);
-    }
   };
 
   child.on("error", (error) => finalize(false, error.message));
   child.on("close", (code) => finalize(code === 0, code === 0 ? "" : stderr || `Python 退出代码 ${code}`));
 }
 
-function startJob(runId, jobType, automatic = false) {
+function startJob(runId, jobType) {
   if (activeJob) throw new Error(`已有 ${activeJob.jobType.toUpperCase()} 任务正在 DGX 执行，请等待完成`);
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
   if (run.jobStatus === "running") throw new Error("当前任务仍在执行");
+  if (jobType === "2d" && run.currentStage !== 1 && !(run.currentStage === 2 && run.qaStatus === "failed")) throw new Error("当前阶段不能生成 2D 概念图");
+  if (jobType === "qa" && run.currentStage !== 2) throw new Error("请先确认 2D 阶段完成");
+  if (jobType === "3d" && run.currentStage !== 3) throw new Error("请先确认 T-Pose 检查完成");
+  if (jobType === "rig" && run.currentStage !== 4) throw new Error("请先确认 3D 模型生成完成");
   if (jobType === "2d" && !run.positivePrompt.trim()) throw new Error("请先填写正向提示词");
   if (jobType === "qa" && (!run.imagePathInternal || !existsSync(run.imagePathInternal))) throw new Error("没有可供 SDPose 检查的 2D 图片");
   if (jobType === "3d" && run.qaStatus !== "passed") throw new Error("SDPose 自动检查未通过，不能生成 3D");
@@ -656,7 +674,7 @@ function startJob(runId, jobType, automatic = false) {
         generation_progress = 1, generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ?
       WHERE id = ?
     `).run(jobType, messages[jobType], now, runId);
-    addEvent(runId, `${jobType}_started`, stage, `${automatic ? "自动启动" : "启动"}${messages[jobType].replace("正在调用 ", "")}`, now);
+    addEvent(runId, `${jobType}_started`, stage, `启动${messages[jobType].replace("正在调用 ", "")}`, now);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -800,6 +818,7 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[3] === "start") {
         if (existing.jobStatus === "running") throw new Error("当前任务仍在执行");
+        if (existing.currentStage !== 0) throw new Error("角色设定已经确认");
         const body = await readBody(req);
         const positivePrompt = cleanText(body.positivePrompt ?? existing.positivePrompt, 4000, "正向提示词", true);
         const negativePrompt = cleanText(body.negativePrompt ?? existing.negativePrompt, 2000, "负向提示词");
@@ -826,6 +845,10 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[3] === "rig") {
         json(res, 202, startJob(id, "rig"));
+        return;
+      }
+      if (req.method === "POST" && parts[3] === "advance") {
+        json(res, 200, advanceRun(id));
         return;
       }
       if (req.method === "POST" && parts[3] === "revert") {
