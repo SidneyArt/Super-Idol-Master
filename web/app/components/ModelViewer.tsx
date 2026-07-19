@@ -1,6 +1,6 @@
 "use client";
 
-import { Bone, Focus, Grid3X3, Orbit, Palette, SunMedium, Triangle } from "lucide-react";
+import { Bone, CloudSun, Focus, Grid3X3, Orbit, Palette, SunMedium, Triangle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -45,8 +45,11 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   const skeletonVisibleRef = useRef(false);
   const wireframeRef = useRef(false);
   const showGridRef = useRef(true);
-  const lightingRef = useRef(1.2);
-  const backgroundColorRef = useRef("#0b0e12");
+  const environmentColorRef = useRef("#e8f2ff");
+  const environmentIntensityRef = useRef(1.2);
+  const directionalColorRef = useRef("#ffffff");
+  const directionalIntensityRef = useRef(0.6);
+  const backgroundColorRef = useRef("#464646");
   const materialsRef = useRef<Set<WireframeMaterial>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -54,8 +57,11 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   const [showSkeleton, setShowSkeleton] = useState(false);
   const [wireframe, setWireframe] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
-  const [lighting, setLighting] = useState(1.2);
-  const [backgroundColor, setBackgroundColor] = useState("#0b0e12");
+  const [environmentColor, setEnvironmentColor] = useState("#e8f2ff");
+  const [environmentIntensity, setEnvironmentIntensity] = useState(1.2);
+  const [directionalColor, setDirectionalColor] = useState("#ffffff");
+  const [directionalIntensity, setDirectionalIntensity] = useState(0.6);
+  const [backgroundColor, setBackgroundColor] = useState("#464646");
   const [stats, setStats] = useState<ModelStats | null>(null);
 
   useEffect(() => {
@@ -82,21 +88,32 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   }, [showGrid]);
 
   useEffect(() => {
-    lightingRef.current = lighting;
+    environmentColorRef.current = environmentColor;
+    environmentIntensityRef.current = environmentIntensity;
     const lights = lightsRef.current;
     if (!lights) return;
-    lights.hemisphere.intensity = 3.2 * lighting;
-    lights.key.intensity = 4.5 * lighting;
-    lights.rim.intensity = 2.5 * lighting;
-    lights.fill.intensity = 1.9 * lighting;
-  }, [lighting]);
+    lights.hemisphere.color.set(environmentColor);
+    lights.hemisphere.intensity = 3.2 * environmentIntensity;
+  }, [environmentColor, environmentIntensity]);
+
+  useEffect(() => {
+    directionalColorRef.current = directionalColor;
+    directionalIntensityRef.current = directionalIntensity;
+    const lights = lightsRef.current;
+    if (!lights) return;
+    lights.key.color.set(directionalColor);
+    lights.rim.color.set(directionalColor);
+    lights.fill.color.set(directionalColor);
+    lights.key.intensity = 4.5 * directionalIntensity;
+    lights.rim.intensity = 2.5 * directionalIntensity;
+    lights.fill.intensity = 1.9 * directionalIntensity;
+  }, [directionalColor, directionalIntensity]);
 
   useEffect(() => {
     backgroundColorRef.current = backgroundColor;
     const scene = sceneRef.current;
     if (!scene) return;
     scene.background = new THREE.Color(backgroundColor);
-    if (scene.fog) scene.fog.color.set(backgroundColor);
   }, [backgroundColor]);
 
   useEffect(() => {
@@ -113,7 +130,6 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(backgroundColorRef.current);
-    scene.fog = new THREE.FogExp2(backgroundColorRef.current, 0.025);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(35, 1, 0.01, 1000);
@@ -132,15 +148,15 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     controls.screenSpacePanning = true;
     controlsRef.current = controls;
 
-    const hemisphere = new THREE.HemisphereLight(0xe8f2ff, 0x18202a, 3.2 * lightingRef.current);
+    const hemisphere = new THREE.HemisphereLight(environmentColorRef.current, 0x18202a, 3.2 * environmentIntensityRef.current);
     scene.add(hemisphere);
-    const keyLight = new THREE.DirectionalLight(0xffffff, 4.5 * lightingRef.current);
+    const keyLight = new THREE.DirectionalLight(directionalColorRef.current, 4.5 * directionalIntensityRef.current);
     keyLight.position.set(5, 8, 7);
     scene.add(keyLight);
-    const rimLight = new THREE.DirectionalLight(0x70b7ff, 2.5 * lightingRef.current);
+    const rimLight = new THREE.DirectionalLight(directionalColorRef.current, 2.5 * directionalIntensityRef.current);
     rimLight.position.set(-6, 3, -5);
     scene.add(rimLight);
-    const fillLight = new THREE.DirectionalLight(0xffd6a1, 1.9 * lightingRef.current);
+    const fillLight = new THREE.DirectionalLight(directionalColorRef.current, 1.9 * directionalIntensityRef.current);
     fillLight.position.set(4, 1, -6);
     scene.add(fillLight);
     lightsRef.current = { hemisphere, key: keyLight, rim: rimLight, fill: fillLight };
@@ -201,7 +217,6 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
         const maxDimension = Math.max(size.x, size.y, size.z, 0.1);
         grid.position.y = bounds.min.y;
         grid.scale.setScalar(Math.max(maxDimension / 6, 0.25));
-        scene.fog = new THREE.FogExp2(backgroundColorRef.current, 0.55 / maxDimension);
 
         const fitView = () => {
           const verticalFov = THREE.MathUtils.degToRad(camera.fov);
@@ -298,10 +313,17 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
           <Grid3X3 size={15} /><span>{showGrid ? "隐藏网格" : "显示网格"}</span>
         </button>
         <button onClick={() => resetViewRef.current()} type="button" title="重置视角"><Focus size={15} /><span>重置视角</span></button>
-        <label className="viewer-control viewer-range" title="调整预览灯光强度">
-          <SunMedium size={15} /><span>灯光</span>
-          <input aria-label="灯光强度" type="range" min="0.6" max="2.2" step="0.1" value={lighting} onChange={(event) => setLighting(Number(event.target.value))} />
-          <output>{lighting.toFixed(1)}x</output>
+        <label className="viewer-control viewer-light" title="设置环境光颜色和强度">
+          <CloudSun size={15} /><span>环境光</span>
+          <input aria-label="环境光颜色" type="color" value={environmentColor} onChange={(event) => setEnvironmentColor(event.target.value)} />
+          <input aria-label="环境光强度" type="range" min="0" max="2.5" step="0.1" value={environmentIntensity} onChange={(event) => setEnvironmentIntensity(Number(event.target.value))} />
+          <output>{environmentIntensity.toFixed(1)}x</output>
+        </label>
+        <label className="viewer-control viewer-light" title="设置直射光颜色和强度">
+          <SunMedium size={15} /><span>直射光</span>
+          <input aria-label="直射光颜色" type="color" value={directionalColor} onChange={(event) => setDirectionalColor(event.target.value)} />
+          <input aria-label="直射光强度" type="range" min="0" max="2.5" step="0.1" value={directionalIntensity} onChange={(event) => setDirectionalIntensity(Number(event.target.value))} />
+          <output>{directionalIntensity.toFixed(1)}x</output>
         </label>
         <label className="viewer-control viewer-color" title="设置预览背景颜色">
           <Palette size={15} /><span>背景</span>

@@ -974,25 +974,33 @@ class TposeGenerator(Protocol):
 
 ## 11. Agent Runtime
 
-### 11.1 五天版本选型
+> 更新：当前 Runtime 建议采用 `pi-agent-core` + `pi-ai`，并通过项目自有
+> `AgentRuntime` 接口隔离。详见 [Agent Runtime 技术决策：采用 Pi](./agent-runtime-pi-adr.md)。
+> 下文的受控 Tool Calling Loop 仍是行为和安全契约，不再表示必须从零实现该循环。
 
-直接使用 `httpx` 调用 Stepfun Chat Completions：
+### 11.1 当前选型与降级方案
 
-- Endpoint：`/v1/chat/completions`
+主方案使用 `pi-agent-core` 提供受控 Agent Loop，使用 `pi-ai` 连接 Stepfun：
+
+- Endpoint：`/v1/chat/completions`。
 - 模型：通过 `STEPFUN_MODEL` 配置。
-- 工具：OpenAI-compatible `tools`。
+- 工具：OpenAI-compatible `tools`，由项目白名单注册。
 - 图片：受控 URL、Files API 或大小受限的 Base64。
+- 写工具：统一顺序执行，一次 Agent Run 最多创建一个生成 Job。
 
 不使用 OpenCode 的原因：
 
 - 当前只需要十余个领域工具。
 - 不需要代码搜索、Shell、文件编辑和 Git。
-- 直接循环更容易限制工具、轮数和确认策略。
-- 组件更少，适合五天交付。
+- 现有 Node 后端已经拥有 API、SQLite、Run 和 Job 生命周期。
+- 进程内 Runtime 比新增 Headless Server 更容易保持单一状态来源。
 
-长期可通过 `AgentRuntime` 接口替换为 Pi 或其他框架。
+如果 Pi / Stepfun 兼容性 Spike 未通过，则在相同 `AgentRuntime` 接口后实现轻量受控
+Tool Calling Loop。该降级不改变工具 Schema、Policy、持久化或前端事件协议。
 
 ### 11.2 受控 Tool Calling Loop
+
+以下为与具体 Runtime 无关的行为伪代码：
 
 ```python
 async def run_agent(session_id: str, trigger: AgentTrigger) -> AgentRun:

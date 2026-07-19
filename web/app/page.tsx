@@ -583,9 +583,22 @@ export default function Home() {
                       )}
                       {run.jobStatus === "running" && (
                         <div className="generation-overlay">
-                          <i />
-                          <strong>{jobName(run.jobType)} · {run.jobProgress}%</strong>
-                          <span>{run.jobMessage || "等待 ComfyUI 实时事件"}</span>
+                          <div
+                            className="generation-progress"
+                            role="progressbar"
+                            aria-label={`${jobName(run.jobType)} 生成进度`}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={run.jobProgress}
+                          >
+                            <div className="generation-progress-heading">
+                              <strong>{jobName(run.jobType)} 正在执行</strong>
+                              <b>{run.jobProgress}%</b>
+                            </div>
+                            <span>{run.jobMessage || "等待 ComfyUI 实时事件"}</span>
+                            <span className="generation-progress-track"><i style={{ width: `${run.jobProgress}%` }} /></span>
+                            <small>Prompt {run.jobPromptId ? run.jobPromptId.slice(0, 16) : "等待提交"} · Node {run.jobCurrentNode || "等待执行"}</small>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -594,8 +607,10 @@ export default function Home() {
                       <span className={run.assets.modelReady ? "ready" : "waiting"}><Box size={15} />静态 GLB</span>
                       <span className={run.assets.riggedReady ? "ready" : "waiting"}><Expand size={15} />绑骨 GLB</span>
                     </div>
-                    {hasPreviewFooter && <div className="preview-workflow-footer">
-                      <div className="preview-workflow-card">
+                  </div>
+
+                  {hasPreviewFooter && <section className="stage-workflow-panel">
+                    <div className="stage-workflow-content">
                       {isCurrentView && (
                         <div className="current-stage-summary">
                           <div className="current-stage-heading">
@@ -640,14 +655,6 @@ export default function Home() {
                         </div>
                       )}
 
-                      {isCurrentView && run.jobStatus === "running" && (
-                        <div className="live-progress" aria-label={`ComfyUI 实时进度 ${run.jobProgress}%`}>
-                          <div><span>ComfyUI 实时进度</span><strong>{run.jobProgress}%</strong></div>
-                          <span className="live-progress-track"><i style={{ width: `${run.jobProgress}%` }} /></span>
-                          <small>Prompt {run.jobPromptId ? run.jobPromptId.slice(0, 16) : "等待提交"} · Node {run.jobCurrentNode || "等待执行"}</small>
-                        </div>
-                      )}
-
                       <div className="preview-actions">
                         {isCurrentView && current === 0 && <button className="primary-button" onClick={() => runAction("start", "进入 2D 阶段失败", promptDraft)} disabled={busy || !promptDraft.positivePrompt.trim()}><Play size={16} />确认设定</button>}
                         {isCurrentView && current === 1 && !run.assets.imageReady && <button className="primary-button" onClick={() => runAction("generate-2d", "2D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Sparkles size={16} />生成 2D 概念图</button>}
@@ -666,9 +673,8 @@ export default function Home() {
                         {viewStage >= 3 && run.assets.modelReady && <a className="download-button" href={downloadUrl(run.assets.modelDownloadUrl)}><Download size={16} />下载静态 GLB</a>}
                         {viewStage >= 4 && run.assets.riggedReady && <a className="download-button primary" href={downloadUrl(run.assets.riggedDownloadUrl)}><Download size={16} />下载最终 GLB</a>}
                       </div>
-                      </div>
-                    </div>}
-                  </div>
+                    </div>
+                  </section>}
 
                   <section className="event-panel event-panel-full">
                     <div className="section-heading"><div><span>活动</span><strong>任务记录</strong></div><MoreHorizontal size={18} /></div>

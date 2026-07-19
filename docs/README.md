@@ -17,6 +17,7 @@
 
 - [产品需求文档](./super-idol-master-prd.md)：用户流程、功能范围、验收和比赛交付。
 - [技术实现指南](./technical-implementation-guide.md)：完整架构、Job 系统、数据模型、SSE、3D 预览与测试。
+- [Agent Runtime 技术决策：采用 Pi](./agent-runtime-pi-adr.md)：结合当前 Node 全栈基线，对 Pi、OpenCode、OpenClaw、Hermes、Claude、Codex 和自研 Loop 的正式取舍。
 - [Agent 后端选型](./agent-backend-selection.md)：Agent Runtime 与编排器的职责和候选方案。
 
 ## 维护规则
