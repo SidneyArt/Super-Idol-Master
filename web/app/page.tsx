@@ -16,6 +16,8 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
   Plus,
   RefreshCw,
@@ -27,7 +29,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import ModelViewer from "./components/ModelViewer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8787";
@@ -135,6 +137,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [agentCollapsed, setAgentCollapsed] = useState(false);
+  const [agentWidth, setAgentWidth] = useState(360);
   const [theme, setTheme] = useState<Theme>("dark");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [chatInput, setChatInput] = useState("");
@@ -146,7 +150,7 @@ export default function Home() {
     positivePrompt: DEFAULT_POSITIVE_PROMPT,
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
   });
-  const previewPanelRef = useRef<HTMLDivElement>(null);
+  const agentDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("sim-theme");
@@ -165,12 +169,17 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const onFullscreenChange = () => {
-      setPreviewFullscreen(document.fullscreenElement === previewPanelRef.current);
+    if (!previewFullscreen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewFullscreen(false);
     };
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
-  }, []);
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [previewFullscreen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -318,13 +327,31 @@ export default function Home() {
     });
   }
 
-  async function togglePreviewFullscreen() {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await previewPanelRef.current?.requestFullscreen();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "无法进入全屏预览");
-    }
+  function togglePreviewFullscreen() {
+    setPreviewFullscreen((value) => !value);
+  }
+
+  function startAgentResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (agentCollapsed) return;
+    agentDragRef.current = { startX: event.clientX, startWidth: agentWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
+  function moveAgentResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = agentDragRef.current;
+    if (!drag) return;
+    const nextWidth = Math.min(560, Math.max(300, drag.startWidth + drag.startX - event.clientX));
+    setAgentWidth(nextWidth);
+  }
+
+  function endAgentResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!agentDragRef.current) return;
+    agentDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
   }
 
   function sendChatMessage(event: FormEvent) {
@@ -374,7 +401,7 @@ export default function Home() {
         </div>
       )}
 
-      <div className="app-frame">
+      <div className="app-frame" style={{ "--agent-width": `${agentCollapsed ? 60 : agentWidth}px` } as CSSProperties}>
         <aside className="task-sidebar">
           <div className="sidebar-header">
             <div className="sidebar-copy"><span>任务</span><strong>{runs.length} 个角色资产</strong></div>
@@ -477,7 +504,7 @@ export default function Home() {
                 </nav>
 
                 <div className="asset-column">
-                  <div className="preview-panel" ref={previewPanelRef}>
+                  <div className={`preview-panel ${previewFullscreen ? "is-maximized" : ""}`}>
                     <div className="preview-header">
                       <div><span>资产预览</span><strong>{previewType}</strong></div>
                       <button className="icon-button" type="button" onClick={togglePreviewFullscreen} title={previewFullscreen ? "退出全屏" : "全屏预览"} aria-label={previewFullscreen ? "退出全屏预览" : "进入全屏预览"}>
@@ -580,10 +607,25 @@ export default function Home() {
           )}
         </section>
 
-        <aside className="agent-panel">
+        <aside className={`agent-panel ${agentCollapsed ? "agent-collapsed" : ""}`}>
+          <div
+            className="agent-resizer"
+            onPointerDown={startAgentResize}
+            onPointerMove={moveAgentResize}
+            onPointerUp={endAgentResize}
+            onPointerCancel={endAgentResize}
+            role="separator"
+            aria-label="调整 Agent 面板宽度"
+            aria-orientation="vertical"
+          />
           <div className="agent-header">
             <div className="agent-title"><span><Bot size={19} /></span><div><strong>Asset Agent</strong><small>工作对话</small></div></div>
-            <span className="agent-state"><i />待命</span>
+            <div className="agent-header-actions">
+              <span className="agent-state"><i />待命</span>
+              <button className="icon-button" type="button" onClick={() => setAgentCollapsed((value) => !value)} title={agentCollapsed ? "展开 Agent 面板" : "收起 Agent 面板"} aria-label={agentCollapsed ? "展开 Agent 面板" : "收起 Agent 面板"}>
+                {agentCollapsed ? <PanelRightOpen size={18} /> : <PanelRightClose size={18} />}
+              </button>
+            </div>
           </div>
           <div className="agent-context">
             <span>任务上下文</span>
