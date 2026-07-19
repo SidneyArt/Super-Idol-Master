@@ -31,7 +31,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import ModelViewer from "./components/ModelViewer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8787";
@@ -466,6 +466,12 @@ export default function Home() {
     }
   }
 
+  function handleChatKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  }
+
   async function sendChatMessage(event: FormEvent) {
     event.preventDefault();
     const message = chatInput.trim();
@@ -839,7 +845,7 @@ export default function Home() {
                 <button type="button" onClick={() => setAgentAttachment(null)} title="移除图片" aria-label="移除参考图片"><X size={14} /></button>
               </div>
             )}
-            <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} rows={3} placeholder="给 Agent 下达资产生成任务…" disabled={agentBusy} />
+            <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={handleChatKeyDown} rows={3} placeholder="给 Agent 下达资产生成任务…" disabled={agentBusy} />
             <div className="composer-footer">
               <div className="composer-meta">
                 <input ref={agentFileRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={selectAgentImage} hidden />
