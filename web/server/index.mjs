@@ -16,13 +16,18 @@ import { spawn } from "node:child_process";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import { loadEnvFile } from "node:process";
+import { createAssetAgentRuntime } from "./agent-runtime.mjs";
+
+const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = resolve(webRoot, "..");
+const localEnvPath = join(webRoot, ".env.local");
+if (existsSync(localEnvPath)) loadEnvFile(localEnvPath);
 
 const HOST = process.env.API_HOST || "127.0.0.1";
 const PORT = Number(process.env.API_PORT || 8787);
 const COMFYUI_URL = process.env.COMFYUI_URL || "http://100.120.236.113:8188";
 const PYTHON_COMMAND = process.env.PYTHON_COMMAND || "python";
-const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const repoRoot = resolve(webRoot, "..");
 const outputRoot = resolve(repoRoot, "output");
 const generatedDir = join(webRoot, "public", "generated");
 const dataDir = join(webRoot, "data");
@@ -312,6 +317,71 @@ function advanceRun(runId) {
   return runDetail(runId);
 }
 
+function updateRunPrompts(runId, { positivePrompt, negativePrompt, reason = "Agent 更新角色提示词" }) {
+  const run = getRunRow(runId);
+  if (!run) throw new Error("任务不存在");
+  if (activeJob?.runId === runId || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能修改提示词");
+  if (run.currentStage > 1) throw new Error("已有下游资产，请先回退到概念图生成阶段再修改提示词");
+  if (positivePrompt === undefined && negativePrompt === undefined) throw new Error("至少需要更新一项提示词");
+
+  const nextPositive = cleanText(positivePrompt ?? run.positivePrompt, 4000, "正向提示词", true);
+  const nextNegative = cleanText(negativePrompt ?? run.negativePrompt, 2000, "负向提示词");
+  const now = new Date().toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`
+      UPDATE runs SET positive_prompt = ?, negative_prompt = ?,
+        generation_status = 'idle', generation_message = '', generation_progress = 0,
+        generation_prompt_id = NULL, generation_current_node = NULL,
+        preview_path = CASE WHEN current_stage = 1 THEN NULL ELSE preview_path END,
+        image_path = CASE WHEN current_stage = 1 THEN NULL ELSE image_path END,
+        model_path = CASE WHEN current_stage = 1 THEN NULL ELSE model_path END,
+        rigged_model_path = CASE WHEN current_stage = 1 THEN NULL ELSE rigged_model_path END,
+        qa_status = CASE WHEN current_stage = 1 THEN 'pending' ELSE qa_status END,
+        qa_score = CASE WHEN current_stage = 1 THEN NULL ELSE qa_score END,
+        qa_summary = CASE WHEN current_stage = 1 THEN '' ELSE qa_summary END,
+        qa_metrics = CASE WHEN current_stage = 1 THEN '{}' ELSE qa_metrics END,
+        qa_overlay_path = CASE WHEN current_stage = 1 THEN NULL ELSE qa_overlay_path END,
+        updated_at = ? WHERE id = ?
+    `).run(nextPositive, nextNegative, now, runId);
+    addEvent(runId, "agent_prompt_updated", run.currentStage, cleanText(reason, 240, "更新原因", true), now);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return runDetail(runId);
+}
+
+function confirmCharacterIdea(runId, input = {}) {
+  const run = getRunRow(runId);
+  if (!run) throw new Error("任务不存在");
+  if (run.jobStatus === "running") throw new Error("当前任务仍在执行");
+  if (run.currentStage !== 0) throw new Error("角色设定已经确认");
+  const positivePrompt = cleanText(input.positivePrompt ?? run.positivePrompt, 4000, "正向提示词", true);
+  const negativePrompt = cleanText(input.negativePrompt ?? run.negativePrompt, 2000, "负向提示词");
+  const now = new Date().toISOString();
+  db.prepare(`
+    UPDATE runs SET positive_prompt = ?, negative_prompt = ?, current_stage = 1,
+      status = 'active', updated_at = ? WHERE id = ?
+  `).run(positivePrompt, negativePrompt, now, runId);
+  addEvent(runId, "idea_confirmed", 0, "角色设定已确认，进入 2D 生成", now);
+  return runDetail(runId);
+}
+
+function advanceWorkflow(runId) {
+  const run = getRunRow(runId);
+  if (!run) throw new Error("任务不存在");
+  return run.currentStage === 0 ? confirmCharacterIdea(runId) : advanceRun(runId);
+}
+
+function runStageJob(runId, action) {
+  const jobTypes = { generate_2d: "2d", check_tpose: "qa", generate_3d: "3d", rig: "rig" };
+  const jobType = jobTypes[action];
+  if (!jobType) throw new Error("未知阶段任务");
+  return startJob(runId, jobType);
+}
+
 function json(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -333,12 +403,12 @@ function setCors(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
-async function readBody(req) {
+async function readBody(req, maxBytes = 1_000_000) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 1_000_000) throw new Error("请求内容过大");
+    if (size > maxBytes) throw new Error("请求内容过大");
     chunks.push(chunk);
   }
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
@@ -762,6 +832,15 @@ function streamDownload(res, filePath, label) {
   createReadStream(filePath).pipe(res);
 }
 
+const assetAgent = createAssetAgentRuntime({
+  db,
+  getRunDetail: runDetail,
+  updatePrompts: updateRunPrompts,
+  advanceWorkflow,
+  revertWorkflow: revertRun,
+  runStageJob,
+});
+
 const server = createServer(async (req, res) => {
   setCors(req, res);
   if (req.method === "OPTIONS") {
@@ -774,11 +853,16 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === "GET" && url.pathname === "/api/health") {
-      json(res, 200, { ok: true, database: "sqlite", databasePath: dbPath });
+      json(res, 200, { ok: true, database: "sqlite", databasePath: dbPath, agent: assetAgent.status() });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/system") {
-      json(res, 200, { api: true, database: true, comfyui: await checkComfyUi(url.searchParams.get("force") === "1") });
+      json(res, 200, {
+        api: true,
+        database: true,
+        agent: assetAgent.status(),
+        comfyui: await checkComfyUi(url.searchParams.get("force") === "1"),
+      });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/runs") {
@@ -816,19 +900,22 @@ const server = createServer(async (req, res) => {
         json(res, 200, runDetail(id));
         return;
       }
+      if (req.method === "GET" && parts[3] === "agent" && parts[4] === "messages") {
+        json(res, 200, { messages: assetAgent.getMessages(id) });
+        return;
+      }
+      if (req.method === "POST" && parts[3] === "agent" && parts[4] === "messages") {
+        const body = await readBody(req, 6_000_000);
+        json(res, 200, await assetAgent.run({ runId: id, message: body.message, image: body.image }));
+        return;
+      }
+      if (req.method === "POST" && parts[3] === "agent" && parts[4] === "cancel") {
+        json(res, 200, { cancelled: assetAgent.cancel(id) });
+        return;
+      }
       if (req.method === "POST" && parts[3] === "start") {
-        if (existing.jobStatus === "running") throw new Error("当前任务仍在执行");
-        if (existing.currentStage !== 0) throw new Error("角色设定已经确认");
         const body = await readBody(req);
-        const positivePrompt = cleanText(body.positivePrompt ?? existing.positivePrompt, 4000, "正向提示词", true);
-        const negativePrompt = cleanText(body.negativePrompt ?? existing.negativePrompt, 2000, "负向提示词");
-        const now = new Date().toISOString();
-        db.prepare(`
-          UPDATE runs SET positive_prompt = ?, negative_prompt = ?, current_stage = 1,
-            status = 'active', updated_at = ? WHERE id = ?
-        `).run(positivePrompt, negativePrompt, now, id);
-        addEvent(id, "idea_confirmed", 0, "角色设定已确认，进入 2D 生成", now);
-        json(res, 200, runDetail(id));
+        json(res, 200, confirmCharacterIdea(id, body));
         return;
       }
       if (req.method === "POST" && parts[3] === "generate-2d") {

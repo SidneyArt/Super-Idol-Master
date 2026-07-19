@@ -342,7 +342,7 @@ export_character_asset
 - [OpenCode SDK](https://opencode.ai/docs/sdk/)
 - [OpenCode Custom Tools](https://opencode.ai/docs/custom-tools/)
 - [OpenCode Permissions](https://opencode.ai/docs/permissions/)
-- [Pi SDK](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/sdk.md)
+- [Pi SDK](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md)
 - [Pi RPC Mode](https://pi.dev/docs/latest/rpc)
 - [Pi Usage](https://pi.dev/docs/latest/usage)
 - [OpenClaw Agent Runtimes](https://docs.openclaw.ai/concepts/agent-runtimes)

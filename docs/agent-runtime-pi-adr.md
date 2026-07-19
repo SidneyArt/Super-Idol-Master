@@ -1,6 +1,6 @@
 # Agent Runtime 技术决策：采用 Pi
 
-> 状态：建议采纳，待 Stepfun 兼容性 Spike 通过后生效  
+> 状态：已采纳，Stepfun 兼容性 Spike 已通过
 > 决策日期：2026-07-20  
 > 适用范围：Asset Agent 的对话、工具调用、流式事件与长期 Runtime 演进  
 > 不包含：GPU Job 编排、ComfyUI 工作流、资产存储和前端视觉实现
@@ -10,8 +10,8 @@
 Super-Idol-Master 建议采用以下两个包作为 Asset Agent 的 Runtime 基础：
 
 ```text
-@mariozechner/pi-agent-core
-@mariozechner/pi-ai
+@earendil-works/pi-agent-core
+@earendil-works/pi-ai
 ```
 
 不引入 `pi-coding-agent`，也不向 Asset Agent 暴露 Shell、任意文件读写、Git 或代码编辑工具。
@@ -43,7 +43,7 @@ Pi 只负责项目不值得重复实现的通用 Agent 能力：
 - SQLite 已经持久化 Run、阶段、Job 状态和生成进度。
 - `startJob()` 已经统一校验阶段并通过固定参数启动 Python 工作流。
 - Qwen Image、SDPose、Pixal3D 和 SkinTokens 的确定性链路已经跑通。
-- 前端 Asset Agent 面板已经存在，但目前只返回固定占位文本。
+- 前端 Asset Agent 面板已经接入真实会话、领域工具和图片附件。
 - 当前只允许一个活动 GPU Job，生成工具必须顺序执行。
 
 因此项目现在不缺另一个完整 Agent Server。真正缺少的是可以嵌入现有 Node 进程的 Agent Loop、模型适配和工具事件流。
@@ -71,7 +71,7 @@ Pi 只负责项目不值得重复实现的通用 Agent 能力：
 
 ### 4.1 进程和技术栈匹配
 
-当前后端运行在 Node.js 22.13 以上的 ESM 环境。`pi-agent-core` 和 `pi-ai` 是 TypeScript/JavaScript 包，可以直接嵌入现有后端，不需要增加 Python Agent 服务、Headless Server 或 Gateway。
+当前后端运行在 Node.js 22.19 以上的 ESM 环境。`pi-agent-core` 和 `pi-ai` 是 TypeScript/JavaScript 包，可以直接嵌入现有后端，不需要增加 Python Agent 服务、Headless Server 或 Gateway。
 
 短期可在 `.mjs` 中使用，长期后端模块化时再逐步迁移到 TypeScript。不能为了接入 Pi 先重写现有后端。
 
@@ -373,16 +373,16 @@ get_job_status
 
 2026-07-20 核对 npm：
 
-- `@mariozechner/pi-agent-core`：`0.73.1`，MIT。
-- `@mariozechner/pi-ai`：`0.73.1`，MIT。
+- `@earendil-works/pi-agent-core`：`0.80.10`，MIT。
+- `@earendil-works/pi-ai`：`0.80.10`，MIT。
 - `opencode-ai`：`1.18.3`，MIT。
 - `@anthropic-ai/claude-agent-sdk`：`0.3.215`，许可证需按其 README 和服务条款评估。
 - `@openai/codex-sdk`：`0.144.6`，Apache-2.0。
 
 官方或项目资料：
 
-- [Pi Agent Core README](https://github.com/badlogic/pi-mono/tree/main/packages/agent)
-- [Pi AI README](https://github.com/badlogic/pi-mono/tree/main/packages/ai)
+- [Pi Agent Core README](https://github.com/earendil-works/pi/tree/main/packages/agent)
+- [Pi AI README](https://github.com/earendil-works/pi/tree/main/packages/ai)
 - [OpenCode Server](https://opencode.ai/docs/server/)
 - [OpenCode Custom Tools](https://opencode.ai/docs/custom-tools/)
 - [OpenCode Permissions](https://opencode.ai/docs/permissions/)

@@ -18,7 +18,19 @@ npm install
 npm run local
 ```
 
-需要 Node.js 22.13 或更高版本。首次启动会安装依赖。
+需要 Node.js 22.19 或更高版本。首次启动会安装依赖。
+
+Asset Agent 使用 Stepfun Step Plan。首次运行前复制 `.env.example` 为 `.env.local`，并设置：
+
+```text
+STEPFUN_API_KEY=your-api-key
+```
+
+可单独验证 Pi 的文本、工具调用和图片兼容性：
+
+```powershell
+npm run agent:verify
+```
 
 ## 地址
 
@@ -36,6 +48,7 @@ npm run local
 - 静态和绑骨 GLB 的交互式 3D 预览；
 - 材质、拓扑线框、骨骼显示、自动旋转和视角控制；
 - SQLite 持久化任务、产物路径和执行历史。
+- Pi 驱动的 Asset Agent，可完善提示词、推进或回退流程、重新生成并分析参考图片。
 
 ## 不进入 Git 的本机内容
 

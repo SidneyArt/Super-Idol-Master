@@ -524,6 +524,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .agent-title strong { font-size: 14px; }
 .agent-title small { color: var(--muted); font-size: 12px; }
 .agent-state { display: inline-flex; align-items: center; gap: 6px; color: var(--success); font-size: 12px; }
+.agent-state.busy { color: var(--warning); }
+.agent-state.busy i { background: var(--warning); animation: status-pulse 1.2s ease-in-out infinite; }
+.agent-state.unavailable { color: var(--muted); }
+.agent-state.unavailable i { background: var(--muted); }
 .agent-panel.agent-collapsed { grid-template-rows: 66px; }
 .agent-panel.agent-collapsed .agent-resizer { display: none; }
 .agent-panel.agent-collapsed .agent-header { justify-content: center; padding-inline: 0; }
@@ -537,13 +541,28 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .chat-message.user .chat-avatar { background: var(--surface-soft); color: var(--text-secondary); }
 .chat-message strong { font-size: 12px; }
 .chat-message p { margin: 3px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.chat-message.pending p { display: inline-flex; align-items: center; gap: 7px; }
+.chat-message.pending p svg { animation: spin 1s linear infinite; }
+.chat-attachment { width: fit-content; max-width: 100%; display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 11px; overflow: hidden; }
+.chat-attachment svg { flex: 0 0 auto; }
 .chat-composer { margin: 0 12px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-raised); overflow: hidden; box-shadow: var(--shadow); }
 .chat-composer:focus-within { border-color: var(--accent); }
 .chat-composer textarea { width: 100%; min-height: 84px; display: block; padding: 12px; border: 0; outline: 0; resize: none; background: transparent; color: var(--text); font-size: 13px; line-height: 1.55; }
 .chat-composer textarea::placeholder { color: var(--muted); }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 8px 8px 12px; }
-.composer-footer > span { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
-.composer-footer button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+.composer-meta { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.composer-meta > span { min-width: 0; display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-footer > button { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 auto; padding: 0; border: 0; border-radius: 6px; background: var(--accent); color: #fff; cursor: pointer; }
+.composer-footer > button:disabled { opacity: .45; cursor: not-allowed; }
+.attach-button { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.attach-button:hover:not(:disabled) { background: var(--surface-soft); color: var(--text); }
+.attach-button:disabled { opacity: .4; cursor: not-allowed; }
+.attachment-chip { display: grid; grid-template-columns: 16px minmax(0, 1fr) 24px; align-items: center; gap: 6px; margin: 8px 8px 0; padding: 6px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); color: var(--text-secondary); font-size: 11px; }
+.attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-chip button { width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
+.attachment-chip button:hover { background: var(--surface-raised); color: var(--text); }
+
+@keyframes status-pulse { 50% { opacity: .35; } }
 
 .empty-workspace { min-height: calc(100vh - 104px); display: grid; place-content: center; justify-items: center; padding: 32px; text-align: center; }
 .empty-workspace > span { width: 60px; height: 60px; display: grid; place-items: center; border-radius: 8px; background: var(--accent-soft); color: var(--accent); }

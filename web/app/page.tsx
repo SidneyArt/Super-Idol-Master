@@ -8,6 +8,7 @@ import {
   Download,
   Expand,
   ImageIcon,
+  LoaderCircle,
   Maximize2,
   MessageSquare,
   Minimize2,
@@ -17,6 +18,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Paperclip,
   Play,
   Plus,
   RefreshCw,
@@ -51,7 +53,15 @@ const stages = [
 type JobType = "none" | "2d" | "qa" | "3d" | "rig";
 type JobStatus = "idle" | "running" | "succeeded" | "failed";
 type Theme = "light" | "dark";
-type ChatMessage = { id: number; role: "assistant" | "user"; content: string };
+type ChatMessage = {
+  id: number;
+  role: "assistant" | "user";
+  content: string;
+  attachmentName: string | null;
+  attachmentMime: string | null;
+  createdAt: string;
+};
+type AgentAttachment = { name: string; mimeType: string; data: string; size: number };
 
 type Assets = {
   imageReady: boolean;
@@ -92,6 +102,7 @@ type WorkflowCheck = { ready: boolean; missing: string[] };
 type SystemState = {
   api: boolean;
   database: boolean;
+  agent: { configured: boolean; model: string };
   comfyui: {
     online: boolean;
     pipelineReady: boolean;
@@ -142,15 +153,17 @@ export default function Home() {
   const [theme, setTheme] = useState<Theme>("dark");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [chatInput, setChatInput] = useState("");
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { id: 1, role: "assistant", content: "工作区已就绪。当前任务上下文和流水线状态会显示在这里。" },
-  ]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentAttachment, setAgentAttachment] = useState<AgentAttachment | null>(null);
   const [form, setForm] = useState({ name: "" });
   const [promptDraft, setPromptDraft] = useState({
     positivePrompt: DEFAULT_POSITIVE_PROMPT,
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
   });
   const agentDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const agentFileRef = useRef<HTMLInputElement | null>(null);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("sim-theme");
@@ -212,10 +225,15 @@ export default function Home() {
   useEffect(() => {
     if (!selectedId) return;
     let cancelled = false;
-    void api<RunDetail>(`/api/runs/${selectedId}`)
-      .then((data) => {
+    void Promise.all([
+      api<RunDetail>(`/api/runs/${selectedId}`),
+      api<{ messages: ChatMessage[] }>(`/api/runs/${selectedId}/agent/messages`),
+    ])
+      .then(([data, agentData]) => {
         if (cancelled) return;
         setDetail(data);
+        setChatMessages(agentData.messages);
+        setAgentAttachment(null);
         setViewStage(data.run.currentStage);
         setPromptDraft({
           positivePrompt: data.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
@@ -227,6 +245,10 @@ export default function Home() {
       });
     return () => { cancelled = true; };
   }, [selectedId]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [chatMessages, agentBusy]);
 
   useEffect(() => {
     if (!selectedId || detail?.run.jobStatus !== "running") return;
@@ -305,6 +327,7 @@ export default function Home() {
       await api(`/api/runs/${run.id}`, { method: "DELETE" });
       setSelectedId(null);
       setDetail(null);
+      setChatMessages([]);
       await refreshRuns();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "删除失败");
@@ -325,6 +348,7 @@ export default function Home() {
         body: JSON.stringify({ stage: stageIndex }),
       });
       setDetail(data);
+      setChatMessages([]);
       setViewStage(stageIndex);
       setPromptDraft({
         positivePrompt: data.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
@@ -407,17 +431,83 @@ export default function Home() {
     document.body.style.userSelect = "";
   }
 
-  function sendChatMessage(event: FormEvent) {
+  function selectAgentImage(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setError("参考图片只支持 PNG、JPEG 或 WebP");
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      setError("参考图片不能超过 4 MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = typeof reader.result === "string" ? reader.result : "";
+      const data = value.split(",", 2)[1];
+      if (!data) {
+        setError("参考图片读取失败");
+        return;
+      }
+      setAgentAttachment({ name: file.name, mimeType: file.type, data, size: file.size });
+    };
+    reader.onerror = () => setError("参考图片读取失败");
+    reader.readAsDataURL(file);
+  }
+
+  async function cancelAgent() {
+    if (!run || !agentBusy) return;
+    try {
+      await api(`/api/runs/${run.id}/agent/cancel`, { method: "POST" });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "取消 Agent 失败");
+    }
+  }
+
+  async function sendChatMessage(event: FormEvent) {
     event.preventDefault();
     const message = chatInput.trim();
-    if (!message) return;
-    const timestamp = Date.now();
-    setChatMessages((items) => [
-      ...items,
-      { id: timestamp, role: "user", content: message },
-      { id: timestamp + 1, role: "assistant", content: "指令已记录。Agent Runtime 接入后会在这里执行并回传生成过程。" },
-    ]);
+    if (!run || agentBusy || (!message && !agentAttachment)) return;
+    const attachment = agentAttachment;
+    const optimisticMessage: ChatMessage = {
+      id: -Date.now(),
+      role: "user",
+      content: message || "请分析这张参考图片并完善角色设定。",
+      attachmentName: attachment?.name || null,
+      attachmentMime: attachment?.mimeType || null,
+      createdAt: new Date().toISOString(),
+    };
+    setChatMessages((items) => [...items, optimisticMessage]);
     setChatInput("");
+    setAgentAttachment(null);
+    setAgentBusy(true);
+    setError("");
+    try {
+      const data = await api<{ messages: ChatMessage[]; detail: RunDetail }>(`/api/runs/${run.id}/agent/messages`, {
+        method: "POST",
+        body: JSON.stringify({
+          message,
+          image: attachment ? { name: attachment.name, mimeType: attachment.mimeType, data: attachment.data } : undefined,
+        }),
+      });
+      setChatMessages(data.messages);
+      setDetail(data.detail);
+      setViewStage(data.detail.run.currentStage);
+      setPromptDraft({
+        positivePrompt: data.detail.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
+        negativePrompt: data.detail.run.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
+      });
+      await refreshRuns(run.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Agent 请求失败");
+      void api<{ messages: ChatMessage[] }>(`/api/runs/${run.id}/agent/messages`)
+        .then((data) => setChatMessages(data.messages))
+        .catch(() => setChatMessages((items) => items.filter((item) => item.id !== optimisticMessage.id)));
+    } finally {
+      setAgentBusy(false);
+    }
   }
 
   const previewType = modelPreviewUrl
@@ -710,7 +800,9 @@ export default function Home() {
           <div className="agent-header">
             <div className="agent-title"><span><Bot size={19} /></span><div><strong>Asset Agent</strong><small>工作对话</small></div></div>
             <div className="agent-header-actions">
-              <span className="agent-state"><i />待命</span>
+              <span className={`agent-state ${agentBusy ? "busy" : system?.agent.configured ? "" : "unavailable"}`}>
+                <i />{agentBusy ? "处理中" : system?.agent.configured ? "待命" : "未配置"}
+              </span>
               <button className="icon-button" type="button" onClick={() => setAgentCollapsed((value) => !value)} title={agentCollapsed ? "展开 Agent 面板" : "收起 Agent 面板"} aria-label={agentCollapsed ? "展开 Agent 面板" : "收起 Agent 面板"}>
                 {agentCollapsed ? <PanelRightOpen size={18} /> : <PanelRightClose size={18} />}
               </button>
@@ -725,15 +817,38 @@ export default function Home() {
             {chatMessages.map((message) => (
               <div className={`chat-message ${message.role}`} key={message.id}>
                 <span className="chat-avatar">{message.role === "assistant" ? <Bot size={16} /> : <User size={16} />}</span>
-                <div><strong>{message.role === "assistant" ? "Asset Agent" : "你"}</strong><p>{message.content}</p></div>
+                <div>
+                  <strong>{message.role === "assistant" ? "Asset Agent" : "你"}</strong>
+                  {message.attachmentName && <span className="chat-attachment"><ImageIcon size={14} />{message.attachmentName}</span>}
+                  <p>{message.content}</p>
+                </div>
               </div>
             ))}
+            {agentBusy && (
+              <div className="chat-message assistant pending">
+                <span className="chat-avatar"><Bot size={16} /></span>
+                <div><strong>Asset Agent</strong><p><LoaderCircle size={15} />正在处理任务</p></div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
           </div>
           <form className="chat-composer" onSubmit={sendChatMessage}>
-            <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} rows={3} placeholder="给 Agent 下达资产生成任务…" />
+            {agentAttachment && (
+              <div className="attachment-chip">
+                <ImageIcon size={14} /><span>{agentAttachment.name}</span>
+                <button type="button" onClick={() => setAgentAttachment(null)} title="移除图片" aria-label="移除参考图片"><X size={14} /></button>
+              </div>
+            )}
+            <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} rows={3} placeholder="给 Agent 下达资产生成任务…" disabled={agentBusy} />
             <div className="composer-footer">
-              <span><MessageSquare size={15} />当前会话</span>
-              <button type="submit" disabled={!chatInput.trim()} aria-label="发送消息" title="发送消息"><Send size={17} /></button>
+              <div className="composer-meta">
+                <input ref={agentFileRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={selectAgentImage} hidden />
+                <button className="attach-button" type="button" onClick={() => agentFileRef.current?.click()} disabled={agentBusy || !run} aria-label="添加参考图片" title="添加参考图片"><Paperclip size={16} /></button>
+                <span><MessageSquare size={15} />{system?.agent.model || "当前会话"}</span>
+              </div>
+              {agentBusy
+                ? <button type="button" onClick={cancelAgent} aria-label="停止 Agent" title="停止 Agent"><X size={17} /></button>
+                : <button type="submit" disabled={!run || (!chatInput.trim() && !agentAttachment) || system?.agent.configured === false} aria-label="发送消息" title="发送消息"><Send size={17} /></button>}
             </div>
           </form>
         </aside>
