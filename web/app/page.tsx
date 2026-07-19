@@ -1,7 +1,33 @@
 "use client";
 
 import Image from "next/image";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  Bot,
+  Box,
+  Check,
+  Circle,
+  Download,
+  Expand,
+  ImageIcon,
+  Maximize2,
+  MessageSquare,
+  Minimize2,
+  Moon,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Play,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Send,
+  Sparkles,
+  Sun,
+  Trash2,
+  User,
+  X,
+} from "lucide-react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import ModelViewer from "./components/ModelViewer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8787";
@@ -13,15 +39,17 @@ const DEFAULT_NEGATIVE_PROMPT =
 
 const stages = [
   { short: "IDEA", title: "角色描述", subtitle: "定义人物与风格", input: "人物设定与提示词", output: "角色规格", action: "确认角色身份、服装、视角和背景。" },
-  { short: "2D", title: "概念图生成", subtitle: "ComfyUI · Qwen Image", input: "角色规格", output: "PNG 概念图", action: "DGX 执行 Qwen Image 工作流并下载真实 PNG。" },
-  { short: "QA", title: "T-Pose 检查", subtitle: "DGX · SDPose", input: "2D 概念图", output: "关键点、评分与判定", action: "SDPose 自动检查单人全身、双臂水平、肘部伸直和左右对称。" },
-  { short: "3D", title: "3D 模型生成", subtitle: "ComfyUI · Pixal3D", input: "合格 T-Pose PNG", output: "静态 GLB", action: "DGX 执行 Pixal3D 工作流并下载真实静态 GLB。" },
-  { short: "RIG", title: "自动绑骨", subtitle: "ComfyUI · SkinTokens", input: "静态 GLB", output: "带骨骼 GLB", action: "DGX 执行 SkinTokens，生成 Mixamo 骨骼与蒙皮。" },
-  { short: "OUT", title: "资产导出", subtitle: "真实文件交付", input: "已绑骨 GLB", output: "最终 GLB 与任务日志", action: "下载网站后端实际保存的产物，不生成占位链接。" },
+  { short: "2D", title: "概念图生成", subtitle: "Qwen Image", input: "角色规格", output: "PNG 概念图", action: "DGX 执行 Qwen Image 工作流并下载真实 PNG。" },
+  { short: "QA", title: "T-Pose 检查", subtitle: "SDPose", input: "2D 概念图", output: "关键点与评分", action: "SDPose 检查单人全身、双臂水平、肘部伸直和左右对称。" },
+  { short: "3D", title: "3D 模型生成", subtitle: "Pixal3D", input: "合格 T-Pose PNG", output: "静态 GLB", action: "DGX 执行 Pixal3D 工作流并下载真实静态 GLB。" },
+  { short: "RIG", title: "自动绑骨", subtitle: "SkinTokens", input: "静态 GLB", output: "带骨骼 GLB", action: "DGX 执行 SkinTokens，生成 Mixamo 骨骼与蒙皮。" },
+  { short: "OUT", title: "资产导出", subtitle: "文件交付", input: "已绑骨 GLB", output: "最终资产", action: "下载后端实际保存的 PNG、静态 GLB 或最终绑骨 GLB。" },
 ];
 
 type JobType = "none" | "2d" | "qa" | "3d" | "rig";
 type JobStatus = "idle" | "running" | "succeeded" | "failed";
+type Theme = "light" | "dark";
+type ChatMessage = { id: number; role: "assistant" | "user"; content: string };
 
 type Assets = {
   imageReady: boolean;
@@ -85,7 +113,10 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 function formatTime(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   }).format(new Date(value));
 }
 
@@ -103,11 +134,27 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [theme, setTheme] = useState<Theme>("dark");
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { id: 1, role: "assistant", content: "工作区已就绪。当前任务上下文和流水线状态会显示在这里。" },
+  ]);
   const [form, setForm] = useState({
     name: "",
     positivePrompt: DEFAULT_POSITIVE_PROMPT,
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
   });
+  const previewPanelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("sim-theme");
+    if (saved !== "light" && saved !== "dark") return;
+    document.documentElement.dataset.theme = saved;
+    const timer = window.setTimeout(() => setTheme(saved), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   async function refreshRuns(preferredId?: string) {
     const data = await api<{ runs: Run[] }>("/api/runs");
@@ -116,6 +163,14 @@ export default function Home() {
     setSelectedId(nextId);
     if (!nextId) setDetail(null);
   }
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setPreviewFullscreen(document.fullscreenElement === previewPanelRef.current);
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -179,7 +234,6 @@ export default function Home() {
   const current = run?.currentStage ?? 0;
   const stage = stages[viewStage];
   const progress = useMemo(() => Math.round((current / (stages.length - 1)) * 100), [current]);
-  const completedCount = runs.filter((item) => item.status === "completed").length;
   const isCurrentView = viewStage === current;
   const visiblePreview = viewStage < 3
     ? viewStage === 2 && run?.qaOverlayPath ? run.qaOverlayPath : run?.previewPath
@@ -255,180 +309,313 @@ export default function Home() {
     return value ? `${API_BASE}${value}` : "#";
   }
 
+  function toggleTheme() {
+    setTheme((currentTheme) => {
+      const nextTheme = currentTheme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = nextTheme;
+      window.localStorage.setItem("sim-theme", nextTheme);
+      return nextTheme;
+    });
+  }
+
+  async function togglePreviewFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await previewPanelRef.current?.requestFullscreen();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法进入全屏预览");
+    }
+  }
+
+  function sendChatMessage(event: FormEvent) {
+    event.preventDefault();
+    const message = chatInput.trim();
+    if (!message) return;
+    const timestamp = Date.now();
+    setChatMessages((items) => [
+      ...items,
+      { id: timestamp, role: "user", content: message },
+      { id: timestamp + 1, role: "assistant", content: "指令已记录。Agent Runtime 接入后会在这里执行并回传生成过程。" },
+    ]);
+    setChatInput("");
+  }
+
+  const previewType = modelPreviewUrl
+    ? useRiggedPreview ? "绑骨 GLB" : "静态 GLB"
+    : viewStage === 2 && run?.qaOverlayPath ? "SDPose 覆盖图"
+    : run?.previewPath ? "2D 概念图" : "等待资产";
+
   return (
-    <main className="site-shell">
+    <main className={`site-shell ${sidebarCollapsed ? "tasks-collapsed" : ""}`}>
       <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">SIM</span>
-          <span><strong>SUPER IDOL MASTER</strong><small>DGX CHARACTER PIPELINE</small></span>
+        <div className="topbar-left">
+          <div className="brand">
+            <span className="brand-mark"><Sparkles size={18} /></span>
+            <span className="brand-copy"><strong>Super Idol Master</strong><small>AI Asset Studio</small></span>
+          </div>
         </div>
-        <div className="system-badges">
-          <span className="system-badge online"><i /> API</span>
-          <span className="system-badge online"><i /> SQLITE</span>
-          <span className={`system-badge ${system?.comfyui.pipelineReady ? "online" : "offline"}`}>
-            <i /> DGX {system?.comfyui.online ? `${system.comfyui.latencyMs}ms` : "OFFLINE"}
-          </span>
+        <div className="topbar-right">
+          <div className="system-status">
+            <span className="status-pill healthy"><i />API</span>
+            <span className={`status-pill ${system?.comfyui.pipelineReady ? "healthy" : "unhealthy"}`}>
+              <i />DGX {system?.comfyui.online ? `${system.comfyui.latencyMs} ms` : "离线"}
+            </span>
+          </div>
+          <button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
+            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
         </div>
       </header>
 
-      <section className="dashboard-head">
-        <div>
-          <span className="eyebrow">STRICT STATE MACHINE / REAL COMFYUI OUTPUTS</span>
-          <h1>角色资产生产控制台</h1>
-          <p>每个阶段只有在 DGX 返回真实成功和真实产物后才会解锁。</p>
+      {error && (
+        <div className="error-banner" role="alert">
+          <span>{error}</span>
+          <button type="button" onClick={() => setError("")} aria-label="关闭错误提示"><X size={17} /></button>
         </div>
-        <div className="summary-grid">
-          <div><span>总任务</span><strong>{runs.length}</strong></div>
-          <div><span>已完成</span><strong>{completedCount}</strong></div>
-          <div><span>当前进度</span><strong>{progress}%</strong></div>
-        </div>
-      </section>
+      )}
 
-      {error && <div className="error-banner" role="alert"><span>!</span>{error}<button onClick={() => setError("")}>关闭</button></div>}
-
-      <div className="app-layout">
-        <aside className="run-sidebar">
-          <div className="sidebar-head">
-            <div><span>PROJECT RUNS</span><h2>角色任务</h2></div>
-            <button className="new-button" onClick={() => setShowCreate(true)} aria-label="新建角色任务">＋</button>
+      <div className="app-frame">
+        <aside className="task-sidebar">
+          <div className="sidebar-header">
+            <div className="sidebar-copy"><span>任务</span><strong>{runs.length} 个角色资产</strong></div>
+            <div className="sidebar-actions">
+              <button className="icon-button accent new-task-button" type="button" onClick={() => setShowCreate(true)} title="新建任务" aria-label="新建角色任务">
+                <Plus size={18} />
+              </button>
+              <button
+                className="icon-button sidebar-toggle"
+                type="button"
+                onClick={() => setSidebarCollapsed((value) => !value)}
+                title={sidebarCollapsed ? "展开任务栏" : "收起任务栏"}
+                aria-label={sidebarCollapsed ? "展开任务栏" : "收起任务栏"}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+              </button>
+            </div>
           </div>
           <div className="run-list">
-            {loading && <p className="empty-note">正在读取本地数据库…</p>}
-            {!loading && runs.length === 0 && <p className="empty-note">还没有任务，点击右上角创建。</p>}
+            {loading && <p className="empty-note">正在读取任务…</p>}
+            {!loading && runs.length === 0 && <p className="empty-note">还没有角色任务。</p>}
             {runs.map((item) => (
-              <button key={item.id} className={`run-item ${item.id === selectedId ? "selected" : ""}`} onClick={() => setSelectedId(item.id)}>
-                <span className="run-item-top"><i className={item.status} />{item.jobStatus === "running" ? `${jobName(item.jobType)} 执行中` : item.status === "completed" ? "已完成" : "进行中"}<time>{formatTime(item.updatedAt)}</time></span>
-                <strong>{item.name}</strong>
-                <span className="run-item-progress"><i style={{ width: `${Math.round((item.currentStage / 5) * 100)}%` }} /></span>
-                <small>阶段 {item.currentStage + 1} / 6 · {stages[item.currentStage].title}</small>
+              <button
+                key={item.id}
+                className={`run-item ${item.id === selectedId ? "selected" : ""}`}
+                onClick={() => setSelectedId(item.id)}
+                title={sidebarCollapsed ? item.name : undefined}
+              >
+                <span className="run-avatar">{item.name.trim().slice(0, 1).toUpperCase() || "R"}</span>
+                <span className="run-copy">
+                  <span className="run-row"><strong>{item.name}</strong><time>{formatTime(item.updatedAt)}</time></span>
+                  <span className="run-meta">{item.jobStatus === "running" ? `${jobName(item.jobType)} 执行中` : stages[item.currentStage].title}</span>
+                  <span className="run-progress"><i style={{ width: `${Math.round((item.currentStage / 5) * 100)}%` }} /></span>
+                </span>
               </button>
             ))}
           </div>
-          <div className="db-note"><b>SQLite</b><span>data/super-idol-master.db</span></div>
+          <div className="sidebar-footer">
+            <span className="database-dot" />
+            <span className="sidebar-copy"><strong>SQLite</strong><small>本地持久化</small></span>
+          </div>
         </aside>
 
         <section className="workspace">
           {!run ? (
-            <div className="empty-workspace"><b>＋</b><h2>创建第一个角色任务</h2><p>关闭网站后，任务和真实产物引用仍会保留。</p><button className="primary-button" onClick={() => setShowCreate(true)}>新建任务</button></div>
+            <div className="empty-workspace">
+              <span><Box size={30} /></span>
+              <h1>创建角色资产任务</h1>
+              <p>任务、生成进度和产物引用将保存在本地数据库中。</p>
+              <button className="primary-button" type="button" onClick={() => setShowCreate(true)}><Plus size={17} />新建任务</button>
+            </div>
           ) : (
             <>
-              <div className="workspace-title">
-                <div><span>ACTIVE RUN</span><h2>{run.name}</h2><p>更新于 {formatTime(run.updatedAt)}</p></div>
-                <div className="workspace-actions"><button onClick={resetRun} disabled={busy || run.jobStatus === "running"}>重置</button><button className="danger" onClick={deleteRun} disabled={busy || run.jobStatus === "running"}>删除</button></div>
+              <div className="workspace-header">
+                <div className="workspace-heading">
+                  <span className="workspace-kicker">当前任务</span>
+                  <h1>{run.name}</h1>
+                  <p>更新于 {formatTime(run.updatedAt)} · {progress}% 完成</p>
+                </div>
+                <div className="workspace-actions">
+                  <button className="icon-button" type="button" onClick={resetRun} disabled={busy || run.jobStatus === "running"} title="重置任务" aria-label="重置任务"><RotateCcw size={17} /></button>
+                  <button className="icon-button danger" type="button" onClick={deleteRun} disabled={busy || run.jobStatus === "running"} title="删除任务" aria-label="删除任务"><Trash2 size={17} /></button>
+                </div>
               </div>
 
-              <div className="pipeline-checks" aria-label="DGX 工作流依赖检查">
-                {(["2d", "qa", "3d", "rig"] as const).map((kind) => (
-                  <span key={kind} className={workflowReady(kind) ? "ready" : "missing"}><i />{jobName(kind)} {workflowReady(kind) ? "READY" : "MISSING"}</span>
-                ))}
-                <b>QUEUE {system?.comfyui.queue?.running || 0} / {system?.comfyui.queue?.pending || 0}</b>
+              <div className="pipeline-bar">
+                <div className="pipeline-health">
+                  {(["2d", "qa", "3d", "rig"] as const).map((kind) => (
+                    <span key={kind} className={workflowReady(kind) ? "ready" : "missing"}><i />{jobName(kind)}</span>
+                  ))}
+                </div>
+                <span className="queue-status">队列 {system?.comfyui.queue?.running || 0} 运行 / {system?.comfyui.queue?.pending || 0} 等待</span>
               </div>
 
-              <div className="progress-track" aria-label={`真实流程进度 ${progress}%`}><span style={{ width: `${progress}%` }} /></div>
-              <div className="stage-grid">
-                {stages.map((item, index) => {
-                  const state = index < current || (index === current && run.status === "completed") ? "done" : index === current ? "active" : "pending";
-                  let stateLabel = state === "done" ? "已完成" : state === "active" ? "当前" : "锁定";
-                  if (index === current && run.jobStatus === "running") stateLabel = `${jobName(run.jobType)} 中`;
-                  if (index === 2 && index === current && run.qaStatus === "failed") stateLabel = "未通过";
-                  if (index === 2 && index < current) stateLabel = `已通过 ${run.qaScore ?? "-"}分`;
-                  return (
-                    <button
-                      key={item.short}
-                      className={`stage-card ${state} ${viewStage === index ? "viewed" : ""} ${index === 2 ? `qa-${run.qaStatus}` : ""}`}
-                      onClick={() => setViewStage(index)}
-                      aria-current={index === current ? "step" : undefined}
-                      title="仅查看阶段详情，不会改变任务状态"
-                    >
-                      <span className="stage-topline"><b>{String(index + 1).padStart(2, "0")}</b><i>{stateLabel}</i></span>
-                      <span className="stage-code">{item.short}</span><strong>{item.title}</strong><small>{item.subtitle}</small>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="detail-grid">
-                <div className="preview-panel">
-                  <div className="panel-label"><span>ASSET PREVIEW</span><b>{modelPreviewUrl ? useRiggedPreview ? "RIGGED GLB / INTERACTIVE" : "STATIC GLB / INTERACTIVE" : viewStage === 2 && run.qaOverlayPath ? "SDPOSE OVERLAY" : run.previewPath ? "LATEST PNG" : "NO ASSET"}</b></div>
-                  <div className={`preview-frame ${modelPreviewUrl ? "model-preview" : ""} ${hasPreview ? "" : "placeholder"} ${run.jobStatus === "running" ? "generating" : ""}`}>
-                    {modelPreviewUrl ? (
-                      <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} />
-                    ) : visiblePreview ? (
-                      <Image src={visiblePreview} alt={`${run.name} 的角色预览`} width={1328} height={1328} priority unoptimized />
-                    ) : (
-                      <div><b>{stage.short}</b><span>等待本阶段真实产物</span></div>
-                    )}
-                    {visiblePreview && <span className="preview-tag">{viewStage === 2 && run.qaOverlayPath ? "SDPOSE / DGX" : "QWEN IMAGE / LOCAL COPY"}</span>}
-                    {run.jobStatus === "running" && <div className="generation-overlay"><i /><strong>{jobName(run.jobType)} · {run.jobProgress}%</strong><span>{run.jobMessage || "等待 ComfyUI 实时事件"}</span></div>}
+              <div className="production-board">
+                <nav className="stage-rail" aria-label="资产生成阶段">
+                  <div className="stage-rail-header"><span>流程</span><strong>{current + 1} / {stages.length}</strong></div>
+                  <div className="stage-list">
+                    {stages.map((item, index) => {
+                      const state = index < current || (index === current && run.status === "completed") ? "done" : index === current ? "active" : "pending";
+                      let stateLabel = state === "done" ? "已完成" : state === "active" ? "当前" : "待处理";
+                      if (index === current && run.jobStatus === "running") stateLabel = `${run.jobProgress}%`;
+                      if (index === 2 && index === current && run.qaStatus === "failed") stateLabel = "未通过";
+                      if (index === 2 && index < current) stateLabel = `${run.qaScore ?? "-"} 分`;
+                      return (
+                        <button
+                          key={item.short}
+                          type="button"
+                          className={`stage-step ${state} ${viewStage === index ? "viewed" : ""}`}
+                          onClick={() => setViewStage(index)}
+                          aria-current={index === current ? "step" : undefined}
+                        >
+                          <span className="stage-node">{state === "done" ? <Check size={13} /> : String(index + 1)}</span>
+                          <span className="stage-copy"><strong>{item.title}</strong><small>{item.subtitle}</small></span>
+                          <span className="stage-state">{stateLabel}</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                  <div className="asset-stack">
-                    <span className={run.assets.imageReady ? "ready" : "waiting"}>PNG {run.assets.imageReady ? "READY" : "WAIT"}</span>
-                    <span className={run.assets.modelReady ? "ready" : "waiting"}>STATIC GLB {run.assets.modelReady ? "READY" : "WAIT"}</span>
-                    <span className={run.assets.riggedReady ? "ready" : "waiting"}>RIGGED GLB {run.assets.riggedReady ? "READY" : "WAIT"}</span>
+                </nav>
+
+                <div className="asset-column">
+                  <div className="preview-panel" ref={previewPanelRef}>
+                    <div className="preview-header">
+                      <div><span>资产预览</span><strong>{previewType}</strong></div>
+                      <button className="icon-button" type="button" onClick={togglePreviewFullscreen} title={previewFullscreen ? "退出全屏" : "全屏预览"} aria-label={previewFullscreen ? "退出全屏预览" : "进入全屏预览"}>
+                        {previewFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+                      </button>
+                    </div>
+                    <div className={`preview-frame ${modelPreviewUrl ? "model-preview" : ""} ${hasPreview ? "" : "placeholder"} ${run.jobStatus === "running" ? "generating" : ""}`}>
+                      {modelPreviewUrl ? (
+                        <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} />
+                      ) : visiblePreview ? (
+                        <Image src={visiblePreview} alt={`${run.name} 的角色预览`} width={1600} height={1600} priority unoptimized />
+                      ) : (
+                        <div className="preview-empty"><ImageIcon size={38} /><strong>{stage.title}</strong><span>等待本阶段真实产物</span></div>
+                      )}
+                      {run.jobStatus === "running" && (
+                        <div className="generation-overlay">
+                          <i />
+                          <strong>{jobName(run.jobType)} · {run.jobProgress}%</strong>
+                          <span>{run.jobMessage || "等待 ComfyUI 实时事件"}</span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="asset-status-row">
+                      <span className={run.assets.imageReady ? "ready" : "waiting"}><ImageIcon size={15} />PNG</span>
+                      <span className={run.assets.modelReady ? "ready" : "waiting"}><Box size={15} />静态 GLB</span>
+                      <span className={run.assets.riggedReady ? "ready" : "waiting"}><Expand size={15} />绑骨 GLB</span>
+                    </div>
+                  </div>
+
+                  <div className="inspector-grid">
+                    <article className="stage-inspector">
+                      <div className="inspector-heading">
+                        <span>阶段 {String(viewStage + 1).padStart(2, "0")}</span>
+                        <h2>{stage.title}</h2>
+                        <p>{stage.action}</p>
+                      </div>
+                      <dl className="io-grid"><div><dt>输入</dt><dd>{stage.input}</dd></div><div><dt>输出</dt><dd>{stage.output}</dd></div></dl>
+
+                      {!isCurrentView && viewStage < current && <div className="action-note passed"><Check size={17} /><div><strong>阶段已完成</strong><p>后端任务和真实产物均已确认。</p></div></div>}
+                      {!isCurrentView && viewStage > current && <div className="action-note warning"><Circle size={17} /><div><strong>阶段尚未解锁</strong><p>请先完成“{stages[current].title}”。</p></div></div>}
+                      {isCurrentView && run.jobStatus === "running" && <div className="action-note running"><RefreshCw size={17} /><div><strong>{jobName(run.jobType)} 正在执行</strong><p>{run.jobMessage}</p></div></div>}
+                      {isCurrentView && run.jobStatus === "failed" && <div className="action-note failed"><X size={17} /><div><strong>{jobName(run.jobType)} 执行失败</strong><p>{run.jobMessage}</p></div></div>}
+
+                      {viewStage === 2 && run.qaScore !== null && (
+                        <div className={`qa-summary ${run.qaStatus}`}>
+                          <strong>{run.qaScore}</strong><span>/ 100</span><p>{run.qaSummary}</p>
+                        </div>
+                      )}
+                      {viewStage === 2 && Object.keys(run.qaMetrics || {}).length > 0 && (
+                        <div className="metric-grid">
+                          <div><span>最小置信度</span><strong>{Math.round((run.qaMetrics.minConfidence || 0) * 100)}%</strong></div>
+                          <div><span>水平误差</span><strong>{Math.round((run.qaMetrics.armHorizontalError || 0) * 100)}%</strong></div>
+                          <div><span>左肘角度</span><strong>{run.qaMetrics.leftElbowAngle || 0}°</strong></div>
+                          <div><span>右肘角度</span><strong>{run.qaMetrics.rightElbowAngle || 0}°</strong></div>
+                        </div>
+                      )}
+
+                      {run.jobStatus === "running" && (
+                        <div className="live-progress" aria-label={`ComfyUI 实时进度 ${run.jobProgress}%`}>
+                          <div><span>ComfyUI 实时进度</span><strong>{run.jobProgress}%</strong></div>
+                          <span className="live-progress-track"><i style={{ width: `${run.jobProgress}%` }} /></span>
+                          <small>Prompt {run.jobPromptId ? run.jobPromptId.slice(0, 16) : "等待提交"} · Node {run.jobCurrentNode || "等待执行"}</small>
+                        </div>
+                      )}
+
+                      <details className="prompt-details">
+                        <summary>查看任务提示词</summary>
+                        <div><span>正向提示词</span><p>{run.positivePrompt || "尚未填写"}</p></div>
+                        <div><span>负向提示词</span><p>{run.negativePrompt || "尚未填写"}</p></div>
+                      </details>
+
+                      <div className="detail-actions">
+                        {isCurrentView && current === 0 && <button className="primary-button" onClick={() => runAction("start", "进入 2D 阶段失败")} disabled={busy}><Play size={16} />确认设定</button>}
+                        {isCurrentView && current === 1 && <button className="primary-button" onClick={() => runAction("generate-2d", "2D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Sparkles size={16} />{run.previewPath ? "重新生成 2D" : "生成 2D 概念图"}</button>}
+                        {isCurrentView && current === 2 && run.qaStatus === "failed" && <button className="warning-button" onClick={() => runAction("generate-2d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新生成 2D</button>}
+                        {isCurrentView && current === 2 && run.jobStatus !== "running" && <button className="secondary-button" onClick={() => runAction("check-tpose", "自动检查启动失败")} disabled={busy}><RefreshCw size={16} />重新检查姿态</button>}
+                        {isCurrentView && current === 3 && <button className="primary-button" onClick={() => runAction("generate-3d", "3D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Box size={16} />生成静态 GLB</button>}
+                        {isCurrentView && current === 4 && <button className="primary-button" onClick={() => runAction("rig", "绑骨任务提交失败")} disabled={busy || run.jobStatus === "running"}><Expand size={16} />运行自动绑骨</button>}
+                        {viewStage === 1 && run.assets.imageReady && <a className="download-button" href={downloadUrl(run.assets.imageDownloadUrl)}><Download size={16} />下载 PNG</a>}
+                        {viewStage >= 3 && run.assets.modelReady && <a className="download-button" href={downloadUrl(run.assets.modelDownloadUrl)}><Download size={16} />下载静态 GLB</a>}
+                        {viewStage === 5 && run.assets.riggedReady && <a className="download-button primary" href={downloadUrl(run.assets.riggedDownloadUrl)}><Download size={16} />下载最终 GLB</a>}
+                      </div>
+                    </article>
+
+                    <section className="event-panel">
+                      <div className="section-heading"><div><span>活动</span><strong>任务记录</strong></div><MoreHorizontal size={18} /></div>
+                      <div className="event-list">
+                        {detail.events.slice(0, 8).map((item) => (
+                          <div className="event-item" key={item.id}>
+                            <span className="event-dot" />
+                            <div><strong>{item.message}</strong><span>{stages[item.stage]?.title || "流程"} · {formatTime(item.createdAt)}</span></div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
                   </div>
                 </div>
-
-                <article className="stage-detail">
-                  <div className="detail-kicker"><span>STAGE {String(viewStage + 1).padStart(2, "0")}</span><b>{stage.short}</b></div>
-                  <h2>{stage.title}</h2>
-                  <p className="detail-lead">{stage.action}</p>
-                  <dl className="io-grid"><div><dt>输入</dt><dd>{stage.input}</dd></div><div><dt>输出</dt><dd>{stage.output}</dd></div></dl>
-
-                  {!isCurrentView && viewStage < current && <div className="action-note passed"><span>真实阶段已完成</span><p>该阶段由后端任务成功和产物存在性共同确认。点击阶段卡片不会改变流程状态。</p></div>}
-                  {!isCurrentView && viewStage > current && <div className="action-note warning"><span>阶段尚未解锁</span><p>必须先完成“{stages[current].title}”的真实 DGX 任务，不能手动跳过。</p></div>}
-                  {isCurrentView && run.jobStatus === "running" && <div className="action-note generation-running"><span>{jobName(run.jobType)} 正在 DGX 执行</span><p>{run.jobMessage}</p></div>}
-                  {isCurrentView && run.jobStatus === "failed" && <div className="action-note failed"><span>{jobName(run.jobType)} 执行失败</span><p>{run.jobMessage}</p></div>}
-
-                  {viewStage === 2 && run.qaScore !== null && <div className={`qa-score ${run.qaStatus}`}>
-                    <strong>{run.qaScore}</strong><span>/ 100</span><p>{run.qaSummary}</p>
-                  </div>}
-                  {viewStage === 2 && Object.keys(run.qaMetrics || {}).length > 0 && <div className="metric-grid">
-                    <div><span>最小置信度</span><strong>{Math.round((run.qaMetrics.minConfidence || 0) * 100)}%</strong></div>
-                    <div><span>水平误差</span><strong>{Math.round((run.qaMetrics.armHorizontalError || 0) * 100)}%</strong></div>
-                    <div><span>左肘角度</span><strong>{run.qaMetrics.leftElbowAngle || 0}°</strong></div>
-                    <div><span>右肘角度</span><strong>{run.qaMetrics.rightElbowAngle || 0}°</strong></div>
-                  </div>}
-
-                  {run.jobStatus === "running" && <div className="live-progress" aria-label={`ComfyUI 实时进度 ${run.jobProgress}%`}>
-                    <div className="live-progress-head"><span>COMFYUI REAL EVENT PROGRESS</span><strong>{run.jobProgress}%</strong></div>
-                    <div className="live-progress-track"><i style={{ width: `${run.jobProgress}%` }} /></div>
-                    <div className="live-progress-meta"><span>Prompt: {run.jobPromptId ? run.jobPromptId.slice(0, 16) : "等待提交"}</span><span>Node: {run.jobCurrentNode || "等待执行"}</span></div>
-                  </div>}
-
-                  <div className="prompt-box"><span>正向提示词</span><p>{run.positivePrompt || "尚未填写"}</p></div>
-                  <div className="detail-actions">
-                    {isCurrentView && current === 0 && <button className="primary-button" onClick={() => runAction("start", "进入 2D 阶段失败")} disabled={busy}>确认设定，进入 2D →</button>}
-                    {isCurrentView && current === 1 && <button className="generate-button" onClick={() => runAction("generate-2d", "2D 任务提交失败")} disabled={busy || run.jobStatus === "running"}>{run.previewPath ? "重新生成 Qwen 2D ↻" : "开始 Qwen 2D →"}</button>}
-                    {isCurrentView && current === 2 && run.qaStatus === "failed" && <button className="regenerate-button" onClick={() => runAction("generate-2d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}>QA 未通过，重新生成 2D ↻</button>}
-                    {isCurrentView && current === 2 && run.jobStatus !== "running" && <button className="secondary-button" onClick={() => runAction("check-tpose", "自动检查启动失败")} disabled={busy}>重新运行 SDPose 检查</button>}
-                    {isCurrentView && current === 3 && <button className="primary-button" onClick={() => runAction("generate-3d", "3D 任务提交失败")} disabled={busy || run.jobStatus === "running"}>生成真实静态 GLB →</button>}
-                    {isCurrentView && current === 4 && <button className="primary-button" onClick={() => runAction("rig", "绑骨任务提交失败")} disabled={busy || run.jobStatus === "running"}>运行 SkinTokens 绑骨 →</button>}
-                    {viewStage === 1 && run.assets.imageReady && <a className="download-button" href={downloadUrl(run.assets.imageDownloadUrl)}>下载 PNG</a>}
-                    {viewStage >= 3 && run.assets.modelReady && <a className="download-button" href={downloadUrl(run.assets.modelDownloadUrl)}>下载静态 GLB</a>}
-                    {viewStage === 5 && run.assets.riggedReady && <a className="download-button primary" href={downloadUrl(run.assets.riggedDownloadUrl)}>下载最终绑骨 GLB</a>}
-                  </div>
-                </article>
               </div>
-
-              <section className="event-section">
-                <div className="panel-label"><span>DATABASE EVENTS</span><b>{detail.events.length} 条真实记录</b></div>
-                <div className="event-list">
-                  {detail.events.map((item) => <div className="event-item" key={item.id}><i /><div><strong>{item.message}</strong><span>{stages[item.stage]?.title || "流程"}</span></div><time>{formatTime(item.createdAt)}</time></div>)}
-                </div>
-              </section>
             </>
           )}
         </section>
+
+        <aside className="agent-panel">
+          <div className="agent-header">
+            <div className="agent-title"><span><Bot size={19} /></span><div><strong>Asset Agent</strong><small>工作对话</small></div></div>
+            <span className="agent-state"><i />待命</span>
+          </div>
+          <div className="agent-context">
+            <span>任务上下文</span>
+            <strong>{run?.name || "未选择任务"}</strong>
+            <p>{run ? `${stages[current].title} · ${progress}% 完成` : "选择或创建任务后开始"}</p>
+          </div>
+          <div className="chat-thread">
+            {chatMessages.map((message) => (
+              <div className={`chat-message ${message.role}`} key={message.id}>
+                <span className="chat-avatar">{message.role === "assistant" ? <Bot size={16} /> : <User size={16} />}</span>
+                <div><strong>{message.role === "assistant" ? "Asset Agent" : "你"}</strong><p>{message.content}</p></div>
+              </div>
+            ))}
+          </div>
+          <form className="chat-composer" onSubmit={sendChatMessage}>
+            <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} rows={3} placeholder="给 Agent 下达资产生成任务…" />
+            <div className="composer-footer">
+              <span><MessageSquare size={15} />当前会话</span>
+              <button type="submit" disabled={!chatInput.trim()} aria-label="发送消息" title="发送消息"><Send size={17} /></button>
+            </div>
+          </form>
+        </aside>
       </div>
 
       {showCreate && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowCreate(false); }}>
           <form className="create-modal" onSubmit={createRun}>
-            <div className="modal-head"><div><span>NEW CHARACTER RUN</span><h2>新建角色任务</h2></div><button type="button" onClick={() => setShowCreate(false)} aria-label="关闭">×</button></div>
+            <div className="modal-header"><div><span>新任务</span><h2>创建角色资产</h2></div><button className="icon-button" type="button" onClick={() => setShowCreate(false)} aria-label="关闭"><X size={19} /></button></div>
             <label>任务名称<input autoFocus required maxLength={80} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：未来城市女飞行员" /></label>
-            <label>正向提示词<textarea rows={5} maxLength={4000} value={form.positivePrompt} onChange={(event) => setForm({ ...form, positivePrompt: event.target.value })} placeholder="描述人物、服装、风格，并明确正视、全身、严格 T-Pose、纯色背景…" /></label>
-            <label>负向提示词<textarea rows={3} maxLength={2000} value={form.negativePrompt} onChange={(event) => setForm({ ...form, negativePrompt: event.target.value })} /></label>
-            <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "创建中…" : "创建并保存"}</button></div>
+            <label>正向提示词<textarea rows={6} maxLength={4000} value={form.positivePrompt} onChange={(event) => setForm({ ...form, positivePrompt: event.target.value })} /></label>
+            <label>负向提示词<textarea rows={4} maxLength={2000} value={form.negativePrompt} onChange={(event) => setForm({ ...form, negativePrompt: event.target.value })} /></label>
+            <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "创建中…" : "创建任务"}</button></div>
           </form>
         </div>
       )}
