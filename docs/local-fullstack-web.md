@@ -46,7 +46,7 @@ web/data/runtime-err.log
 
 ## 3. 严格状态机
 
-阶段卡片只用于查看，不能修改数据库状态。后端也不再提供任意 `PATCH stage` 或手工 QA 放行接口。
+待处理阶段不可点击，已完成阶段可以通过受控 `revert` 操作回退。后端不提供任意 `PATCH stage` 或手工 QA 放行接口；回退只允许指向当前阶段之前的已完成阶段，并清除目标阶段及其下游产物引用。
 
 ```text
 IDEA
@@ -64,6 +64,7 @@ IDEA
 - 3D 失败：停留在 3D，上游 PNG 保留。
 - 绑骨失败：停留在 RIG，静态 GLB 保留。
 - 页面点击阶段卡片不会解锁后续阶段。
+- 回退到 2D 会清除 PNG、QA 和 3D/RIG 引用；回退到 QA 保留 PNG；回退到 3D 保留已通过 QA；回退到 RIG 保留静态 GLB。
 
 ## 4. API
 
@@ -72,13 +73,14 @@ IDEA
 | `GET` | `/api/health` | API 和 SQLite 健康检查 |
 | `GET` | `/api/system` | ComfyUI、队列、节点和模型依赖检查 |
 | `GET` | `/api/runs` | 任务列表 |
-| `POST` | `/api/runs` | 新建任务 |
+| `POST` | `/api/runs` | 使用资产名称新建任务 |
 | `GET` | `/api/runs/:id` | 任务、自动 QA 和事件详情 |
-| `POST` | `/api/runs/:id/start` | 确认角色设定，进入 2D |
+| `POST` | `/api/runs/:id/start` | 保存正反提示词，确认角色设定并进入 2D |
 | `POST` | `/api/runs/:id/generate-2d` | 执行 Qwen Image |
 | `POST` | `/api/runs/:id/check-tpose` | 执行 SDPose 自动检查 |
 | `POST` | `/api/runs/:id/generate-3d` | 执行 Pixal3D |
 | `POST` | `/api/runs/:id/rig` | 执行 SkinTokens |
+| `POST` | `/api/runs/:id/revert` | 回退到指定已完成阶段并清除下游产物引用 |
 | `GET` | `/api/runs/:id/download/image` | 下载真实 PNG |
 | `GET` | `/api/runs/:id/download/model` | 下载真实静态 GLB |
 | `GET` | `/api/runs/:id/download/rigged` | 下载真实绑骨 GLB |

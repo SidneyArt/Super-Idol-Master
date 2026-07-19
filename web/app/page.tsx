@@ -5,7 +5,6 @@ import {
   Bot,
   Box,
   Check,
-  Circle,
   Download,
   Expand,
   ImageIcon,
@@ -26,6 +25,7 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  Undo2,
   User,
   X,
 } from "lucide-react";
@@ -145,8 +145,8 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { id: 1, role: "assistant", content: "工作区已就绪。当前任务上下文和流水线状态会显示在这里。" },
   ]);
-  const [form, setForm] = useState({
-    name: "",
+  const [form, setForm] = useState({ name: "" });
+  const [promptDraft, setPromptDraft] = useState({
     positivePrompt: DEFAULT_POSITIVE_PROMPT,
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
   });
@@ -217,6 +217,10 @@ export default function Home() {
         if (cancelled) return;
         setDetail(data);
         setViewStage(data.run.currentStage);
+        setPromptDraft({
+          positivePrompt: data.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
+          negativePrompt: data.run.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
+        });
       })
       .catch((reason) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "任务读取失败");
@@ -253,14 +257,21 @@ export default function Home() {
     : null;
   const hasPreview = Boolean(visiblePreview || modelPreviewUrl);
 
-  async function runAction(path: string, fallback: string) {
+  async function runAction(path: string, fallback: string, payload?: Record<string, unknown>) {
     if (!run || busy) return;
     setBusy(true);
     setError("");
     try {
-      const data = await api<RunDetail>(`/api/runs/${run.id}/${path}`, { method: "POST" });
+      const data = await api<RunDetail>(`/api/runs/${run.id}/${path}`, {
+        method: "POST",
+        body: payload ? JSON.stringify(payload) : undefined,
+      });
       setDetail(data);
       setViewStage(data.run.currentStage);
+      setPromptDraft({
+        positivePrompt: data.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
+        negativePrompt: data.run.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
+      });
       await refreshRuns(run.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : fallback);
@@ -289,6 +300,31 @@ export default function Home() {
     }
   }
 
+  async function revertToStage(stageIndex: number) {
+    if (!run || busy || run.jobStatus === "running") return;
+    const target = stages[stageIndex];
+    if (!window.confirm(`回退到“${target.title}”会清除该阶段及后续阶段的产物引用，确定继续吗？`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      const data = await api<RunDetail>(`/api/runs/${run.id}/revert`, {
+        method: "POST",
+        body: JSON.stringify({ stage: stageIndex }),
+      });
+      setDetail(data);
+      setViewStage(stageIndex);
+      setPromptDraft({
+        positivePrompt: data.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
+        negativePrompt: data.run.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
+      });
+      await refreshRuns(run.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "流程回退失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createRun(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -296,10 +332,14 @@ export default function Home() {
     try {
       const data = await api<RunDetail>("/api/runs", {
         method: "POST",
-        body: JSON.stringify(form),
+        body: JSON.stringify({ name: form.name }),
       });
       setShowCreate(false);
-      setForm({ name: "", positivePrompt: DEFAULT_POSITIVE_PROMPT, negativePrompt: DEFAULT_NEGATIVE_PROMPT });
+      setForm({ name: "" });
+      setPromptDraft({
+        positivePrompt: data.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
+        negativePrompt: data.run.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
+      });
       setDetail(data);
       setViewStage(0);
       await refreshRuns(data.run.id);
@@ -487,17 +527,24 @@ export default function Home() {
                       if (index === 2 && index === current && run.qaStatus === "failed") stateLabel = "未通过";
                       if (index === 2 && index < current) stateLabel = `${run.qaScore ?? "-"} 分`;
                       return (
-                        <button
-                          key={item.short}
-                          type="button"
-                          className={`stage-step ${state} ${viewStage === index ? "viewed" : ""}`}
-                          onClick={() => setViewStage(index)}
-                          aria-current={index === current ? "step" : undefined}
-                        >
-                          <span className="stage-node">{state === "done" ? <Check size={13} /> : String(index + 1)}</span>
-                          <span className="stage-copy"><strong>{item.title}</strong><small>{item.subtitle}</small></span>
-                          <span className="stage-state">{stateLabel}</span>
-                        </button>
+                        <div key={item.short} className={`stage-step ${state} ${viewStage === index ? "viewed" : ""}`}>
+                          <button
+                            type="button"
+                            className="stage-main"
+                            onClick={() => setViewStage(index)}
+                            disabled={state === "pending"}
+                            aria-current={index === current ? "step" : undefined}
+                          >
+                            <span className="stage-node">{state === "done" ? <Check size={13} /> : String(index + 1)}</span>
+                            <span className="stage-copy"><strong>{item.title}</strong><small>{item.subtitle}</small></span>
+                            <span className="stage-state">{stateLabel}</span>
+                          </button>
+                          {state === "done" && index < current && (
+                            <button className="stage-revert" type="button" onClick={() => revertToStage(index)} disabled={busy || run.jobStatus === "running"} title={`回退到${item.title}`} aria-label={`回退到${item.title}`}>
+                              <Undo2 size={14} />
+                            </button>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -532,19 +579,34 @@ export default function Home() {
                       <span className={run.assets.modelReady ? "ready" : "waiting"}><Box size={15} />静态 GLB</span>
                       <span className={run.assets.riggedReady ? "ready" : "waiting"}><Expand size={15} />绑骨 GLB</span>
                     </div>
-                  </div>
+                    <div className="preview-workflow-footer">
+                      {isCurrentView && (
+                        <div className="current-stage-summary">
+                          <div className="current-stage-heading">
+                            <span>当前阶段 {String(current + 1).padStart(2, "0")}</span>
+                            <strong>{stages[current].title}</strong>
+                            <p>{stages[current].action}</p>
+                          </div>
+                          <div className="current-stage-io">
+                            <span>输入 <b>{stages[current].input}</b></span>
+                            <span>输出 <b>{stages[current].output}</b></span>
+                          </div>
+                        </div>
+                      )}
 
-                  <div className="inspector-grid">
-                    <article className="stage-inspector">
-                      <div className="inspector-heading">
-                        <span>阶段 {String(viewStage + 1).padStart(2, "0")}</span>
-                        <h2>{stage.title}</h2>
-                        <p>{stage.action}</p>
-                      </div>
-                      <dl className="io-grid"><div><dt>输入</dt><dd>{stage.input}</dd></div><div><dt>输出</dt><dd>{stage.output}</dd></div></dl>
+                      {isCurrentView && current === 0 && (
+                        <div className="stage-prompt-editor">
+                          <label>
+                            <span>正向提示词</span>
+                            <textarea rows={5} maxLength={4000} value={promptDraft.positivePrompt} onChange={(event) => setPromptDraft({ ...promptDraft, positivePrompt: event.target.value })} />
+                          </label>
+                          <label>
+                            <span>负向提示词</span>
+                            <textarea rows={4} maxLength={2000} value={promptDraft.negativePrompt} onChange={(event) => setPromptDraft({ ...promptDraft, negativePrompt: event.target.value })} />
+                          </label>
+                        </div>
+                      )}
 
-                      {!isCurrentView && viewStage < current && <div className="action-note passed"><Check size={17} /><div><strong>阶段已完成</strong><p>后端任务和真实产物均已确认。</p></div></div>}
-                      {!isCurrentView && viewStage > current && <div className="action-note warning"><Circle size={17} /><div><strong>阶段尚未解锁</strong><p>请先完成“{stages[current].title}”。</p></div></div>}
                       {isCurrentView && run.jobStatus === "running" && <div className="action-note running"><RefreshCw size={17} /><div><strong>{jobName(run.jobType)} 正在执行</strong><p>{run.jobMessage}</p></div></div>}
                       {isCurrentView && run.jobStatus === "failed" && <div className="action-note failed"><X size={17} /><div><strong>{jobName(run.jobType)} 执行失败</strong><p>{run.jobMessage}</p></div></div>}
 
@@ -562,7 +624,7 @@ export default function Home() {
                         </div>
                       )}
 
-                      {run.jobStatus === "running" && (
+                      {isCurrentView && run.jobStatus === "running" && (
                         <div className="live-progress" aria-label={`ComfyUI 实时进度 ${run.jobProgress}%`}>
                           <div><span>ComfyUI 实时进度</span><strong>{run.jobProgress}%</strong></div>
                           <span className="live-progress-track"><i style={{ width: `${run.jobProgress}%` }} /></span>
@@ -570,15 +632,9 @@ export default function Home() {
                         </div>
                       )}
 
-                      <details className="prompt-details">
-                        <summary>查看任务提示词</summary>
-                        <div><span>正向提示词</span><p>{run.positivePrompt || "尚未填写"}</p></div>
-                        <div><span>负向提示词</span><p>{run.negativePrompt || "尚未填写"}</p></div>
-                      </details>
-
-                      <div className="detail-actions">
-                        {isCurrentView && current === 0 && <button className="primary-button" onClick={() => runAction("start", "进入 2D 阶段失败")} disabled={busy}><Play size={16} />确认设定</button>}
-                        {isCurrentView && current === 1 && <button className="primary-button" onClick={() => runAction("generate-2d", "2D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Sparkles size={16} />{run.previewPath ? "重新生成 2D" : "生成 2D 概念图"}</button>}
+                      <div className="preview-actions">
+                        {isCurrentView && current === 0 && <button className="primary-button" onClick={() => runAction("start", "进入 2D 阶段失败", promptDraft)} disabled={busy || !promptDraft.positivePrompt.trim()}><Play size={16} />确认设定</button>}
+                        {isCurrentView && current === 1 && <button className="primary-button" onClick={() => runAction("generate-2d", "2D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Sparkles size={16} />生成 2D 概念图</button>}
                         {isCurrentView && current === 2 && run.qaStatus === "failed" && <button className="warning-button" onClick={() => runAction("generate-2d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新生成 2D</button>}
                         {isCurrentView && current === 2 && run.jobStatus !== "running" && <button className="secondary-button" onClick={() => runAction("check-tpose", "自动检查启动失败")} disabled={busy}><RefreshCw size={16} />重新检查姿态</button>}
                         {isCurrentView && current === 3 && <button className="primary-button" onClick={() => runAction("generate-3d", "3D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Box size={16} />生成静态 GLB</button>}
@@ -587,20 +643,20 @@ export default function Home() {
                         {viewStage >= 3 && run.assets.modelReady && <a className="download-button" href={downloadUrl(run.assets.modelDownloadUrl)}><Download size={16} />下载静态 GLB</a>}
                         {viewStage === 5 && run.assets.riggedReady && <a className="download-button primary" href={downloadUrl(run.assets.riggedDownloadUrl)}><Download size={16} />下载最终 GLB</a>}
                       </div>
-                    </article>
-
-                    <section className="event-panel">
-                      <div className="section-heading"><div><span>活动</span><strong>任务记录</strong></div><MoreHorizontal size={18} /></div>
-                      <div className="event-list">
-                        {detail.events.slice(0, 8).map((item) => (
-                          <div className="event-item" key={item.id}>
-                            <span className="event-dot" />
-                            <div><strong>{item.message}</strong><span>{stages[item.stage]?.title || "流程"} · {formatTime(item.createdAt)}</span></div>
-                          </div>
-                        ))}
-                      </div>
-                    </section>
+                    </div>
                   </div>
+
+                  <section className="event-panel event-panel-full">
+                    <div className="section-heading"><div><span>活动</span><strong>任务记录</strong></div><MoreHorizontal size={18} /></div>
+                    <div className="event-list">
+                      {detail.events.slice(0, 8).map((item) => (
+                        <div className="event-item" key={item.id}>
+                          <span className="event-dot" />
+                          <div><strong>{item.message}</strong><span>{stages[item.stage]?.title || "流程"} · {formatTime(item.createdAt)}</span></div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
                 </div>
               </div>
             </>
@@ -653,11 +709,9 @@ export default function Home() {
       {showCreate && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowCreate(false); }}>
           <form className="create-modal" onSubmit={createRun}>
-            <div className="modal-header"><div><span>新任务</span><h2>创建角色资产</h2></div><button className="icon-button" type="button" onClick={() => setShowCreate(false)} aria-label="关闭"><X size={19} /></button></div>
-            <label>任务名称<input autoFocus required maxLength={80} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：未来城市女飞行员" /></label>
-            <label>正向提示词<textarea rows={6} maxLength={4000} value={form.positivePrompt} onChange={(event) => setForm({ ...form, positivePrompt: event.target.value })} /></label>
-            <label>负向提示词<textarea rows={4} maxLength={2000} value={form.negativePrompt} onChange={(event) => setForm({ ...form, negativePrompt: event.target.value })} /></label>
-            <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "创建中…" : "创建任务"}</button></div>
+            <div className="modal-header"><div><span>新资产</span><h2>创建角色资产</h2></div><button className="icon-button" type="button" onClick={() => setShowCreate(false)} aria-label="关闭"><X size={19} /></button></div>
+            <label>资产名称<input autoFocus required maxLength={80} value={form.name} onChange={(event) => setForm({ name: event.target.value })} placeholder="例如：未来城市女飞行员" /></label>
+            <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "创建中…" : "创建资产"}</button></div>
           </form>
         </div>
       )}

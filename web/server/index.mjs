@@ -241,6 +241,52 @@ function runDetail(id) {
   return { run: serializeRun(getRunRow(id)), events: getEvents(id) };
 }
 
+function revertRun(runId, targetStage) {
+  const run = getRunRow(runId);
+  if (!run) throw new Error("任务不存在");
+  if (activeJob?.runId === runId || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能回退");
+  if (!Number.isInteger(targetStage) || targetStage < 0 || targetStage >= run.currentStage) {
+    throw new Error("只能回退到当前阶段之前的已完成阶段");
+  }
+
+  const now = new Date().toISOString();
+  const keepImage = targetStage >= 2 ? run.imagePathInternal : null;
+  const keepPreview = targetStage >= 2 ? run.previewPath : null;
+  const keepQa = targetStage >= 3;
+  const keepModel = targetStage >= 4 ? run.modelPathInternal : null;
+  const stageNames = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动绑骨", "资产导出"];
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`
+      UPDATE runs SET current_stage = ?, status = 'active', job_type = 'none',
+        generation_status = 'idle', generation_message = '', generation_progress = 0,
+        generation_prompt_id = NULL, generation_current_node = NULL,
+        preview_path = ?, image_path = ?, model_path = ?, rigged_model_path = NULL,
+        qa_status = ?, qa_score = ?, qa_summary = ?, qa_metrics = ?, qa_overlay_path = ?,
+        updated_at = ? WHERE id = ?
+    `).run(
+      targetStage,
+      keepPreview,
+      keepImage,
+      keepModel,
+      keepQa ? run.qaStatus : "pending",
+      keepQa ? run.qaScore : null,
+      keepQa ? run.qaSummary : "",
+      keepQa ? run.qaMetricsJson : "{}",
+      keepQa ? run.qaOverlayPath : null,
+      now,
+      runId,
+    );
+    addEvent(runId, "stage_reverted", targetStage, `流程回退到“${stageNames[targetStage]}”，下游产物引用已清除`, now);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return runDetail(runId);
+}
+
 function json(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
@@ -730,7 +776,7 @@ const server = createServer(async (req, res) => {
         VALUES (?, ?, ?, ?, ?, ?)
       `).run(
         id,
-        cleanText(body.name, 80, "任务名称", true),
+        cleanText(body.name, 80, "资产名称", true),
         cleanText(body.positivePrompt, 4000, "正向提示词"),
         cleanText(body.negativePrompt, 2000, "反向提示词"),
         now,
@@ -754,8 +800,14 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[3] === "start") {
         if (existing.jobStatus === "running") throw new Error("当前任务仍在执行");
+        const body = await readBody(req);
+        const positivePrompt = cleanText(body.positivePrompt ?? existing.positivePrompt, 4000, "正向提示词", true);
+        const negativePrompt = cleanText(body.negativePrompt ?? existing.negativePrompt, 2000, "负向提示词");
         const now = new Date().toISOString();
-        db.prepare("UPDATE runs SET current_stage = 1, status = 'active', updated_at = ? WHERE id = ?").run(now, id);
+        db.prepare(`
+          UPDATE runs SET positive_prompt = ?, negative_prompt = ?, current_stage = 1,
+            status = 'active', updated_at = ? WHERE id = ?
+        `).run(positivePrompt, negativePrompt, now, id);
         addEvent(id, "idea_confirmed", 0, "角色设定已确认，进入 2D 生成", now);
         json(res, 200, runDetail(id));
         return;
@@ -774,6 +826,11 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[3] === "rig") {
         json(res, 202, startJob(id, "rig"));
+        return;
+      }
+      if (req.method === "POST" && parts[3] === "revert") {
+        const body = await readBody(req);
+        json(res, 200, revertRun(id, Number(body.stage)));
         return;
       }
       if (req.method === "GET" && parts[3] === "download" && parts[4]) {
