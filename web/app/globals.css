@@ -395,9 +395,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .generation-progress-track { height: 8px; display: block; margin: 14px 0 10px; border-radius: 5px; background: rgba(255,255,255,.14); overflow: hidden; }
 .generation-progress-track i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 260ms ease; }
 .generation-progress small { display: block; color: #8f99a6; font-size: 12px; overflow-wrap: anywhere; }
-.asset-status-row { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--border); }
+.asset-status-row { min-height: 44px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 7px 10px; border-top: 1px solid var(--border); }
 .asset-status-row span { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 5px; color: var(--muted); background: var(--surface-soft); font-size: 12px; }
 .asset-status-row span.ready { color: var(--success); background: var(--success-soft); }
+.asset-status-actions { min-width: 0; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 7px; margin-left: auto; }
+.asset-status-actions .primary-button, .asset-status-actions .secondary-button, .asset-status-actions .download-button { min-height: 32px; padding-inline: 10px; font-size: 12px; }
 .stage-workflow-panel { margin-top: 14px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); box-shadow: var(--shadow); }
 .stage-workflow-content { padding: 16px; }
 .current-stage-summary { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
@@ -626,6 +628,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .preview-frame, .preview-frame.model-preview .model-viewer-shell { min-height: 380px; }
   .asset-status-row { align-items: stretch; flex-direction: column; }
   .asset-status-row span { justify-content: center; }
+  .asset-status-actions { width: 100%; justify-content: flex-end; margin-left: 0; }
   .current-stage-summary { flex-direction: column; }
   .current-stage-io { width: 100%; min-width: 0; }
   .stage-prompt-editor { grid-template-columns: 1fr; }
