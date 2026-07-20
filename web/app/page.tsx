@@ -214,6 +214,7 @@ export default function Home() {
   const [agentWidth, setAgentWidth] = useState(360);
   const [theme, setTheme] = useState<Theme>("dark");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
+  const [qaBlend, setQaBlend] = useState(0.5);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
@@ -313,6 +314,7 @@ export default function Home() {
         setChatMessages(agentData.messages);
         setAgentAttachment(null);
         setViewStage(data.run.currentStage);
+        setQaBlend(0.5);
         setPromptDraft({
           positivePrompt: data.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
           negativePrompt: data.run.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
@@ -351,6 +353,7 @@ export default function Home() {
   const visiblePreview = viewStage < 3
     ? viewStage === 2 && run?.qaOverlayPath ? run.qaOverlayPath : run?.previewPath
     : null;
+  const hasQaComparison = Boolean(viewStage === 2 && run?.previewPath && run.qaOverlayPath);
   const useRiggedPreview = viewStage >= 4 && run?.assets.riggedReady === true;
   const modelPreviewUrl = viewStage >= 3 && run?.assets.modelReady
     ? downloadUrl(useRiggedPreview ? run.assets.riggedDownloadUrl : run.assets.modelDownloadUrl)
@@ -780,6 +783,7 @@ export default function Home() {
 
   const previewType = modelPreviewUrl
     ? useRiggedPreview ? "绑骨 GLB" : "静态 GLB"
+    : hasQaComparison ? "SDPose 对比"
     : viewStage === 2 && run?.qaOverlayPath ? "SDPose 覆盖图"
     : run?.previewPath ? "2D 概念图" : "等待资产";
 
@@ -906,7 +910,10 @@ export default function Home() {
                           <button
                             type="button"
                             className="stage-main"
-                            onClick={() => setViewStage(index)}
+                            onClick={() => {
+                              setViewStage(index);
+                              if (index === 2) setQaBlend(0.5);
+                            }}
                             disabled={state === "pending"}
                             aria-current={index === current ? "step" : undefined}
                           >
@@ -936,8 +943,45 @@ export default function Home() {
                     <div className={`preview-frame ${modelPreviewUrl ? "model-preview" : ""} ${hasPreview ? "" : "placeholder"} ${run.jobStatus === "running" ? "generating" : ""}`}>
                       {modelPreviewUrl ? (
                         <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} />
+                      ) : hasQaComparison ? (
+                        <div className="qa-blend-preview">
+                          <Image
+                            className="qa-blend-image"
+                            src={run.previewPath!}
+                            alt={`${run.name} 的原画`}
+                            width={1600}
+                            height={1600}
+                            style={{ opacity: 1 - qaBlend }}
+                            priority
+                            unoptimized
+                          />
+                          <Image
+                            className="qa-blend-image"
+                            src={run.qaOverlayPath!}
+                            alt={`${run.name} 的 SDPose 骨骼覆盖图`}
+                            width={1600}
+                            height={1600}
+                            style={{ opacity: qaBlend }}
+                            priority
+                            unoptimized
+                          />
+                          <div className="qa-blend-control">
+                            <span>原画</span>
+                            <input
+                              type="range"
+                              min={0}
+                              max={1}
+                              step={0.01}
+                              value={qaBlend}
+                              onChange={(event) => setQaBlend(Number(event.target.value))}
+                              aria-label="原画与骨骼覆盖图混合比例"
+                            />
+                            <span>骨骼</span>
+                            <output>{Math.round(qaBlend * 100)}%</output>
+                          </div>
+                        </div>
                       ) : visiblePreview ? (
-                        <Image src={visiblePreview} alt={`${run.name} 的角色预览`} width={1600} height={1600} priority unoptimized />
+                        <Image className="asset-preview-image" src={visiblePreview} alt={`${run.name} 的角色预览`} width={1600} height={1600} priority unoptimized />
                       ) : (
                         <div className="preview-empty"><ImageIcon size={38} /><strong>{stage.title}</strong><span>等待本阶段真实产物</span></div>
                       )}
