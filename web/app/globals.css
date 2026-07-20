@@ -413,8 +413,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .stage-prompt-editor label > span { display: block; margin-bottom: 6px; }
 .stage-prompt-editor textarea { width: 100%; min-height: 112px; display: block; padding: 10px 11px; border: 1px solid var(--border); border-radius: 6px; outline: 0; resize: vertical; background: var(--surface-soft); color: var(--text); font-size: 13px; line-height: 1.6; }
 .stage-prompt-editor textarea:focus { border-color: var(--accent); }
-.preview-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-
 .preview-panel.is-maximized {
   position: fixed;
   z-index: 60;
