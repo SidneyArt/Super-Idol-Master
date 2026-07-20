@@ -101,6 +101,7 @@ export function createAssetAgentRuntime({
   advanceWorkflow,
   revertWorkflow,
   runStageJob,
+  getAgentConfig,
 }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_messages (
@@ -117,10 +118,6 @@ export function createAssetAgentRuntime({
   db.exec("CREATE INDEX IF NOT EXISTS agent_messages_run_id_idx ON agent_messages(run_id, id DESC)");
 
   const activeAgents = new Map();
-
-  function configured() {
-    return Boolean(process.env.STEPFUN_API_KEY);
-  }
 
   function getMessages(runId, limit = 100) {
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 100));
@@ -229,7 +226,8 @@ export function createAssetAgentRuntime({
   }
 
   async function run({ runId, message, image }) {
-    if (!configured()) throw new Error("Asset Agent 未配置 STEPFUN_API_KEY");
+    const agentConfig = getAgentConfig();
+    if (!agentConfig.apiKey) throw new Error("Asset Agent 未配置 API Key，请在设置面板中完成配置");
     if (activeAgents.has(runId)) throw new Error("当前任务的 Agent 正在处理上一条消息");
     const detail = getRunDetail(runId);
     if (!detail?.run) throw new Error("任务不存在");
@@ -245,11 +243,11 @@ export function createAssetAgentRuntime({
     const history = getMessages(runId, 24);
     const execution = { actions: [], jobStarted: false, toolCalls: 0, turns: 0 };
     const model = {
-      id: process.env.STEPFUN_MODEL || "step-3.7-flash",
+      id: agentConfig.model,
       name: "Stepfun Step Plan",
       api: "openai-completions",
       provider: "stepfun",
-      baseUrl: process.env.STEPFUN_BASE_URL || "https://api.stepfun.com/step_plan/v1",
+      baseUrl: agentConfig.baseUrl,
       reasoning: false,
       input: ["text", "image"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -271,7 +269,7 @@ export function createAssetAgentRuntime({
         thinkingLevel: "off",
         tools: createTools(runId, execution),
       },
-      getApiKey: () => process.env.STEPFUN_API_KEY,
+      getApiKey: () => agentConfig.apiKey,
       toolExecution: "sequential",
       maxRetryDelayMs: 5000,
       beforeToolCall: async () => {
@@ -321,6 +319,9 @@ export function createAssetAgentRuntime({
     run,
     cancel,
     getMessages,
-    status: () => ({ configured: configured(), model: process.env.STEPFUN_MODEL || "step-3.7-flash" }),
+    status: () => {
+      const config = getAgentConfig();
+      return { configured: Boolean(config.apiKey), model: config.model };
+    },
   };
 }

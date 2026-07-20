@@ -7,10 +7,11 @@ import {
   closeSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readSync,
   readdirSync,
   statSync,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { spawn } from "node:child_process";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
@@ -18,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { loadEnvFile } from "node:process";
 import { createAssetAgentRuntime } from "./agent-runtime.mjs";
+import { createSettingsStore, PROCESS_KINDS } from "./settings.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(webRoot, "..");
@@ -26,11 +28,12 @@ if (existsSync(localEnvPath)) loadEnvFile(localEnvPath);
 
 const HOST = process.env.API_HOST || "127.0.0.1";
 const PORT = Number(process.env.API_PORT || 8787);
-const COMFYUI_URL = process.env.COMFYUI_URL || "http://100.120.236.113:8188";
+const DEFAULT_COMFYUI_URL = process.env.COMFYUI_URL || "http://100.120.236.113:8188";
 const PYTHON_COMMAND = process.env.PYTHON_COMMAND || "python";
 const outputRoot = resolve(repoRoot, "output");
 const generatedDir = join(webRoot, "public", "generated");
 const dataDir = join(webRoot, "data");
+const runtimeWorkflowDir = join(dataDir, "runtime-workflows");
 const dbPath = process.env.DATABASE_PATH || join(dataDir, "super-idol-master.db");
 const workflowDir = join(repoRoot, "scripts", "comfy_workflow");
 
@@ -42,27 +45,19 @@ const scripts = {
 };
 const workflowFiles = {
   "2d": join(workflowDir, "2D_Gen_QwenImage2512.json"),
+  qa: join(workflowDir, "TPose_QA_SDPose.json"),
   "3d": join(workflowDir, "3D_Gen_Pixal3D.json"),
   rig: join(workflowDir, "3D_Skin_SkinTokens.json"),
 };
-const workflowGraphs = Object.fromEntries(
-  Object.entries(workflowFiles).map(([kind, file]) => [kind, JSON.parse(readFileSync(file, "utf8"))]),
-);
-const qaClasses = [
-  "LoadImage",
-  "CheckpointLoaderSimple",
-  "SDPoseKeypointExtractor",
-  "SavePoseKpsAsJsonFile",
-  "SDPoseDrawKeypoints",
-  "PreviewImage",
-];
 
 mkdirSync(dataDir, { recursive: true });
 mkdirSync(generatedDir, { recursive: true });
+mkdirSync(runtimeWorkflowDir, { recursive: true });
 
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA foreign_keys = ON");
+const settingsStore = createSettingsStore({ db, workflowFiles, defaultComfyUrl: DEFAULT_COMFYUI_URL });
 db.exec(`
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
@@ -394,12 +389,17 @@ function json(res, status, body) {
 
 function setCors(req, res) {
   const origin = req.headers.origin;
-  const allowed = new Set(["http://127.0.0.1:3100", "http://localhost:3100"]);
+  const allowed = new Set([
+    "http://127.0.0.1:3100",
+    "http://localhost:3100",
+    "http://127.0.0.1:3101",
+    "http://localhost:3101",
+  ]);
   if (origin && allowed.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
   }
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
@@ -477,26 +477,6 @@ function inspectGlb(filePath, requireRig = false) {
   }
 }
 
-function dependencyCount(graph, outputIds) {
-  const visited = new Set();
-  const visit = (nodeId) => {
-    if (visited.has(nodeId) || !graph[nodeId]) return;
-    visited.add(nodeId);
-    for (const value of Object.values(graph[nodeId].inputs || {})) {
-      if (Array.isArray(value) && value.length === 2 && typeof value[0] === "string") visit(value[0]);
-    }
-  };
-  outputIds.forEach(visit);
-  return Math.max(visited.size, 1);
-}
-
-const expectedNodeCounts = {
-  "2d": dependencyCount(workflowGraphs["2d"], ["60"]),
-  qa: 6,
-  "3d": dependencyCount(workflowGraphs["3d"], ["308"]),
-  rig: dependencyCount(workflowGraphs.rig, ["30", "31"]),
-};
-
 let activeJob = null;
 
 function persistJobProgress(runId, jobType, progress, message, node = null) {
@@ -507,10 +487,10 @@ function persistJobProgress(runId, jobType, progress, message, node = null) {
   `).run(Math.max(1, Math.min(99, Math.round(progress))), message, node, new Date().toISOString(), runId, jobType);
 }
 
-function connectComfyProgress(runId, jobType, promptId, clientId) {
-  const wsUrl = `${COMFYUI_URL.replace(/^http/i, "ws")}/ws?clientId=${encodeURIComponent(clientId)}`;
+function connectComfyProgress(runId, jobType, promptId, clientId, comfyUrl, workflow) {
+  const wsUrl = `${comfyUrl.replace(/^http/i, "ws")}/ws?clientId=${encodeURIComponent(clientId)}`;
   const socket = new WebSocket(wsUrl);
-  const expected = expectedNodeCounts[jobType] || 1;
+  const expected = Math.max(Object.keys(workflow).length, 1);
   const completed = new Set();
   let currentNode = null;
   let lastProgress = 5;
@@ -652,13 +632,27 @@ function failJob(runId, jobType, errorMessage) {
 }
 
 function launchJob(run, jobType) {
-  const args = [scripts[jobType], ...jobArguments(run, jobType), "--comfyui-url", COMFYUI_URL];
-  const child = spawn(PYTHON_COMMAND, args, {
-    cwd: repoRoot,
-    windowsHide: true,
-    env: { ...process.env, PYTHONUTF8: "1" },
-  });
-  activeJob = { runId: run.id, jobType, child, socket: null };
+  const processConfig = settingsStore.processConfig(jobType);
+  const workflowPath = join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
+  writeFileSync(workflowPath, JSON.stringify(processConfig.workflow), "utf8");
+  const args = [
+    scripts[jobType],
+    ...jobArguments(run, jobType),
+    "--comfyui-url", processConfig.url,
+    "--workflow-file", workflowPath,
+  ];
+  let child;
+  try {
+    child = spawn(PYTHON_COMMAND, args, {
+      cwd: repoRoot,
+      windowsHide: true,
+      env: { ...process.env, PYTHONUTF8: "1" },
+    });
+  } catch (error) {
+    unlinkSync(workflowPath);
+    throw error;
+  }
+  activeJob = { runId: run.id, jobType, child, socket: null, workflowPath };
   let stdout = "";
   let stderr = "";
   let finalized = false;
@@ -678,7 +672,14 @@ function launchJob(run, jobType) {
             generation_message = 'ComfyUI 已接收任务', updated_at = ?
           WHERE id = ? AND generation_status = 'running'
         `).run(promptId, new Date().toISOString(), run.id);
-        activeJob.socket = connectComfyProgress(run.id, jobType, promptId, clientId);
+        activeJob.socket = connectComfyProgress(
+          run.id,
+          jobType,
+          promptId,
+          clientId,
+          processConfig.url,
+          processConfig.workflow,
+        );
       }
     }
   });
@@ -688,6 +689,7 @@ function launchJob(run, jobType) {
     finalized = true;
     const socket = activeJob?.socket;
     if (socket) socket.close();
+    if (existsSync(workflowPath)) unlinkSync(workflowPath);
     activeJob = null;
     try {
       if (success) completeJob(run.id, jobType, stdout);
@@ -750,19 +752,24 @@ function startJob(runId, jobType) {
     db.exec("ROLLBACK");
     throw error;
   }
-  launchJob(getRunRow(runId), jobType);
+  try {
+    launchJob(getRunRow(runId), jobType);
+  } catch (error) {
+    failJob(runId, jobType, error instanceof Error ? error.message : "任务进程启动失败");
+    throw error;
+  }
   return runDetail(runId);
 }
 
 let systemCache = null;
 let systemCacheAt = 0;
 
-async function fetchComfy(path, timeout = 5000) {
+async function fetchComfy(baseUrl, path, timeout = 5000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    let response = await fetch(`${COMFYUI_URL}/${path}`, { signal: controller.signal });
-    if (response.status === 404) response = await fetch(`${COMFYUI_URL}/api/${path}`, { signal: controller.signal });
+    let response = await fetch(`${baseUrl}/${path}`, { signal: controller.signal });
+    if (response.status === 404) response = await fetch(`${baseUrl}/api/${path}`, { signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     return await response.json();
   } finally {
@@ -776,48 +783,62 @@ function workflowClasses(graph) {
 
 async function checkComfyUi(force = false) {
   if (!force && systemCache && Date.now() - systemCacheAt < 15_000) return systemCache;
-  const started = Date.now();
-  try {
-    const [stats, queue, objectInfo] = await Promise.all([
-      fetchComfy("system_stats", 5000),
-      fetchComfy("queue", 5000),
-      fetchComfy("object_info", 15_000),
-    ]);
-    const checks = {};
-    for (const kind of ["2d", "3d", "rig"]) {
-      const required = workflowClasses(workflowGraphs[kind]);
-      const missing = required.filter((name) => !objectInfo[name]);
-      checks[kind] = { ready: missing.length === 0, missing };
+  const configs = Object.fromEntries(PROCESS_KINDS.map((kind) => [kind, settingsStore.processConfig(kind)]));
+  const endpointPromises = new Map();
+  for (const config of Object.values(configs)) {
+    if (endpointPromises.has(config.url)) continue;
+    endpointPromises.set(config.url, (async () => {
+      const endpointStarted = Date.now();
+      try {
+        const [stats, queue, objectInfo] = await Promise.all([
+          fetchComfy(config.url, "system_stats", 5000),
+          fetchComfy(config.url, "queue", 5000),
+          fetchComfy(config.url, "object_info", 15_000),
+        ]);
+        return { online: true, stats, queue, objectInfo, latencyMs: Date.now() - endpointStarted };
+      } catch {
+        return { online: false, queue: {}, objectInfo: {}, latencyMs: Date.now() - endpointStarted };
+      }
+    })());
+  }
+  const endpoints = new Map();
+  await Promise.all([...endpointPromises.entries()].map(async ([url, promise]) => endpoints.set(url, await promise)));
+  const checks = {};
+  for (const kind of PROCESS_KINDS) {
+    const config = configs[kind];
+    const endpoint = endpoints.get(config.url);
+    const missing = workflowClasses(config.workflow).filter((name) => !endpoint.objectInfo[name]);
+    const checkpointOptions = endpoint.objectInfo.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0] || [];
+    for (const node of Object.values(config.workflow)) {
+      if (node.class_type === "CheckpointLoaderSimple" && node.inputs?.ckpt_name && !checkpointOptions.includes(node.inputs.ckpt_name)) {
+        missing.push(node.inputs.ckpt_name);
+      }
     }
-    const qaMissing = qaClasses.filter((name) => !objectInfo[name]);
-    const checkpointOptions = objectInfo.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0] || [];
-    if (!checkpointOptions.includes("sdpose_wholebody_fp16.safetensors")) qaMissing.push("sdpose_wholebody_fp16.safetensors");
-    checks.qa = { ready: qaMissing.length === 0, missing: qaMissing };
-    const value = {
-      online: true,
-      url: COMFYUI_URL,
-      latencyMs: Date.now() - started,
-      version: stats.system?.comfyui_version || null,
-      queue: {
-        running: queue.queue_running?.length || 0,
-        pending: queue.queue_pending?.length || 0,
-      },
-      workflows: checks,
-      pipelineReady: Object.values(checks).every((item) => item.ready),
-    };
-    systemCache = value;
-    systemCacheAt = Date.now();
-    return value;
-  } catch {
-    return {
-      online: false,
-      url: COMFYUI_URL,
-      latencyMs: Date.now() - started,
-      queue: { running: 0, pending: 0 },
-      workflows: {},
-      pipelineReady: false,
+    checks[kind] = {
+      ready: endpoint.online && missing.length === 0,
+      online: endpoint.online,
+      missing: [...new Set(missing)],
+      url: config.url,
+      latencyMs: endpoint.latencyMs,
     };
   }
+  const endpointValues = [...endpoints.values()];
+  const urls = [...endpoints.keys()];
+  const value = {
+    online: endpointValues.every((item) => item.online),
+    url: urls.length === 1 ? urls[0] : "多个端点",
+    latencyMs: Math.max(0, ...endpointValues.map((item) => item.latencyMs)),
+    version: [...new Set(endpointValues.map((item) => item.stats?.system?.comfyui_version).filter(Boolean))].join(", ") || null,
+    queue: {
+      running: endpointValues.reduce((total, item) => total + (item.queue.queue_running?.length || 0), 0),
+      pending: endpointValues.reduce((total, item) => total + (item.queue.queue_pending?.length || 0), 0),
+    },
+    workflows: checks,
+    pipelineReady: Object.values(checks).every((item) => item.ready),
+  };
+  systemCache = value;
+  systemCacheAt = Date.now();
+  return value;
 }
 
 function streamDownload(res, filePath, label) {
@@ -839,6 +860,7 @@ const assetAgent = createAssetAgentRuntime({
   advanceWorkflow,
   revertWorkflow: revertRun,
   runStageJob,
+  getAgentConfig: settingsStore.agentConfig,
 });
 
 const server = createServer(async (req, res) => {
@@ -863,6 +885,18 @@ const server = createServer(async (req, res) => {
         agent: assetAgent.status(),
         comfyui: await checkComfyUi(url.searchParams.get("force") === "1"),
       });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/settings") {
+      json(res, 200, settingsStore.publicSettings());
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/api/settings") {
+      const body = await readBody(req, 2_500_000);
+      const result = settingsStore.update(body);
+      systemCache = null;
+      systemCacheAt = 0;
+      json(res, 200, result);
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/runs") {
@@ -984,7 +1018,7 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
   console.log(`[API] http://${HOST}:${PORT}`);
   console.log(`[DB]  ${dbPath}`);
-  console.log(`[DGX] ${COMFYUI_URL}`);
+  console.log(`[DGX] ${DEFAULT_COMFYUI_URL} (default)`);
 });
 
 function shutdown() {

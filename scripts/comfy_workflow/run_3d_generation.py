@@ -34,9 +34,10 @@ def run_3d_generation(
     client: ComfyUIClient,
     image_path: Path,
     seed: int,
+    workflow_file=WORKFLOW_FILE,
 ) -> WorkflowResult:
     uploaded = client.upload_file(image_path)
-    workflow = load_workflow(WORKFLOW_FILE)
+    workflow = load_workflow(Path(workflow_file))
     workflow["122"]["inputs"]["image"] = workflow_input_name(uploaded)
     workflow["309"]["inputs"]["seed"] = seed
     workflow["313"]["inputs"]["seed"] = seed + 2
@@ -54,6 +55,7 @@ def downloaded_model(result: WorkflowResult):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a 3D model from an image.")
     parser.add_argument("image", help="Local input image")
+    parser.add_argument("--workflow-file", default=WORKFLOW_FILE, help="ComfyUI workflow JSON file")
     add_seed_argument(parser)
     add_connection_arguments(parser)
     return parser.parse_args()
@@ -64,7 +66,7 @@ def main() -> int:
     client = client_from_args(args)
     client.check_ready()
     seed = args.seed if args.seed is not None else random_seed()
-    result = run_3d_generation(client, resolve_local_file(args.image), seed)
+    result = run_3d_generation(client, resolve_local_file(args.image), seed, args.workflow_file)
     print(downloaded_model(result).local_path)
     return 0
 

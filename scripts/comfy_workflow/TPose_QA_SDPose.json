@@ -1,0 +1,50 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "input.png"
+    }
+  },
+  "2": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sdpose_wholebody_fp16.safetensors"
+    }
+  },
+  "3": {
+    "class_type": "SDPoseKeypointExtractor",
+    "inputs": {
+      "model": ["2", 0],
+      "vae": ["2", 2],
+      "image": ["1", 0],
+      "batch_size": 1
+    }
+  },
+  "4": {
+    "class_type": "SavePoseKpsAsJsonFile",
+    "inputs": {
+      "pose_kps": ["3", 0],
+      "filename_prefix": "sim_tpose_qa/default"
+    }
+  },
+  "5": {
+    "class_type": "SDPoseDrawKeypoints",
+    "inputs": {
+      "keypoints": ["3", 0],
+      "draw_body": true,
+      "draw_hands": false,
+      "draw_face": false,
+      "draw_feet": true,
+      "stick_width": 4,
+      "face_point_size": 3,
+      "score_threshold": 0.2,
+      "draw_head": true
+    }
+  },
+  "6": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": ["5", 0]
+    }
+  }
+}

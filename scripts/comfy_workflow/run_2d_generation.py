@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import requests
 
@@ -31,8 +32,9 @@ def run_2d_generation(
     positive_prompt: str,
     negative_prompt: str,
     seed: int,
+    workflow_file=WORKFLOW_FILE,
 ) -> WorkflowResult:
-    workflow = load_workflow(WORKFLOW_FILE)
+    workflow = load_workflow(Path(workflow_file))
     workflow["268"]["inputs"]["text"] = positive_prompt
     workflow["269"]["inputs"]["text"] = negative_prompt
     workflow["282"]["inputs"]["value"] = seed
@@ -47,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a 2D character image.")
     parser.add_argument("--positive", required=True, help="Positive prompt")
     parser.add_argument("--negative", required=True, help="Negative prompt")
+    parser.add_argument("--workflow-file", default=WORKFLOW_FILE, help="ComfyUI workflow JSON file")
     add_seed_argument(parser)
     add_connection_arguments(parser)
     return parser.parse_args()
@@ -57,7 +60,7 @@ def main() -> int:
     client = client_from_args(args)
     client.check_ready()
     seed = args.seed if args.seed is not None else random_seed()
-    result = run_2d_generation(client, args.positive, args.negative, seed)
+    result = run_2d_generation(client, args.positive, args.negative, seed, args.workflow_file)
     print(generated_image(result).local_path)
     return 0
 

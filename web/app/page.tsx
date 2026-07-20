@@ -23,7 +23,9 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Save,
   Send,
+  Settings,
   Sparkles,
   Sun,
   Trash2,
@@ -99,6 +101,28 @@ type Run = {
 type RunEvent = { id: number; eventType: string; stage: number; message: string; createdAt: string };
 type RunDetail = { run: Run; events: RunEvent[] };
 type WorkflowCheck = { ready: boolean; missing: string[] };
+type ProcessKind = "2d" | "qa" | "3d" | "rig";
+type ProcessSettings = {
+  label: string;
+  url: string;
+  workflow: Record<string, unknown>;
+  defaultUrl: string;
+  defaultWorkflow: Record<string, unknown>;
+};
+type AppSettings = {
+  processes: Record<ProcessKind, ProcessSettings>;
+  agent: {
+    baseUrl: string;
+    model: string;
+    apiKeyConfigured: boolean;
+    defaultBaseUrl: string;
+    defaultModel: string;
+  };
+};
+type SettingsDraft = {
+  processes: Record<ProcessKind, { url: string; workflowJson: string }>;
+  agent: { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
+};
 type SystemState = {
   api: boolean;
   database: boolean;
@@ -113,6 +137,23 @@ type SystemState = {
     workflows: Partial<Record<"2d" | "qa" | "3d" | "rig", WorkflowCheck>>;
   };
 };
+
+const PROCESS_KINDS: ProcessKind[] = ["2d", "qa", "3d", "rig"];
+
+function settingsDraft(settings: AppSettings): SettingsDraft {
+  return {
+    processes: Object.fromEntries(PROCESS_KINDS.map((kind) => [kind, {
+      url: settings.processes[kind].url,
+      workflowJson: JSON.stringify(settings.processes[kind].workflow, null, 2),
+    }])) as SettingsDraft["processes"],
+    agent: {
+      baseUrl: settings.agent.baseUrl,
+      model: settings.agent.model,
+      apiKey: "",
+      clearApiKey: false,
+    },
+  };
+}
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -147,6 +188,12 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [settingsForm, setSettingsForm] = useState<SettingsDraft | null>(null);
+  const [settingsTab, setSettingsTab] = useState<ProcessKind | "agent">("2d");
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [agentCollapsed, setAgentCollapsed] = useState(false);
   const [agentWidth, setAgentWidth] = useState(360);
@@ -193,6 +240,20 @@ export default function Home() {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [previewFullscreen]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    const previousOverflow = document.body.style.overflow;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowSettings(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showSettings]);
 
   useEffect(() => {
     let cancelled = false;
@@ -404,6 +465,71 @@ export default function Home() {
     });
   }
 
+  async function openSettings() {
+    setShowSettings(true);
+    setSettingsLoading(true);
+    setError("");
+    try {
+      const data = await api<AppSettings>("/api/settings");
+      setSettings(data);
+      setSettingsForm(settingsDraft(data));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "配置读取失败");
+      setShowSettings(false);
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
+
+  function updateProcessSettings(kind: ProcessKind, patch: Partial<SettingsDraft["processes"][ProcessKind]>) {
+    setSettingsForm((current) => current ? {
+      ...current,
+      processes: {
+        ...current.processes,
+        [kind]: { ...current.processes[kind], ...patch },
+      },
+    } : current);
+  }
+
+  function restoreProcessDefaults(kind: ProcessKind) {
+    if (!settings) return;
+    updateProcessSettings(kind, {
+      url: settings.processes[kind].defaultUrl,
+      workflowJson: JSON.stringify(settings.processes[kind].defaultWorkflow, null, 2),
+    });
+  }
+
+  async function saveSettings(event: FormEvent) {
+    event.preventDefault();
+    if (!settingsForm || settingsSaving) return;
+    const processes = {} as Record<ProcessKind, { url: string; workflow: Record<string, unknown> }>;
+    try {
+      for (const kind of PROCESS_KINDS) {
+        const workflow = JSON.parse(settingsForm.processes[kind].workflowJson);
+        processes[kind] = { url: settingsForm.processes[kind].url, workflow };
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? `工作流 JSON 无效：${reason.message}` : "工作流 JSON 无效");
+      return;
+    }
+    setSettingsSaving(true);
+    setError("");
+    try {
+      const data = await api<AppSettings>("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ processes, agent: settingsForm.agent }),
+      });
+      setSettings(data);
+      setSettingsForm(settingsDraft(data));
+      setSystem(await api<SystemState>("/api/system?force=1"));
+      setShowSettings(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "配置保存失败");
+    } finally {
+      setSettingsSaving(false);
+    }
+  }
+
   function togglePreviewFullscreen() {
     setPreviewFullscreen((value) => !value);
   }
@@ -539,6 +665,9 @@ export default function Home() {
           </div>
           <button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
             {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+          <button className="icon-button" type="button" onClick={() => void openSettings()} title="请求设置" aria-label="打开请求设置面板">
+            <Settings size={18} />
           </button>
         </div>
       </header>
@@ -859,6 +988,91 @@ export default function Home() {
           </form>
         </aside>
       </div>
+
+      {showSettings && (
+        <div className="settings-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowSettings(false); }}>
+          <form className="settings-panel" onSubmit={saveSettings} aria-label="请求设置">
+            <div className="settings-header">
+              <div><span>运行配置</span><h2>请求设置</h2></div>
+              <button className="icon-button" type="button" onClick={() => setShowSettings(false)} aria-label="关闭设置面板"><X size={19} /></button>
+            </div>
+
+            {settingsLoading || !settingsForm || !settings ? (
+              <div className="settings-loading"><LoaderCircle size={20} /><span>正在读取配置</span></div>
+            ) : (
+              <>
+                <div className="settings-tabs" role="tablist" aria-label="配置分类">
+                  {PROCESS_KINDS.map((kind) => (
+                    <button key={kind} type="button" role="tab" aria-selected={settingsTab === kind} className={settingsTab === kind ? "active" : ""} onClick={() => setSettingsTab(kind)}>
+                      {kind === "qa" ? "QA" : kind.toUpperCase()}
+                    </button>
+                  ))}
+                  <button type="button" role="tab" aria-selected={settingsTab === "agent"} className={settingsTab === "agent" ? "active" : ""} onClick={() => setSettingsTab("agent")}>Agent</button>
+                </div>
+
+                <div className="settings-content">
+                  {settingsTab !== "agent" ? (
+                    <section className="process-settings" aria-label={`${settings.processes[settingsTab].label}配置`}>
+                      <div className="settings-section-heading">
+                        <div><span>ComfyUI</span><h3>{settings.processes[settingsTab].label}</h3></div>
+                        <button className="text-icon-button" type="button" onClick={() => restoreProcessDefaults(settingsTab)}><RotateCcw size={15} />恢复默认</button>
+                      </div>
+                      <label className="settings-field">
+                        <span>请求地址</span>
+                        <input type="url" required value={settingsForm.processes[settingsTab].url} onChange={(event) => updateProcessSettings(settingsTab, { url: event.target.value })} />
+                      </label>
+                      <label className="settings-field workflow-field">
+                        <span>工作流 JSON</span>
+                        <textarea spellCheck={false} required value={settingsForm.processes[settingsTab].workflowJson} onChange={(event) => updateProcessSettings(settingsTab, { workflowJson: event.target.value })} />
+                      </label>
+                      <div className="workflow-json-status">
+                        {(() => {
+                          try {
+                            const graph = JSON.parse(settingsForm.processes[settingsTab].workflowJson);
+                            return <><i className="valid" /><span>{Object.keys(graph).length} 个节点</span></>;
+                          } catch {
+                            return <><i className="invalid" /><span>JSON 格式错误</span></>;
+                          }
+                        })()}
+                      </div>
+                    </section>
+                  ) : (
+                    <section className="agent-settings" aria-label="Agent API 配置">
+                      <div className="settings-section-heading">
+                        <div><span>Asset Agent</span><h3>模型 API</h3></div>
+                        <span className={`config-state ${settings.agent.apiKeyConfigured ? "configured" : ""}`}><i />{settings.agent.apiKeyConfigured ? "已配置" : "未配置"}</span>
+                      </div>
+                      <label className="settings-field">
+                        <span>Base URL</span>
+                        <input type="url" required value={settingsForm.agent.baseUrl} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, baseUrl: event.target.value } })} />
+                      </label>
+                      <label className="settings-field">
+                        <span>模型</span>
+                        <input required maxLength={160} value={settingsForm.agent.model} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, model: event.target.value } })} />
+                      </label>
+                      <label className="settings-field">
+                        <span>API Key</span>
+                        <input type="password" autoComplete="off" maxLength={1000} value={settingsForm.agent.apiKey} disabled={settingsForm.agent.clearApiKey} placeholder={settings.agent.apiKeyConfigured ? "留空以保留当前密钥" : "输入 API Key"} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, apiKey: event.target.value } })} />
+                      </label>
+                      {settings.agent.apiKeyConfigured && (
+                        <label className="clear-key-control">
+                          <input type="checkbox" checked={settingsForm.agent.clearApiKey} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : settingsForm.agent.apiKey } })} />
+                          <span>清除已保存的 API Key</span>
+                        </label>
+                      )}
+                    </section>
+                  )}
+                </div>
+
+                <div className="settings-actions">
+                  <button type="button" className="secondary-button" onClick={() => setShowSettings(false)}>取消</button>
+                  <button type="submit" className="primary-button" disabled={settingsSaving}><Save size={16} />{settingsSaving ? "保存中…" : "保存配置"}</button>
+                </div>
+              </>
+            )}
+          </form>
+        </div>
+      )}
 
       {showCreate && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowCreate(false); }}>

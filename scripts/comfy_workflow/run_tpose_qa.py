@@ -14,17 +14,19 @@ from typing import Any
 import requests
 
 from comfy_client import (
+    SCRIPT_DIR,
     ComfyUIClient,
     RemoteArtifact,
     add_connection_arguments,
     client_from_args,
     execute_workflow,
+    load_workflow,
     resolve_local_file,
     workflow_input_name,
 )
 
 
-SDPOSE_CHECKPOINT = "sdpose_wholebody_fp16.safetensors"
+WORKFLOW_FILE = SCRIPT_DIR / "TPose_QA_SDPose.json"
 MIN_CONFIDENCE = 0.25
 
 
@@ -158,31 +160,13 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def run_qa(client: ComfyUIClient, image_path: Path) -> dict[str, Any]:
+def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE) -> dict[str, Any]:
     uploaded = client.upload_file(image_path)
     token = uuid.uuid4().hex
     prefix = f"sim_tpose_qa/{token}"
-    workflow = {
-        "1": {"class_type": "LoadImage", "inputs": {"image": workflow_input_name(uploaded)}},
-        "2": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": SDPOSE_CHECKPOINT}},
-        "3": {
-            "class_type": "SDPoseKeypointExtractor",
-            "inputs": {"model": ["2", 0], "vae": ["2", 2], "image": ["1", 0], "batch_size": 1},
-        },
-        "4": {
-            "class_type": "SavePoseKpsAsJsonFile",
-            "inputs": {"pose_kps": ["3", 0], "filename_prefix": prefix},
-        },
-        "5": {
-            "class_type": "SDPoseDrawKeypoints",
-            "inputs": {
-                "keypoints": ["3", 0], "draw_body": True, "draw_hands": False,
-                "draw_face": False, "draw_feet": True, "stick_width": 4,
-                "face_point_size": 3, "score_threshold": 0.2, "draw_head": True,
-            },
-        },
-        "6": {"class_type": "PreviewImage", "inputs": {"images": ["5", 0]}},
-    }
+    workflow = load_workflow(Path(workflow_file))
+    workflow["1"]["inputs"]["image"] = workflow_input_name(uploaded)
+    workflow["4"]["inputs"]["filename_prefix"] = prefix
     result = execute_workflow(client, "qa", workflow)
     keypoint_file = result.run_dir / "pose_keypoints.json"
     client.download(
@@ -201,6 +185,7 @@ def run_qa(client: ComfyUIClient, image_path: Path) -> dict[str, Any]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Automatically validate a T-pose with DGX SDPose.")
     parser.add_argument("image", help="Local input image")
+    parser.add_argument("--workflow-file", default=WORKFLOW_FILE, help="ComfyUI workflow JSON file")
     add_connection_arguments(parser)
     return parser.parse_args()
 
@@ -209,7 +194,7 @@ def main() -> int:
     args = parse_args()
     client = client_from_args(args)
     client.check_ready()
-    print(json.dumps(run_qa(client, resolve_local_file(args.image)), ensure_ascii=False))
+    print(json.dumps(run_qa(client, resolve_local_file(args.image), args.workflow_file), ensure_ascii=False))
     return 0
 
 

@@ -29,8 +29,9 @@ WORKFLOW_FILE = SCRIPT_DIR / "3D_Skin_SkinTokens.json"
 def run_3d_skinning(
     client: ComfyUIClient,
     server_mesh_path: str,
+    workflow_file=WORKFLOW_FILE,
 ) -> WorkflowResult:
-    workflow = load_workflow(WORKFLOW_FILE)
+    workflow = load_workflow(Path(workflow_file))
     workflow["23"]["inputs"]["mesh_path"] = server_mesh_path
 
     # This disconnected preview branch points at a stale exported model and is
@@ -63,6 +64,7 @@ def parse_args() -> argparse.Namespace:
         "mesh",
         help="Local GLB file or absolute mesh path on the ComfyUI server",
     )
+    parser.add_argument("--workflow-file", default=WORKFLOW_FILE, help="ComfyUI workflow JSON file")
     parser.add_argument(
         "--comfyui-root",
         default=os.environ.get("COMFYUI_ROOT", DEFAULT_COMFYUI_ROOT),
@@ -77,7 +79,7 @@ def main() -> int:
     client = client_from_args(args)
     client.check_ready()
     mesh_path = resolve_server_mesh_path(client, args.mesh, args.comfyui_root)
-    result = run_3d_skinning(client, mesh_path)
+    result = run_3d_skinning(client, mesh_path, args.workflow_file)
     print(result.run_dir)
     return 0
 
