@@ -39,6 +39,7 @@ const workflowDir = join(repoRoot, "scripts", "comfy_workflow");
 
 const scripts = {
   "2d": join(workflowDir, "run_2d_generation.py"),
+  "2d-api": join(workflowDir, "run_2d_stepfun_api.py"),
   qa: join(workflowDir, "run_tpose_qa.py"),
   "3d": join(workflowDir, "run_3d_generation.py"),
   rig: join(workflowDir, "run_3d_skinning.py"),
@@ -631,25 +632,38 @@ function failJob(runId, jobType, errorMessage) {
   addEvent(runId, `${jobType}_failed`, { "2d": 1, qa: 2, "3d": 3, rig: 4 }[jobType], `${jobType.toUpperCase()} 任务失败：${message}`, now);
 }
 
-function launchJob(run, jobType) {
-  const processConfig = settingsStore.processConfig(jobType);
-  const workflowPath = join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
-  writeFileSync(workflowPath, JSON.stringify(processConfig.workflow), "utf8");
-  const args = [
-    scripts[jobType],
-    ...jobArguments(run, jobType),
-    "--comfyui-url", processConfig.url,
-    "--workflow-file", workflowPath,
-  ];
+function launchJob(run, jobType, processConfig = settingsStore.processConfig(jobType)) {
+  const usesImageApi = jobType === "2d" && processConfig.mode === "api";
+  const workflowPath = usesImageApi ? null : join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
+  if (workflowPath) writeFileSync(workflowPath, JSON.stringify(processConfig.workflow), "utf8");
+  const args = usesImageApi
+    ? [
+        scripts["2d-api"],
+        "--positive", run.positivePrompt,
+        "--negative", run.negativePrompt || "",
+        "--base-url", processConfig.api.baseUrl,
+        "--model", processConfig.api.model,
+        ...(run.imagePathInternal && existsSync(run.imagePathInternal) ? ["--source-image", run.imagePathInternal] : []),
+      ]
+    : [
+        scripts[jobType],
+        ...jobArguments(run, jobType),
+        "--comfyui-url", processConfig.url,
+        "--workflow-file", workflowPath,
+      ];
   let child;
   try {
     child = spawn(PYTHON_COMMAND, args, {
       cwd: repoRoot,
       windowsHide: true,
-      env: { ...process.env, PYTHONUTF8: "1" },
+      env: {
+        ...process.env,
+        PYTHONUTF8: "1",
+        ...(usesImageApi ? { STEPFUN_IMAGE_API_KEY: processConfig.api.apiKey } : {}),
+      },
     });
   } catch (error) {
-    unlinkSync(workflowPath);
+    if (workflowPath && existsSync(workflowPath)) unlinkSync(workflowPath);
     throw error;
   }
   const activeJob = { runId: run.id, jobType, child, socket: null, workflowPath };
@@ -664,7 +678,7 @@ function launchJob(run, jobType) {
   });
   child.stderr.on("data", (chunk) => {
     stderr = `${stderr}${chunk.toString("utf8")}`.slice(-100_000);
-    if (!activeJob.socket) {
+    if (!usesImageApi && !activeJob.socket) {
       const match = stderr.match(new RegExp(`\\[${comfyKind}\\] submitted prompt_id=(\\S+) client_id=(\\S+)`));
       if (match) {
         const [, promptId, clientId] = match;
@@ -690,7 +704,7 @@ function launchJob(run, jobType) {
     finalized = true;
     const socket = activeJob.socket;
     if (socket) socket.close();
-    if (existsSync(workflowPath)) unlinkSync(workflowPath);
+    if (workflowPath && existsSync(workflowPath)) unlinkSync(workflowPath);
     if (activeJobs.get(run.id) === activeJob) activeJobs.delete(run.id);
     try {
       if (success) completeJob(run.id, jobType, stdout);
@@ -717,10 +731,12 @@ function startJob(runId, jobType) {
   if (jobType === "3d" && run.qaStatus !== "passed") throw new Error("SDPose 自动检查未通过，不能生成 3D");
   if (jobType === "3d" && (!run.imagePathInternal || !existsSync(run.imagePathInternal))) throw new Error("合格的 2D 图片不存在");
   if (jobType === "rig" && (!run.modelPathInternal || !existsSync(run.modelPathInternal))) throw new Error("静态 GLB 不存在，不能绑骨");
+  const processConfig = settingsStore.processConfig(jobType);
+  if (jobType === "2d" && processConfig.mode === "api" && !processConfig.api.apiKey) throw new Error("2D API Key 未配置，请在请求设置中填写或配置 Agent API Key");
 
   const stage = { "2d": 1, qa: 2, "3d": 3, rig: 4 }[jobType];
   const messages = {
-    "2d": "正在调用 DGX Qwen Image 生成 2D 概念图",
+    "2d": processConfig.mode === "api" ? `正在调用阶跃 ${processConfig.api.model} 生成 2D 概念图` : "正在调用 DGX Qwen Image 生成 2D 概念图",
     qa: "正在调用 DGX SDPose 自动检查 T-Pose",
     "3d": "正在调用 DGX Pixal3D 生成静态 GLB",
     rig: "正在调用 DGX SkinTokens 自动绑骨",
@@ -753,7 +769,7 @@ function startJob(runId, jobType) {
     throw error;
   }
   try {
-    launchJob(getRunRow(runId), jobType);
+    launchJob(getRunRow(runId), jobType, processConfig);
   } catch (error) {
     failJob(runId, jobType, error instanceof Error ? error.message : "任务进程启动失败");
     throw error;
@@ -786,6 +802,7 @@ async function checkComfyUi(force = false) {
   const configs = Object.fromEntries(PROCESS_KINDS.map((kind) => [kind, settingsStore.processConfig(kind)]));
   const endpointPromises = new Map();
   for (const config of Object.values(configs)) {
+    if (config.mode === "api") continue;
     if (endpointPromises.has(config.url)) continue;
     endpointPromises.set(config.url, (async () => {
       const endpointStarted = Date.now();
@@ -806,6 +823,16 @@ async function checkComfyUi(force = false) {
   const checks = {};
   for (const kind of PROCESS_KINDS) {
     const config = configs[kind];
+    if (config.mode === "api") {
+      checks[kind] = {
+        ready: Boolean(config.api.apiKey),
+        online: Boolean(config.api.apiKey),
+        missing: config.api.apiKey ? [] : ["API Key"],
+        url: config.api.baseUrl,
+        latencyMs: 0,
+      };
+      continue;
+    }
     const endpoint = endpoints.get(config.url);
     const missing = workflowClasses(config.workflow).filter((name) => !endpoint.objectInfo[name]);
     const checkpointOptions = endpoint.objectInfo.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0] || [];

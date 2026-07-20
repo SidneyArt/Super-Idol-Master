@@ -22,7 +22,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Paperclip,
   Play,
   Plus,
   RefreshCw,
@@ -38,7 +37,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { CSSProperties, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import ModelViewer from "./components/ModelViewer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8787";
@@ -117,6 +116,7 @@ type WorkflowCheck = { ready: boolean; missing: string[] };
 type ProcessKind = "2d" | "qa" | "3d" | "rig";
 type ProcessSettings = {
   label: string;
+  mode: "comfyui" | "api";
   url: string;
   workflow: Record<string, unknown>;
   activeWorkflowId: string;
@@ -124,6 +124,14 @@ type ProcessSettings = {
   workflows: WorkflowMetadata[];
   defaultUrl: string;
   defaultWorkflow: Record<string, unknown>;
+  defaultMode?: "comfyui";
+  api?: {
+    baseUrl: string;
+    model: string;
+    apiKeyConfigured: boolean;
+    defaultBaseUrl: string;
+    defaultModel: string;
+  };
 };
 type WorkflowMetadata = { id: string; name: string; source: "default" | "uploaded"; createdAt: string | null; nodeCount: number };
 type AgentModelOption = { id: string; name: string };
@@ -138,7 +146,13 @@ type AppSettings = {
   };
 };
 type SettingsDraft = {
-  processes: Record<ProcessKind, { url: string; activeWorkflowId: string; workflowJson: string }>;
+  processes: Record<ProcessKind, {
+    mode: "comfyui" | "api";
+    url: string;
+    activeWorkflowId: string;
+    workflowJson: string;
+    api?: { baseUrl: string; model: string; apiKey: string };
+  }>;
   agent: { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
 };
 type SystemState = {
@@ -161,9 +175,17 @@ const PROCESS_KINDS: ProcessKind[] = ["2d", "qa", "3d", "rig"];
 function settingsDraft(settings: AppSettings): SettingsDraft {
   return {
     processes: Object.fromEntries(PROCESS_KINDS.map((kind) => [kind, {
+      mode: settings.processes[kind].mode,
       url: settings.processes[kind].url,
       activeWorkflowId: settings.processes[kind].activeWorkflowId,
       workflowJson: JSON.stringify(settings.processes[kind].workflow, null, 2),
+      ...(settings.processes[kind].api ? {
+        api: {
+          baseUrl: settings.processes[kind].api.baseUrl,
+          model: settings.processes[kind].api.model,
+          apiKey: "",
+        },
+      } : {}),
     }])) as SettingsDraft["processes"],
     agent: {
       baseUrl: settings.agent.baseUrl,
@@ -207,6 +229,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [revertStage, setRevertStage] = useState<number | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsForm, setSettingsForm] = useState<SettingsDraft | null>(null);
@@ -229,6 +252,7 @@ export default function Home() {
   const [activeAgentRunId, setActiveAgentRunId] = useState<string | null>(null);
   const [agentQueue, setAgentQueue] = useState<AgentQueueItem[]>([]);
   const [agentAttachment, setAgentAttachment] = useState<AgentAttachment | null>(null);
+  const [agentImageDragging, setAgentImageDragging] = useState(false);
   const [form, setForm] = useState({ name: "" });
   const [promptDraft, setPromptDraft] = useState({
     positivePrompt: DEFAULT_POSITIVE_PROMPT,
@@ -239,7 +263,7 @@ export default function Home() {
   const agentProcessingRef = useRef(false);
   const agentQueueIdRef = useRef(0);
   const selectedIdRef = useRef<string | null>(selectedId);
-  const agentFileRef = useRef<HTMLInputElement | null>(null);
+  const agentDropDepthRef = useRef(0);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const workflowFileRef = useRef<HTMLInputElement | null>(null);
   const workflowDirectoryRef = useRef<HTMLInputElement | null>(null);
@@ -290,6 +314,15 @@ export default function Home() {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [showSettings]);
+
+  useEffect(() => {
+    if (revertStage === null) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setRevertStage(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [revertStage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -374,7 +407,7 @@ export default function Home() {
   const stage = stages[viewStage];
   const progress = useMemo(() => Math.round((current / (stages.length - 1)) * 100), [current]);
   const isCurrentView = viewStage === current;
-  const visiblePreview = viewStage < 3
+  const visiblePreview = viewStage > 0 && viewStage < 3
     ? viewStage === 2 && run?.qaOverlayPath ? run.qaOverlayPath : run?.previewPath
     : null;
   const hasQaComparison = Boolean(viewStage === 2 && run?.previewPath && run.qaOverlayPath);
@@ -382,7 +415,7 @@ export default function Home() {
   const modelPreviewUrl = viewStage >= 3 && run?.assets.modelReady
     ? downloadUrl(useRiggedPreview ? run.assets.riggedDownloadUrl : run.assets.modelDownloadUrl)
     : null;
-  const hasPreview = Boolean(visiblePreview || modelPreviewUrl);
+  const hasPreview = Boolean(viewStage === 0 || visiblePreview || modelPreviewUrl);
   const currentStageReady = Boolean(
     (current === 1 && run?.assets.imageReady)
       || (current === 2 && run?.qaStatus === "passed")
@@ -441,10 +474,15 @@ export default function Home() {
     }
   }
 
-  async function revertToStage(stageIndex: number) {
+  function revertToStage(stageIndex: number) {
     if (!run || busy || run.jobStatus === "running") return;
-    const target = stages[stageIndex];
-    if (!window.confirm(`回退到“${target.title}”会清除该阶段及后续阶段的产物引用，确定继续吗？`)) return;
+    setRevertStage(stageIndex);
+  }
+
+  async function confirmRevert() {
+    if (!run || busy || run.jobStatus === "running" || revertStage === null) return;
+    const stageIndex = revertStage;
+    setRevertStage(null);
     setBusy(true);
     setError("");
     try {
@@ -540,9 +578,17 @@ export default function Home() {
   function restoreProcessDefaults(kind: ProcessKind) {
     if (!settings) return;
     updateProcessSettings(kind, {
+      mode: settings.processes[kind].defaultMode || "comfyui",
       url: settings.processes[kind].defaultUrl,
       activeWorkflowId: settings.processes[kind].defaultWorkflowId,
       workflowJson: JSON.stringify(settings.processes[kind].defaultWorkflow, null, 2),
+      ...(settings.processes[kind].api ? {
+        api: {
+          baseUrl: settings.processes[kind].api.defaultBaseUrl,
+          model: settings.processes[kind].api.defaultModel,
+          apiKey: "",
+        },
+      } : {}),
     });
     setWorkflowPreviewOpen(false);
   }
@@ -662,13 +708,20 @@ export default function Home() {
   async function saveSettings(event: FormEvent) {
     event.preventDefault();
     if (!settingsForm || settingsSaving) return;
-    const processes = {} as Record<ProcessKind, { url: string; activeWorkflowId: string }>;
+    const processes = {} as Record<ProcessKind, {
+      mode: "comfyui" | "api";
+      url: string;
+      activeWorkflowId: string;
+      api?: { baseUrl: string; model: string; apiKey: string };
+    }>;
     try {
       for (const kind of PROCESS_KINDS) {
         JSON.parse(settingsForm.processes[kind].workflowJson);
         processes[kind] = {
+          mode: settingsForm.processes[kind].mode,
           url: settingsForm.processes[kind].url,
           activeWorkflowId: settingsForm.processes[kind].activeWorkflowId,
+          ...(settingsForm.processes[kind].api ? { api: settingsForm.processes[kind].api } : {}),
         };
       }
     } catch (reason) {
@@ -720,10 +773,7 @@ export default function Home() {
     document.body.style.userSelect = "";
   }
 
-  function selectAgentImage(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
+  function attachAgentImage(file: File) {
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
       setError("参考图片只支持 PNG、JPEG 或 WebP");
       return;
@@ -732,6 +782,7 @@ export default function Home() {
       setError("参考图片不能超过 4 MB");
       return;
     }
+    setError("");
     const reader = new FileReader();
     reader.onload = () => {
       const value = typeof reader.result === "string" ? reader.result : "";
@@ -744,6 +795,42 @@ export default function Home() {
     };
     reader.onerror = () => setError("参考图片读取失败");
     reader.readAsDataURL(file);
+  }
+
+  function handleAgentDragEnter(event: ReactDragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    agentDropDepthRef.current += 1;
+    setAgentImageDragging(true);
+  }
+
+  function handleAgentDragOver(event: ReactDragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleAgentDragLeave(event: ReactDragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    agentDropDepthRef.current = Math.max(0, agentDropDepthRef.current - 1);
+    if (agentDropDepthRef.current === 0) setAgentImageDragging(false);
+  }
+
+  function handleAgentDrop(event: ReactDragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    agentDropDepthRef.current = 0;
+    setAgentImageDragging(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (!run) {
+      setError("请先选择任务，再向 Agent 消息中拖入图片");
+      return;
+    }
+    if (files.length !== 1) {
+      setError("每条 Agent 消息只能添加一张参考图片");
+      return;
+    }
+    attachAgentImage(files[0]);
   }
 
   function replaceAgentQueue(items: AgentQueueItem[]) {
@@ -855,6 +942,7 @@ export default function Home() {
 
   const previewType = modelPreviewUrl
     ? useRiggedPreview ? "绑骨 GLB" : "静态 GLB"
+    : viewStage === 0 ? "角色规格"
     : hasQaComparison ? "SDPose 对比"
     : viewStage === 2 && run?.qaOverlayPath ? "SDPose 覆盖图"
     : run?.previewPath ? "2D 概念图" : "等待资产";
@@ -1018,8 +1106,34 @@ export default function Home() {
                         {previewFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
                       </button>
                     </div>
-                    <div className={`preview-frame ${modelPreviewUrl ? "model-preview" : ""} ${hasPreview ? "" : "placeholder"} ${run.jobStatus === "running" ? "generating" : ""}`}>
-                      {modelPreviewUrl ? (
+                    <div className={`preview-frame ${viewStage === 0 ? "brief-preview" : ""} ${modelPreviewUrl ? "model-preview" : ""} ${hasPreview ? "" : "placeholder"} ${viewStage !== 0 && run.jobStatus === "running" ? "generating" : ""}`}>
+                      {viewStage === 0 ? (
+                        <div className="character-brief-view">
+                          <div className="character-brief-content">
+                            <div className="current-stage-summary">
+                              <div className="current-stage-heading">
+                                <span>{current === 0 ? "当前阶段 01" : "阶段 01 · 已完成"}</span>
+                                <strong>{stages[0].title}</strong>
+                                <p>{stages[0].action}</p>
+                              </div>
+                              <div className="current-stage-io">
+                                <span>输入 <b>{stages[0].input}</b></span>
+                                <span>输出 <b>{stages[0].output}</b></span>
+                              </div>
+                            </div>
+                            <div className={`stage-prompt-editor ${current > 0 ? "read-only" : ""}`}>
+                              <label>
+                                <span>正向提示词</span>
+                                <textarea rows={8} maxLength={4000} value={promptDraft.positivePrompt} readOnly={current > 0} onChange={(event) => setPromptDraft({ ...promptDraft, positivePrompt: event.target.value })} />
+                              </label>
+                              <label>
+                                <span>负向提示词</span>
+                                <textarea rows={7} maxLength={2000} value={promptDraft.negativePrompt} readOnly={current > 0} onChange={(event) => setPromptDraft({ ...promptDraft, negativePrompt: event.target.value })} />
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                      ) : modelPreviewUrl ? (
                         <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} />
                       ) : hasQaComparison ? (
                         <div className="qa-blend-preview">
@@ -1063,7 +1177,7 @@ export default function Home() {
                       ) : (
                         <div className="preview-empty"><ImageIcon size={38} /><strong>{stage.title}</strong><span>等待本阶段真实产物</span></div>
                       )}
-                      {run.jobStatus === "running" && (
+                      {viewStage !== 0 && run.jobStatus === "running" && (
                         <div className="generation-overlay">
                           <div
                             className="generation-progress"
@@ -1108,7 +1222,7 @@ export default function Home() {
                     )}
                   </div>
 
-                  {hasPreviewFooter && <section className="stage-workflow-panel">
+                  {hasPreviewFooter && viewStage !== 0 && <section className="stage-workflow-panel">
                     <div className="stage-workflow-content">
                       {isCurrentView && (
                         <div className="current-stage-summary">
@@ -1121,19 +1235,6 @@ export default function Home() {
                             <span>输入 <b>{stages[current].input}</b></span>
                             <span>输出 <b>{stages[current].output}</b></span>
                           </div>
-                        </div>
-                      )}
-
-                      {isCurrentView && current === 0 && (
-                        <div className="stage-prompt-editor">
-                          <label>
-                            <span>正向提示词</span>
-                            <textarea rows={5} maxLength={4000} value={promptDraft.positivePrompt} onChange={(event) => setPromptDraft({ ...promptDraft, positivePrompt: event.target.value })} />
-                          </label>
-                          <label>
-                            <span>负向提示词</span>
-                            <textarea rows={4} maxLength={2000} value={promptDraft.negativePrompt} onChange={(event) => setPromptDraft({ ...promptDraft, negativePrompt: event.target.value })} />
-                          </label>
                         </div>
                       )}
 
@@ -1174,7 +1275,13 @@ export default function Home() {
           )}
         </section>
 
-        <aside className={`agent-panel ${agentCollapsed ? "agent-collapsed" : ""}`}>
+        <aside
+          className={`agent-panel ${agentCollapsed ? "agent-collapsed" : ""} ${agentImageDragging ? "image-dragging" : ""}`}
+          onDragEnter={handleAgentDragEnter}
+          onDragOver={handleAgentDragOver}
+          onDragLeave={handleAgentDragLeave}
+          onDrop={handleAgentDrop}
+        >
           <div
             className="agent-resizer"
             onPointerDown={startAgentResize}
@@ -1241,6 +1348,9 @@ export default function Home() {
             )}
             <div ref={chatEndRef} />
           </div>
+          {agentImageDragging && !agentCollapsed && (
+            <div className="agent-drop-overlay" aria-hidden="true"><ImageIcon size={26} /><strong>松开以添加图片</strong></div>
+          )}
           <form className="chat-composer" onSubmit={sendChatMessage}>
             {agentAttachment && (
               <div className="attachment-chip">
@@ -1251,8 +1361,6 @@ export default function Home() {
             <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={handleChatKeyDown} rows={3} placeholder={agentBusy ? "继续输入，消息将进入待发送队列…" : "给 Agent 下达资产生成任务…"} />
             <div className="composer-footer">
               <div className="composer-meta">
-                <input ref={agentFileRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={selectAgentImage} hidden />
-                <button className="attach-button" type="button" onClick={() => agentFileRef.current?.click()} disabled={!run} aria-label="添加参考图片" title="添加参考图片"><Paperclip size={16} /></button>
                 <span><MessageSquare size={15} />{system?.agent.model || "当前会话"}</span>
               </div>
               <div className="composer-actions">
@@ -1263,6 +1371,23 @@ export default function Home() {
           </form>
         </aside>
       </div>
+
+      {revertStage !== null && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setRevertStage(null); }}>
+          <div className="revert-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="revert-confirm-title">
+            <div className="revert-confirm-icon"><RotateCcw size={21} /></div>
+            <div className="revert-confirm-copy">
+              <span>流程回滚</span>
+              <h2 id="revert-confirm-title">回退到“{stages[revertStage].title}”？</h2>
+              <p>该阶段及后续阶段的产物引用和流程进度将被清除。</p>
+            </div>
+            <div className="revert-confirm-actions">
+              <button autoFocus type="button" className="secondary-button" onClick={() => setRevertStage(null)} disabled={busy}>取消</button>
+              <button type="button" className="warning-button" onClick={() => void confirmRevert()} disabled={busy}><RotateCcw size={16} />{busy ? "回滚中…" : "确认回滚"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSettings && (
         <div className="settings-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowSettings(false); }}>
@@ -1289,19 +1414,24 @@ export default function Home() {
                   {settingsTab !== "agent" ? (
                     <section className="process-settings" aria-label={`${settings.processes[settingsTab].label}配置`}>
                       <div className="settings-section-heading">
-                        <div><span>ComfyUI</span><h3>{settings.processes[settingsTab].label}</h3></div>
+                        <div><span>{settingsTab === "2d" && settingsForm.processes["2d"].mode === "api" ? "API" : "ComfyUI"}</span><h3>{settings.processes[settingsTab].label}</h3></div>
                         <button className="text-icon-button" type="button" onClick={() => restoreProcessDefaults(settingsTab)}><RotateCcw size={15} />恢复默认</button>
                       </div>
-                      <label className="settings-field">
-                        <span>请求地址</span>
-                        <input type="url" required value={settingsForm.processes[settingsTab].url} onChange={(event) => updateProcessSettings(settingsTab, { url: event.target.value })} />
-                      </label>
-                      {(() => {
-                        const kind = settingsTab;
-                        const process = settings.processes[kind];
-                        const selectedId = settingsForm.processes[kind].activeWorkflowId;
-                        const selected = process.workflows.find((item) => item.id === selectedId);
-                        return <>
+                      {settingsTab === "2d" && <div className="process-mode-control" role="group" aria-label="2D 概念图接入方式">
+                        <button type="button" className={settingsForm.processes["2d"].mode === "comfyui" ? "active" : ""} onClick={() => updateProcessSettings("2d", { mode: "comfyui" })}>ComfyUI</button>
+                        <button type="button" className={settingsForm.processes["2d"].mode === "api" ? "active" : ""} onClick={() => updateProcessSettings("2d", { mode: "api" })}>API</button>
+                      </div>}
+                      {settingsTab !== "2d" || settingsForm.processes["2d"].mode === "comfyui" ? <>
+                        <label className="settings-field">
+                          <span>请求地址</span>
+                          <input type="url" required value={settingsForm.processes[settingsTab].url} onChange={(event) => updateProcessSettings(settingsTab, { url: event.target.value })} />
+                        </label>
+                        {(() => {
+                          const kind = settingsTab;
+                          const process = settings.processes[kind];
+                          const selectedId = settingsForm.processes[kind].activeWorkflowId;
+                          const selected = process.workflows.find((item) => item.id === selectedId);
+                          return <>
                           <label className="settings-field">
                             <span>工作流版本</span>
                             <div className="workflow-select-row">
@@ -1355,8 +1485,25 @@ export default function Home() {
                             </button>
                           </div>
                           {workflowPreviewOpen && <pre className="workflow-json-preview">{settingsForm.processes[kind].workflowJson}</pre>}
-                        </>;
-                      })()}
+                          </>;
+                        })()}
+                      </> : settingsForm.processes["2d"].api && <>
+                        <div className="api-mode-status">
+                          <span className={`config-state ${settings.processes["2d"].api?.apiKeyConfigured || settings.agent.apiKeyConfigured ? "configured" : ""}`}><i />{settings.processes["2d"].api?.apiKeyConfigured || settings.agent.apiKeyConfigured ? "API Key 已配置" : "API Key 未配置"}</span>
+                        </div>
+                        <label className="settings-field">
+                          <span>Base URL</span>
+                          <input type="url" required value={settingsForm.processes["2d"].api.baseUrl} onChange={(event) => updateProcessSettings("2d", { api: { ...settingsForm.processes["2d"].api!, baseUrl: event.target.value } })} />
+                        </label>
+                        <label className="settings-field">
+                          <span>模型</span>
+                          <input type="text" required maxLength={160} value={settingsForm.processes["2d"].api.model} onChange={(event) => updateProcessSettings("2d", { api: { ...settingsForm.processes["2d"].api!, model: event.target.value } })} />
+                        </label>
+                        <label className="settings-field">
+                          <span>API Key</span>
+                          <input type="password" autoComplete="off" maxLength={1000} value={settingsForm.processes["2d"].api.apiKey} placeholder={settings.processes["2d"].api?.apiKeyConfigured ? "留空以保留当前密钥" : settings.agent.apiKeyConfigured ? "留空以复用 Agent API Key" : "输入 API Key"} onChange={(event) => updateProcessSettings("2d", { api: { ...settingsForm.processes["2d"].api!, apiKey: event.target.value } })} />
+                        </label>
+                      </>}
                     </section>
                   ) : (
                     <section className="agent-settings" aria-label="Agent API 配置">

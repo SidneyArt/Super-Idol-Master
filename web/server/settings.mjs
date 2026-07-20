@@ -20,6 +20,8 @@ const REQUIRED_NODES = {
 
 const MAX_WORKFLOW_BYTES = 500_000;
 const MAX_CUSTOM_WORKFLOWS = 20;
+const DEFAULT_IMAGE_API_BASE_URL = "https://api.stepfun.com/step_plan/v1";
+const DEFAULT_IMAGE_API_MODEL = "step-image-edit-2";
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -89,6 +91,10 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     baseUrl: normalizeUrl(process.env.STEPFUN_BASE_URL || "https://api.stepfun.com/step_plan/v1", "Agent Base URL"),
     model: process.env.STEPFUN_MODEL?.trim() || "step-3.7-flash",
     apiKey: process.env.STEPFUN_API_KEY?.trim() || "",
+  };
+  const imageApiDefaults = {
+    baseUrl: normalizeUrl(process.env.STEPFUN_IMAGE_BASE_URL || DEFAULT_IMAGE_API_BASE_URL, "2D API Base URL"),
+    model: process.env.STEPFUN_IMAGE_MODEL?.trim() || DEFAULT_IMAGE_API_MODEL,
   };
 
   const findSetting = db.prepare("SELECT setting_value AS value FROM app_settings WHERE setting_key = ?");
@@ -175,7 +181,19 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     const records = workflowRecords(kind);
     const activeWorkflowId = selectedId(kind, records);
     const url = normalizeUrl(read(`comfy.${kind}.url`, defaultUrls[kind]), `${PROCESS_LABELS[kind]} ComfyUI 地址`);
-    return { url, workflow: clone(records.find((item) => item.id === activeWorkflowId).workflow), activeWorkflowId };
+    const config = { mode: "comfyui", url, workflow: clone(records.find((item) => item.id === activeWorkflowId).workflow), activeWorkflowId };
+    if (kind !== "2d") return config;
+    const mode = read("process.2d.mode", "comfyui") === "api" ? "api" : "comfyui";
+    const storedApiKey = read("image.2d.api_key", null);
+    return {
+      ...config,
+      mode,
+      api: {
+        baseUrl: normalizeUrl(read("image.2d.base_url", imageApiDefaults.baseUrl), "2D API Base URL"),
+        model: read("image.2d.model", imageApiDefaults.model).trim() || imageApiDefaults.model,
+        apiKey: storedApiKey === null ? process.env.STEPFUN_IMAGE_API_KEY?.trim() || agentConfig().apiKey : storedApiKey.trim(),
+      },
+    };
   }
 
   function agentConfig() {
@@ -240,6 +258,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
         const current = processConfig(kind);
         return [kind, {
           label: PROCESS_LABELS[kind],
+          mode: current.mode,
           url: current.url,
           workflow: current.workflow,
           activeWorkflowId: current.activeWorkflowId,
@@ -247,6 +266,16 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
           workflows: records.map(({ workflow, ...metadata }) => ({ ...metadata, nodeCount: Object.keys(workflow).length })),
           defaultUrl: defaultUrls[kind],
           defaultWorkflow: clone(defaultWorkflows[kind]),
+          ...(kind === "2d" ? {
+            defaultMode: "comfyui",
+            api: {
+              baseUrl: current.api.baseUrl,
+              model: current.api.model,
+              apiKeyConfigured: Boolean(current.api.apiKey),
+              defaultBaseUrl: imageApiDefaults.baseUrl,
+              defaultModel: imageApiDefaults.model,
+            },
+          } : {}),
         }];
       })),
       agent: {
@@ -275,10 +304,21 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       const activeWorkflowId = next.activeWorkflowId || current.activeWorkflowId;
       if (!records.some((item) => item.id === activeWorkflowId)) throw new Error(`${PROCESS_LABELS[kind]}工作流版本不存在`);
       return [kind, {
+        mode: kind === "2d" && next.mode === "api" ? "api" : "comfyui",
         url: normalizeUrl(next.url ?? current.url, `${PROCESS_LABELS[kind]} ComfyUI 地址`),
         activeWorkflowId,
+        ...(kind === "2d" ? {
+          api: {
+            baseUrl: normalizeUrl(next.api?.baseUrl ?? current.api.baseUrl, "2D API Base URL"),
+            model: typeof next.api?.model === "string" ? next.api.model.trim() : current.api.model,
+            apiKey: typeof next.api?.apiKey === "string" ? next.api.apiKey.trim() : "",
+          },
+        } : {}),
       }];
     }));
+    if (!normalizedProcesses["2d"].api.model) throw new Error("2D API 模型不能为空");
+    if (normalizedProcesses["2d"].api.model.length > 160) throw new Error("2D API 模型不能超过 160 个字符");
+    if (normalizedProcesses["2d"].api.apiKey.length > 1000) throw new Error("2D API Key 不能超过 1,000 个字符");
 
     const currentAgent = agentConfig();
     const agentInput = input.agent && typeof input.agent === "object" ? input.agent : {};
@@ -300,6 +340,10 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
         saveSetting.run(`comfy.${kind}.url`, normalizedProcesses[kind].url, now);
         saveSetting.run(`comfy.${kind}.active_workflow_id`, normalizedProcesses[kind].activeWorkflowId, now);
       }
+      saveSetting.run("process.2d.mode", normalizedProcesses["2d"].mode, now);
+      saveSetting.run("image.2d.base_url", normalizedProcesses["2d"].api.baseUrl, now);
+      saveSetting.run("image.2d.model", normalizedProcesses["2d"].api.model, now);
+      if (normalizedProcesses["2d"].api.apiKey) saveSetting.run("image.2d.api_key", normalizedProcesses["2d"].api.apiKey, now);
       saveSetting.run("agent.base_url", nextAgent.baseUrl, now);
       saveSetting.run("agent.model", nextAgent.model, now);
       saveSetting.run("agent.api_key", nextAgent.apiKey, now);
