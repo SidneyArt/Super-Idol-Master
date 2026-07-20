@@ -552,6 +552,7 @@ function completeJob(runId, jobType, stdout) {
   const now = new Date().toISOString();
   const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const lastLine = lines.at(-1) || "";
+  let sourceKey = `${jobType}:${now}`;
   db.exec("BEGIN IMMEDIATE");
   try {
     if (jobType === "2d") {
@@ -570,6 +571,7 @@ function completeJob(runId, jobType, stdout) {
       addEvent(runId, "generation_succeeded", 1, "DGX Qwen Image 已返回真实 PNG", now);
     } else if (jobType === "qa") {
       const result = JSON.parse(lastLine);
+      sourceKey = `qa:${result.promptId || now}`;
       const overlaySource = result.overlayPath ? safeOutputPath(result.overlayPath, "file") : null;
       let overlayPath = null;
       if (overlaySource) {
@@ -621,6 +623,7 @@ function completeJob(runId, jobType, stdout) {
     db.exec("ROLLBACK");
     throw error;
   }
+  return { runId, jobType, sourceKey };
 }
 
 function failJob(runId, jobType, errorMessage) {
@@ -707,8 +710,14 @@ function launchJob(run, jobType, processConfig = settingsStore.processConfig(job
     if (workflowPath && existsSync(workflowPath)) unlinkSync(workflowPath);
     if (activeJobs.get(run.id) === activeJob) activeJobs.delete(run.id);
     try {
-      if (success) completeJob(run.id, jobType, stdout);
-      else failJob(run.id, jobType, errorMessage || stderr || `Python 退出代码非零`);
+      if (success) {
+        const completion = completeJob(run.id, jobType, stdout);
+        void assetAgent.handleJobCompleted(completion).catch((error) => {
+          console.error(`[Agent] ${jobType} completion hook failed:`, error);
+        });
+      } else {
+        failJob(run.id, jobType, errorMessage || stderr || `Python 退出代码非零`);
+      }
     } catch (error) {
       failJob(run.id, jobType, error instanceof Error ? error.message : "任务结果处理失败");
     }
@@ -888,6 +897,8 @@ const assetAgent = createAssetAgentRuntime({
   revertWorkflow: revertRun,
   runStageJob,
   getAgentConfig: settingsStore.agentConfig,
+  getRunImagePath: (runId) => getRunRow(runId)?.imagePathInternal || null,
+  addRunEvent: addEvent,
 });
 
 const server = createServer(async (req, res) => {
@@ -985,7 +996,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (req.method === "GET" && parts.length === 3) {
-        json(res, 200, runDetail(id));
+        json(res, 200, { ...runDetail(id), agentRoleRuns: assetAgent.getRoleRuns(id) });
         return;
       }
       if (req.method === "GET" && parts[3] === "agent" && parts[4] === "messages") {
@@ -1003,7 +1014,15 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[3] === "start") {
         const body = await readBody(req);
-        json(res, 200, confirmCharacterIdea(id, body));
+        let input = body;
+        if (assetAgent.status().configured) {
+          const prepared = await assetAgent.prepareCharacterPrompts(id, body, "确认角色设定前检查提示词");
+          input = {
+            positivePrompt: prepared.promptPlan.positivePrompt,
+            negativePrompt: prepared.promptPlan.negativePrompt,
+          };
+        }
+        json(res, 200, { ...confirmCharacterIdea(id, input), agentRoleRuns: assetAgent.getRoleRuns(id) });
         return;
       }
       if (req.method === "POST" && parts[3] === "generate-2d") {

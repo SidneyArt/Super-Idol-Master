@@ -111,7 +111,26 @@ type Run = {
 };
 
 type RunEvent = { id: number; eventType: string; stage: number; message: string; createdAt: string };
-type RunDetail = { run: Run; events: RunEvent[] };
+type AgentRoleReport = {
+  summary?: string;
+  decision?: "approve" | "revise" | "manual_review" | "pass" | "repairable" | "reject";
+  issues?: string[];
+  positivePrompt?: string;
+  negativePrompt?: string;
+};
+type AgentRoleRun = {
+  id: string;
+  agentRole: "art_director" | "visual_qa";
+  triggerType: string;
+  sourceKey: string;
+  status: "running" | "succeeded" | "failed";
+  errorMessage: string;
+  reportType: "prompt_plan" | "image_quality_report" | null;
+  report: AgentRoleReport | null;
+  createdAt: string;
+  completedAt: string | null;
+};
+type RunDetail = { run: Run; events: RunEvent[]; agentRoleRuns?: AgentRoleRun[] };
 type WorkflowCheck = { ready: boolean; missing: string[] };
 type ProcessKind = "2d" | "qa" | "3d" | "rig";
 type ProcessSettings = {
@@ -383,11 +402,12 @@ export default function Home() {
 
   const hasRunningTask = runs.some((item) => item.jobStatus === "running");
   const selectedTaskIsRunning = runs.some((item) => item.id === selectedId && item.jobStatus === "running");
+  const selectedRoleIsRunning = detail?.agentRoleRuns?.some((item) => item.status === "running") === true;
 
   useEffect(() => {
-    if (!hasRunningTask) return;
+    if (!hasRunningTask && !selectedRoleIsRunning) return;
     const timer = window.setInterval(() => {
-      const detailRequest = selectedId && selectedTaskIsRunning
+      const detailRequest = selectedId && (selectedTaskIsRunning || selectedRoleIsRunning)
         ? api<RunDetail>(`/api/runs/${selectedId}`)
         : Promise.resolve(null);
       void Promise.all([api<{ runs: Run[] }>("/api/runs"), detailRequest])
@@ -400,9 +420,20 @@ export default function Home() {
         .catch((reason) => setError(reason instanceof Error ? reason.message : "DGX 状态读取失败"));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [hasRunningTask, selectedId, selectedTaskIsRunning]);
+  }, [hasRunningTask, selectedId, selectedRoleIsRunning, selectedTaskIsRunning]);
 
   const run = detail?.run;
+  const artDirectorRun = detail?.agentRoleRuns?.find((item) =>
+    (item.reportType === "prompt_plan" || item.agentRole === "art_director")
+      && (item.status !== "succeeded" || (
+        item.report?.positivePrompt === run?.positivePrompt
+        && item.report?.negativePrompt === run?.negativePrompt
+      )),
+  );
+  const visualQaRun = detail?.agentRoleRuns?.find((item) =>
+    (item.reportType === "image_quality_report" || item.agentRole === "visual_qa")
+      && item.sourceKey === `qa:${run?.jobPromptId}`,
+  );
   const current = run?.currentStage ?? 0;
   const stage = stages[viewStage];
   const progress = useMemo(() => Math.round((current / (stages.length - 1)) * 100), [current]);
@@ -1131,6 +1162,9 @@ export default function Home() {
                                 <textarea rows={7} maxLength={2000} value={promptDraft.negativePrompt} readOnly={current > 0} onChange={(event) => setPromptDraft({ ...promptDraft, negativePrompt: event.target.value })} />
                               </label>
                             </div>
+                            {artDirectorRun?.status === "running" && <div className="action-note running"><RefreshCw size={17} /><div><strong>Art Director 正在检查提示词</strong><p>检查角色身份、姿态约束和正负提示词冲突。</p></div></div>}
+                            {artDirectorRun?.status === "succeeded" && <div className={`action-note ${artDirectorRun.report?.decision === "manual_review" ? "warning" : "passed"}`}><Sparkles size={17} /><div><strong>Art Director · {artDirectorRun.report?.decision === "approve" ? "已确认" : artDirectorRun.report?.decision === "revise" ? "已修订" : "建议人工确认"}</strong><p>{artDirectorRun.report?.summary}</p></div></div>}
+                            {artDirectorRun?.status === "failed" && <div className="action-note failed"><X size={17} /><div><strong>Art Director 检查失败</strong><p>{artDirectorRun.errorMessage}</p></div></div>}
                           </div>
                         </div>
                       ) : modelPreviewUrl ? (
@@ -1254,6 +1288,9 @@ export default function Home() {
                           <div><span>右肘角度</span><strong>{run.qaMetrics.rightElbowAngle || 0}°</strong></div>
                         </div>
                       )}
+                      {viewStage === 2 && visualQaRun?.status === "running" && <div className="action-note running"><RefreshCw size={17} /><div><strong>Visual QA 正在语义复核</strong><p>SDPose 硬门禁已经完成，正在补充检查朝向、遮挡和背景。</p></div></div>}
+                      {viewStage === 2 && visualQaRun?.status === "succeeded" && <div className={`action-note ${visualQaRun.report?.decision === "pass" ? "passed" : "warning"}`}><Bot size={17} /><div><strong>Visual QA · {visualQaRun.report?.decision === "pass" ? "通过" : visualQaRun.report?.decision === "repairable" ? "可修复" : visualQaRun.report?.decision === "reject" ? "不建议使用" : "建议人工复核"}</strong><p>{visualQaRun.report?.summary}</p></div></div>}
+                      {viewStage === 2 && visualQaRun?.status === "failed" && <div className="action-note failed"><X size={17} /><div><strong>Visual QA 复核失败</strong><p>{visualQaRun.errorMessage}。SDPose 结果不受影响。</p></div></div>}
 
                     </div>
                   </section>}

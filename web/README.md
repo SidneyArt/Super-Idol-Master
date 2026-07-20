@@ -49,6 +49,15 @@ npm run agent:verify
 - 材质、拓扑线框、骨骼显示、自动旋转和视角控制；
 - SQLite 持久化任务、产物路径和执行历史。
 - Pi 驱动的 Asset Agent，可完善提示词、推进或回退流程、重新生成并分析参考图片。
+- Pi 多角色协作：Supervisor 委派 Art Director 检查提示词，SDPose 完成后异步触发 Visual QA 语义复核。
+
+## 多 Agent 调用边界
+
+- `Supervisor` 是唯一拥有状态修改和 Job 工具的角色。
+- `Art Director` 只提交结构化 `PromptPlan`；配置 Agent API 后，聊天更新提示词和页面“确认设定”都会触发检查。
+- `Visual QA` 只提交结构化图片质量报告；它检查朝向、遮挡和背景，不覆盖 SDPose 的关键点硬门禁。
+- 角色运行和报告保存在 SQLite 的 `agent_role_runs`、`agent_reports` 表中，Run API 会返回最新状态。
+- 没有配置 Agent API Key 时跳过多角色调用，原有确定性流水线仍可使用。
 
 ## 不进入 Git 的本机内容
 
