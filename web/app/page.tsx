@@ -47,6 +47,7 @@ const DEFAULT_POSITIVE_PROMPT =
   "美式3d卡通，1个3d女性角色，Ninjala风格，任天堂风格，潮流配色，(严格正视图:1.3)，完全正对镜头，(严格的T-Pose:1.3)，双臂水平伸展，全身出镜，纯白色背景，极简服装设计，纯净模型，1:1比例，高品质，杰作";
 const DEFAULT_NEGATIVE_PROMPT =
   "低分辨率，低画质，肢体畸形，手指畸形，画面过饱和，蜡像感，人脸无细节，过度光滑，画面具有AI感。构图混乱。文字模糊，扭曲";
+const MAX_AGENT_QUEUE_ITEMS = 20;
 
 const stages = [
   { short: "IDEA", title: "角色描述", subtitle: "定义人物与风格", input: "人物设定与提示词", output: "角色规格", action: "确认角色身份、服装、视角和背景。" },
@@ -69,6 +70,13 @@ type ChatMessage = {
   createdAt: string;
 };
 type AgentAttachment = { name: string; mimeType: string; data: string; size: number };
+type AgentQueueItem = {
+  id: number;
+  runId: string;
+  runName: string;
+  message: string;
+  attachment: AgentAttachment | null;
+};
 
 type Assets = {
   imageReady: boolean;
@@ -218,6 +226,8 @@ export default function Home() {
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
+  const [activeAgentRunId, setActiveAgentRunId] = useState<string | null>(null);
+  const [agentQueue, setAgentQueue] = useState<AgentQueueItem[]>([]);
   const [agentAttachment, setAgentAttachment] = useState<AgentAttachment | null>(null);
   const [form, setForm] = useState({ name: "" });
   const [promptDraft, setPromptDraft] = useState({
@@ -225,10 +235,18 @@ export default function Home() {
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
   });
   const agentDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const agentQueueRef = useRef<AgentQueueItem[]>([]);
+  const agentProcessingRef = useRef(false);
+  const agentQueueIdRef = useRef(0);
+  const selectedIdRef = useRef<string | null>(selectedId);
   const agentFileRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const workflowFileRef = useRef<HTMLInputElement | null>(null);
   const workflowDirectoryRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("sim-theme");
@@ -328,7 +346,7 @@ export default function Home() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [chatMessages, agentBusy]);
+  }, [chatMessages, agentBusy, agentQueue.length]);
 
   const hasRunningTask = runs.some((item) => item.jobStatus === "running");
   const selectedTaskIsRunning = runs.some((item) => item.id === selectedId && item.jobStatus === "running");
@@ -728,10 +746,81 @@ export default function Home() {
     reader.readAsDataURL(file);
   }
 
-  async function cancelAgent() {
-    if (!run || !agentBusy) return;
+  function replaceAgentQueue(items: AgentQueueItem[]) {
+    agentQueueRef.current = items;
+    setAgentQueue(items);
+  }
+
+  function removeQueuedAgentMessage(id: number) {
+    replaceAgentQueue(agentQueueRef.current.filter((item) => item.id !== id));
+  }
+
+  async function processNextAgentMessage() {
+    if (agentProcessingRef.current) return;
+    const item = agentQueueRef.current[0];
+    if (!item) return;
+
+    replaceAgentQueue(agentQueueRef.current.slice(1));
+    agentProcessingRef.current = true;
+    setAgentBusy(true);
+    setActiveAgentRunId(item.runId);
+    setError("");
+
+    const optimisticMessage: ChatMessage = {
+      id: -item.id,
+      role: "user",
+      content: item.message || "请分析这张参考图片并完善角色设定。",
+      attachmentName: item.attachment?.name || null,
+      attachmentMime: item.attachment?.mimeType || null,
+      createdAt: new Date().toISOString(),
+    };
+    if (selectedIdRef.current === item.runId) {
+      setChatMessages((messages) => [...messages, optimisticMessage]);
+    }
+
     try {
-      await api(`/api/runs/${run.id}/agent/cancel`, { method: "POST" });
+      const data = await api<{ messages: ChatMessage[]; detail: RunDetail }>(`/api/runs/${item.runId}/agent/messages`, {
+        method: "POST",
+        body: JSON.stringify({
+          message: item.message,
+          image: item.attachment ? { name: item.attachment.name, mimeType: item.attachment.mimeType, data: item.attachment.data } : undefined,
+        }),
+      });
+      if (selectedIdRef.current === item.runId) {
+        setChatMessages(data.messages);
+        setDetail(data.detail);
+        setViewStage(data.detail.run.currentStage);
+        setPromptDraft({
+          positivePrompt: data.detail.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
+          negativePrompt: data.detail.run.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
+        });
+      }
+      void api<{ runs: Run[] }>("/api/runs").then((runData) => setRuns(runData.runs)).catch(() => undefined);
+    } catch (reason) {
+      setError(`${item.runName}：${reason instanceof Error ? reason.message : "Agent 请求失败"}`);
+      if (selectedIdRef.current === item.runId) {
+        try {
+          const history = await api<{ messages: ChatMessage[] }>(`/api/runs/${item.runId}/agent/messages`);
+          if (selectedIdRef.current === item.runId) setChatMessages(history.messages);
+        } catch {
+          setChatMessages((messages) => messages.filter((message) => message.id !== optimisticMessage.id));
+        }
+      }
+    } finally {
+      agentProcessingRef.current = false;
+      if (agentQueueRef.current.length > 0) {
+        void processNextAgentMessage();
+      } else {
+        setAgentBusy(false);
+        setActiveAgentRunId(null);
+      }
+    }
+  }
+
+  async function cancelAgent() {
+    if (!activeAgentRunId || !agentBusy) return;
+    try {
+      await api(`/api/runs/${activeAgentRunId}/agent/cancel`, { method: "POST" });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "取消 Agent 失败");
     }
@@ -743,48 +832,25 @@ export default function Home() {
     event.currentTarget.form?.requestSubmit();
   }
 
-  async function sendChatMessage(event: FormEvent) {
+  function sendChatMessage(event: FormEvent) {
     event.preventDefault();
     const message = chatInput.trim();
-    if (!run || agentBusy || (!message && !agentAttachment)) return;
-    const attachment = agentAttachment;
-    const optimisticMessage: ChatMessage = {
-      id: -Date.now(),
-      role: "user",
-      content: message || "请分析这张参考图片并完善角色设定。",
-      attachmentName: attachment?.name || null,
-      attachmentMime: attachment?.mimeType || null,
-      createdAt: new Date().toISOString(),
+    if (!run || (!message && !agentAttachment) || system?.agent.configured === false) return;
+    if (agentQueueRef.current.length >= MAX_AGENT_QUEUE_ITEMS) {
+      setError(`Agent 待发送队列最多保留 ${MAX_AGENT_QUEUE_ITEMS} 条消息`);
+      return;
+    }
+    const queueItem: AgentQueueItem = {
+      id: ++agentQueueIdRef.current,
+      runId: run.id,
+      runName: run.name,
+      message,
+      attachment: agentAttachment,
     };
-    setChatMessages((items) => [...items, optimisticMessage]);
+    replaceAgentQueue([...agentQueueRef.current, queueItem]);
     setChatInput("");
     setAgentAttachment(null);
-    setAgentBusy(true);
-    setError("");
-    try {
-      const data = await api<{ messages: ChatMessage[]; detail: RunDetail }>(`/api/runs/${run.id}/agent/messages`, {
-        method: "POST",
-        body: JSON.stringify({
-          message,
-          image: attachment ? { name: attachment.name, mimeType: attachment.mimeType, data: attachment.data } : undefined,
-        }),
-      });
-      setChatMessages(data.messages);
-      setDetail(data.detail);
-      setViewStage(data.detail.run.currentStage);
-      setPromptDraft({
-        positivePrompt: data.detail.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
-        negativePrompt: data.detail.run.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
-      });
-      await refreshRuns(run.id);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Agent 请求失败");
-      void api<{ messages: ChatMessage[] }>(`/api/runs/${run.id}/agent/messages`)
-        .then((data) => setChatMessages(data.messages))
-        .catch(() => setChatMessages((items) => items.filter((item) => item.id !== optimisticMessage.id)));
-    } finally {
-      setAgentBusy(false);
-    }
+    void processNextAgentMessage();
   }
 
   const previewType = modelPreviewUrl
@@ -792,6 +858,8 @@ export default function Home() {
     : hasQaComparison ? "SDPose 对比"
     : viewStage === 2 && run?.qaOverlayPath ? "SDPose 覆盖图"
     : run?.previewPath ? "2D 概念图" : "等待资产";
+  const selectedRunAgentBusy = agentBusy && activeAgentRunId === run?.id;
+  const activeAgentRunName = runs.find((item) => item.id === activeAgentRunId)?.name;
 
   return (
     <main className={`site-shell ${sidebarCollapsed ? "tasks-collapsed" : ""}`}>
@@ -1121,7 +1189,7 @@ export default function Home() {
             <div className="agent-title"><span><Bot size={19} /></span><div><strong>Asset Agent</strong><small>工作对话</small></div></div>
             <div className="agent-header-actions">
               <span className={`agent-state ${agentBusy ? "busy" : system?.agent.configured ? "" : "unavailable"}`}>
-                <i />{agentBusy ? "处理中" : system?.agent.configured ? "待命" : "未配置"}
+                <i />{agentBusy ? agentQueue.length ? `处理中 · ${agentQueue.length} 排队` : "处理中" : system?.agent.configured ? "待命" : "未配置"}
               </span>
               <button className="icon-button" type="button" onClick={() => setAgentCollapsed((value) => !value)} title={agentCollapsed ? "展开 Agent 面板" : "收起 Agent 面板"} aria-label={agentCollapsed ? "展开 Agent 面板" : "收起 Agent 面板"}>
                 {agentCollapsed ? <PanelRightOpen size={18} /> : <PanelRightClose size={18} />}
@@ -1144,11 +1212,32 @@ export default function Home() {
                 </div>
               </div>
             ))}
-            {agentBusy && (
+            {selectedRunAgentBusy && (
               <div className="chat-message assistant pending">
                 <span className="chat-avatar"><Bot size={16} /></span>
                 <div><strong>Asset Agent</strong><p><LoaderCircle size={15} />正在处理任务</p></div>
               </div>
+            )}
+            {agentBusy && !selectedRunAgentBusy && activeAgentRunName && (
+              <div className="agent-background-status"><LoaderCircle size={14} />正在处理“{activeAgentRunName}”的消息</div>
+            )}
+            {agentQueue.length > 0 && (
+              <section className="agent-message-queue" aria-label="Agent 待发送队列">
+                <div className="agent-queue-heading"><span>待发送队列</span><strong>{agentQueue.length}</strong></div>
+                <div className="agent-queue-list">
+                  {agentQueue.map((item, index) => (
+                    <div className="agent-queue-item" key={item.id}>
+                      <span className="agent-queue-position">{index + 1}</span>
+                      <div className="agent-queue-copy">
+                        <strong>{item.runName}</strong>
+                        <p>{item.message || "分析参考图片并完善角色设定"}</p>
+                        {item.attachment && <span><ImageIcon size={12} />{item.attachment.name}</span>}
+                      </div>
+                      <button type="button" onClick={() => removeQueuedAgentMessage(item.id)} title="从队列移除" aria-label={`从队列移除：${item.message || item.attachment?.name || "图片消息"}`}><X size={14} /></button>
+                    </div>
+                  ))}
+                </div>
+              </section>
             )}
             <div ref={chatEndRef} />
           </div>
@@ -1159,16 +1248,17 @@ export default function Home() {
                 <button type="button" onClick={() => setAgentAttachment(null)} title="移除图片" aria-label="移除参考图片"><X size={14} /></button>
               </div>
             )}
-            <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={handleChatKeyDown} rows={3} placeholder="给 Agent 下达资产生成任务…" disabled={agentBusy} />
+            <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={handleChatKeyDown} rows={3} placeholder={agentBusy ? "继续输入，消息将进入待发送队列…" : "给 Agent 下达资产生成任务…"} />
             <div className="composer-footer">
               <div className="composer-meta">
                 <input ref={agentFileRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={selectAgentImage} hidden />
-                <button className="attach-button" type="button" onClick={() => agentFileRef.current?.click()} disabled={agentBusy || !run} aria-label="添加参考图片" title="添加参考图片"><Paperclip size={16} /></button>
+                <button className="attach-button" type="button" onClick={() => agentFileRef.current?.click()} disabled={!run} aria-label="添加参考图片" title="添加参考图片"><Paperclip size={16} /></button>
                 <span><MessageSquare size={15} />{system?.agent.model || "当前会话"}</span>
               </div>
-              {agentBusy
-                ? <button type="button" onClick={cancelAgent} aria-label="停止 Agent" title="停止 Agent"><X size={17} /></button>
-                : <button type="submit" disabled={!run || (!chatInput.trim() && !agentAttachment) || system?.agent.configured === false} aria-label="发送消息" title="发送消息"><Send size={17} /></button>}
+              <div className="composer-actions">
+                {agentBusy && <button className="cancel" type="button" onClick={cancelAgent} aria-label="停止当前 Agent 请求" title="停止当前 Agent 请求"><X size={17} /></button>}
+                <button type="submit" disabled={!run || (!chatInput.trim() && !agentAttachment) || agentQueue.length >= MAX_AGENT_QUEUE_ITEMS || system?.agent.configured === false} aria-label={agentBusy ? "加入发送队列" : "发送消息"} title={agentBusy ? "加入发送队列" : "发送消息"}><Send size={17} /></button>
+              </div>
             </div>
           </form>
         </aside>
