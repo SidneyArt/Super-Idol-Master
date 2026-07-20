@@ -236,7 +236,7 @@ function runDetail(id) {
 function revertRun(runId, targetStage) {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
-  if (activeJob?.runId === runId || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能回退");
+  if (activeJobs.has(runId) || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能回退");
   if (!Number.isInteger(targetStage) || targetStage < 0 || targetStage >= run.currentStage) {
     throw new Error("只能回退到当前阶段之前的已完成阶段");
   }
@@ -282,7 +282,7 @@ function revertRun(runId, targetStage) {
 function advanceRun(runId) {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
-  if (activeJob?.runId === runId || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能确认阶段");
+  if (activeJobs.has(runId) || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能确认阶段");
 
   const stage = run.currentStage;
   if (stage < 1 || stage > 4) throw new Error("当前阶段不能执行完成确认");
@@ -315,7 +315,7 @@ function advanceRun(runId) {
 function updateRunPrompts(runId, { positivePrompt, negativePrompt, reason = "Agent 更新角色提示词" }) {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
-  if (activeJob?.runId === runId || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能修改提示词");
+  if (activeJobs.has(runId) || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能修改提示词");
   if (run.currentStage > 1) throw new Error("已有下游资产，请先回退到概念图生成阶段再修改提示词");
   if (positivePrompt === undefined && negativePrompt === undefined) throw new Error("至少需要更新一项提示词");
 
@@ -477,7 +477,7 @@ function inspectGlb(filePath, requireRig = false) {
   }
 }
 
-let activeJob = null;
+const activeJobs = new Map();
 
 function persistJobProgress(runId, jobType, progress, message, node = null) {
   db.prepare(`
@@ -501,7 +501,7 @@ function connectComfyProgress(runId, jobType, promptId, clientId, comfyUrl, work
     persistJobProgress(runId, jobType, progress, message, node ? String(node) : null);
   };
 
-  socket.addEventListener("open", () => update(0.01, "已连接 ComfyUI 实时事件流"));
+  socket.addEventListener("open", () => update(0.01, "ComfyUI 已进入队列，等待执行"));
   socket.addEventListener("message", (event) => {
     if (typeof event.data !== "string") return;
     try {
@@ -652,7 +652,8 @@ function launchJob(run, jobType) {
     unlinkSync(workflowPath);
     throw error;
   }
-  activeJob = { runId: run.id, jobType, child, socket: null, workflowPath };
+  const activeJob = { runId: run.id, jobType, child, socket: null, workflowPath };
+  activeJobs.set(run.id, activeJob);
   let stdout = "";
   let stderr = "";
   let finalized = false;
@@ -663,13 +664,13 @@ function launchJob(run, jobType) {
   });
   child.stderr.on("data", (chunk) => {
     stderr = `${stderr}${chunk.toString("utf8")}`.slice(-100_000);
-    if (!activeJob?.socket) {
+    if (!activeJob.socket) {
       const match = stderr.match(new RegExp(`\\[${comfyKind}\\] submitted prompt_id=(\\S+) client_id=(\\S+)`));
       if (match) {
         const [, promptId, clientId] = match;
         db.prepare(`
           UPDATE runs SET generation_prompt_id = ?, generation_progress = 5,
-            generation_message = 'ComfyUI 已接收任务', updated_at = ?
+            generation_message = 'ComfyUI 已进入队列，等待执行', updated_at = ?
           WHERE id = ? AND generation_status = 'running'
         `).run(promptId, new Date().toISOString(), run.id);
         activeJob.socket = connectComfyProgress(
@@ -687,10 +688,10 @@ function launchJob(run, jobType) {
   const finalize = (success, errorMessage = "") => {
     if (finalized) return;
     finalized = true;
-    const socket = activeJob?.socket;
+    const socket = activeJob.socket;
     if (socket) socket.close();
     if (existsSync(workflowPath)) unlinkSync(workflowPath);
-    activeJob = null;
+    if (activeJobs.get(run.id) === activeJob) activeJobs.delete(run.id);
     try {
       if (success) completeJob(run.id, jobType, stdout);
       else failJob(run.id, jobType, errorMessage || stderr || `Python 退出代码非零`);
@@ -704,7 +705,6 @@ function launchJob(run, jobType) {
 }
 
 function startJob(runId, jobType) {
-  if (activeJob) throw new Error(`已有 ${activeJob.jobType.toUpperCase()} 任务正在 DGX 执行，请等待完成`);
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
   if (run.jobStatus === "running") throw new Error("当前任务仍在执行");
@@ -1015,7 +1015,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (req.method === "POST" && parts[3] === "reset") {
-        if (activeJob?.runId === id || existing.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能重置");
+        if (activeJobs.has(id) || existing.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能重置");
         const now = new Date().toISOString();
         db.prepare(`
           UPDATE runs SET current_stage = 0, status = 'active', qa_status = 'pending',
@@ -1029,7 +1029,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (req.method === "DELETE" && parts.length === 3) {
-        if (activeJob?.runId === id || existing.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能删除");
+        if (activeJobs.has(id) || existing.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能删除");
         db.prepare("DELETE FROM runs WHERE id = ?").run(id);
         json(res, 200, { ok: true });
         return;
@@ -1049,8 +1049,10 @@ server.listen(PORT, HOST, () => {
 });
 
 function shutdown() {
-  if (activeJob?.socket) activeJob.socket.close();
-  if (activeJob?.child) activeJob.child.kill();
+  for (const activeJob of activeJobs.values()) {
+    if (activeJob.socket) activeJob.socket.close();
+    activeJob.child.kill();
+  }
   server.close(() => {
     db.close();
     process.exit(0);
