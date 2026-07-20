@@ -635,6 +635,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   font-size: 12px;
 }
 .text-icon-button:hover { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text); }
+.text-icon-button:disabled { opacity: .5; cursor: not-allowed; }
+.text-icon-button .spinning { animation: spin 1s linear infinite; }
 .settings-field { display: block; margin-top: 15px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .settings-field > span { display: block; margin-bottom: 6px; }
 .settings-field input, .settings-field textarea {
@@ -647,11 +649,33 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   color: var(--text);
 }
 .settings-field input { height: 42px; padding: 0 11px; }
+.settings-field select { width: 100%; height: 42px; padding: 0 11px; border: 1px solid var(--border); border-radius: 6px; outline: 0; background: var(--surface-soft); color: var(--text); font-size: 13px; }
+.settings-field select:focus { border-color: var(--accent); }
+.agent-model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.agent-model-row .text-icon-button { min-width: 104px; justify-content: center; }
 .settings-field textarea { min-height: 360px; height: calc(100vh - 330px); padding: 12px; resize: vertical; font-family: Consolas, "SFMono-Regular", monospace; font-size: 12px; line-height: 1.55; tab-size: 2; }
 .settings-field input:focus, .settings-field textarea:focus { border-color: var(--accent); }
 .settings-field input::placeholder { color: var(--muted); }
 .workflow-field { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 300px; }
 .workflow-field textarea { flex: 1 1 auto; }
+.workflow-select-row { display: grid; grid-template-columns: minmax(0, 1fr) 40px; gap: 8px; }
+.workflow-select-row .icon-button { width: 40px; height: 40px; }
+.workflow-select-row .icon-button:disabled { opacity: .4; cursor: not-allowed; }
+.workflow-dropzone { min-height: 84px; display: flex; align-items: center; gap: 11px; margin-top: 15px; padding: 12px 13px; border: 1px dashed var(--border-strong); border-radius: 7px; background: var(--surface-soft); color: var(--muted); cursor: pointer; transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease; }
+.workflow-dropzone:hover, .workflow-dropzone.dragging { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.workflow-dropzone > .workflow-upload-copy { min-width: 0; display: grid; gap: 3px; flex: 1 1 auto; }
+.workflow-dropzone strong { color: var(--text-secondary); font-size: 13px; }
+.workflow-dropzone div span { font-size: 11px; }
+.workflow-upload-icon { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 6px; background: var(--surface-raised); color: var(--accent); }
+.workflow-upload-actions { display: flex; gap: 5px; flex: 0 0 auto; }
+.workflow-upload-actions .icon-button { width: 32px; height: 32px; background: var(--surface-raised); }
+.workflow-summary { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); }
+.workflow-summary > div { min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--accent); }
+.workflow-summary > div > span { min-width: 0; display: grid; gap: 2px; }
+.workflow-summary strong, .workflow-summary small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-summary strong { color: var(--text-secondary); font-size: 12px; }
+.workflow-summary small { color: var(--muted); font-size: 11px; }
+.workflow-json-preview { max-height: 420px; margin: 0; padding: 12px; border: 1px solid var(--border); border-top: 0; border-radius: 0 0 6px 6px; background: #0a0d12; color: #c9d4e2; overflow: auto; font: 11px/1.55 Consolas, "SFMono-Regular", monospace; white-space: pre; tab-size: 2; }
 .workflow-json-status { min-height: 28px; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
 .workflow-json-status i, .config-state i { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--muted); }
 .workflow-json-status i.valid, .config-state.configured i { background: var(--success); }

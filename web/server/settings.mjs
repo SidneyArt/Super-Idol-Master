@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
+import { randomUUID } from "node:crypto";
 
 export const PROCESS_KINDS = ["2d", "qa", "3d", "rig"];
 
@@ -15,6 +17,9 @@ const REQUIRED_NODES = {
   "3d": ["122", "308", "309", "313"],
   rig: ["23"],
 };
+
+const MAX_WORKFLOW_BYTES = 500_000;
+const MAX_CUSTOM_WORKFLOWS = 20;
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -53,8 +58,13 @@ function normalizeWorkflow(value, kind) {
     }
   }
   const serialized = JSON.stringify(graph);
-  if (Buffer.byteLength(serialized) > 500_000) throw new Error(`${PROCESS_LABELS[kind]}工作流不能超过 500 KB`);
+  if (Buffer.byteLength(serialized) > MAX_WORKFLOW_BYTES) throw new Error(`${PROCESS_LABELS[kind]}工作流不能超过 500 KB`);
   return JSON.parse(serialized);
+}
+
+function displayWorkflowName(value, fallback) {
+  const name = typeof value === "string" ? value.trim().replace(/[\\/:*?"<>|]/g, "-") : "";
+  return (name || fallback).slice(0, 160);
 }
 
 export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
@@ -92,14 +102,80 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     return row ? row.value : fallback;
   }
 
-  function processConfig(kind) {
-    if (!PROCESS_KINDS.includes(kind)) throw new Error("未知工作流类型");
-    const url = normalizeUrl(read(`comfy.${kind}.url`, defaultUrls[kind]), `${PROCESS_LABELS[kind]} ComfyUI 地址`);
-    const storedWorkflow = read(`comfy.${kind}.workflow`, null);
+  function defaultRecord(kind) {
     return {
-      url,
-      workflow: storedWorkflow ? normalizeWorkflow(storedWorkflow, kind) : clone(defaultWorkflows[kind]),
+      id: "default",
+      name: basename(workflowFiles[kind]),
+      source: "default",
+      workflow: clone(defaultWorkflows[kind]),
+      createdAt: null,
     };
+  }
+
+  function workflowRecords(kind) {
+    if (!PROCESS_KINDS.includes(kind)) throw new Error("未知工作流类型");
+    const records = [defaultRecord(kind)];
+    const stored = read(`comfy.${kind}.workflows`, null);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed.slice(0, MAX_CUSTOM_WORKFLOWS)) {
+            if (!item || item.id === "default") continue;
+            try {
+              records.push({
+                id: displayWorkflowName(item.id, randomUUID()),
+                name: displayWorkflowName(item.name, "未命名工作流.json"),
+                source: "uploaded",
+                workflow: normalizeWorkflow(item.workflow, kind),
+                createdAt: typeof item.createdAt === "string" ? item.createdAt : null,
+              });
+            } catch {
+              // Ignore a corrupted custom version and keep the default available.
+            }
+          }
+        }
+      } catch {
+        // Ignore malformed storage and keep the default available.
+      }
+    } else {
+      const legacy = read(`comfy.${kind}.workflow`, null);
+      if (legacy) {
+        try {
+          const legacyWorkflow = normalizeWorkflow(legacy, kind);
+          if (JSON.stringify(legacyWorkflow) !== JSON.stringify(defaultWorkflows[kind])) {
+            records.push({
+              id: "legacy",
+              name: "已保存版本.json",
+              source: "uploaded",
+              workflow: legacyWorkflow,
+              createdAt: null,
+            });
+          }
+        } catch {
+          // Ignore an invalid legacy setting.
+        }
+      }
+    }
+    return records;
+  }
+
+  function saveWorkflowRecords(kind, records) {
+    const custom = records.filter((item) => item.id !== "default").slice(0, MAX_CUSTOM_WORKFLOWS);
+    saveSetting.run(`comfy.${kind}.workflows`, JSON.stringify(custom), new Date().toISOString());
+  }
+
+  function selectedId(kind, records = workflowRecords(kind)) {
+    const requested = read(`comfy.${kind}.active_workflow_id`, null)
+      || (records.some((item) => item.id === "legacy") ? "legacy" : "default");
+    return records.some((item) => item.id === requested) ? requested : "default";
+  }
+
+  function processConfig(kind) {
+    const records = workflowRecords(kind);
+    const activeWorkflowId = selectedId(kind, records);
+    const url = normalizeUrl(read(`comfy.${kind}.url`, defaultUrls[kind]), `${PROCESS_LABELS[kind]} ComfyUI 地址`);
+    return { url, workflow: clone(records.find((item) => item.id === activeWorkflowId).workflow), activeWorkflowId };
   }
 
   function agentConfig() {
@@ -110,14 +186,65 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     };
   }
 
+  async function fetchAgentModels(input = {}) {
+    const current = agentConfig();
+    const baseUrl = normalizeUrl(input.baseUrl ?? current.baseUrl, "Agent Base URL");
+    const apiKey = input.clearApiKey === true
+      ? ""
+      : typeof input.apiKey === "string" && input.apiKey.trim()
+        ? input.apiKey.trim()
+        : current.apiKey;
+    if (!apiKey) throw new Error("请先填写 Agent API Key");
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(`${baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+        signal: controller.signal,
+        redirect: "error",
+      });
+      const text = await response.text();
+      let payload;
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        throw new Error(`模型接口返回了非 JSON 响应（HTTP ${response.status}）`);
+      }
+      if (!response.ok) {
+        const message = payload?.error?.message || payload?.message || `HTTP ${response.status}`;
+        throw new Error(`模型列表获取失败：${message}`);
+      }
+      const items = Array.isArray(payload) ? payload : Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : [];
+      const models = [...new Map(items.flatMap((item) => {
+        if (typeof item === "string" && item.trim()) return [[item.trim(), { id: item.trim(), name: item.trim() }]];
+        const id = typeof item?.id === "string" ? item.id.trim() : "";
+        if (!id) return [];
+        const name = typeof item.name === "string" && item.name.trim() ? item.name.trim() : id;
+        return [[id, { id, name }]];
+      })).values()].slice(0, 500);
+      if (!models.length) throw new Error("模型接口没有返回可选择的模型");
+      return { baseUrl, models };
+    } catch (error) {
+      if (error?.name === "AbortError") throw new Error("获取模型列表超时");
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   function publicSettings() {
     return {
       processes: Object.fromEntries(PROCESS_KINDS.map((kind) => {
+        const records = workflowRecords(kind);
         const current = processConfig(kind);
         return [kind, {
           label: PROCESS_LABELS[kind],
           url: current.url,
           workflow: current.workflow,
+          activeWorkflowId: current.activeWorkflowId,
+          defaultWorkflowId: "default",
+          workflows: records.map(({ workflow, ...metadata }) => ({ ...metadata, nodeCount: Object.keys(workflow).length })),
           defaultUrl: defaultUrls[kind],
           defaultWorkflow: clone(defaultWorkflows[kind]),
         }];
@@ -132,15 +259,24 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     };
   }
 
+  function getWorkflow(kind, id) {
+    const record = workflowRecords(kind).find((item) => item.id === id);
+    if (!record) throw new Error("工作流版本不存在");
+    return clone(record);
+  }
+
   function update(input) {
     const processes = input?.processes;
     if (!processes || typeof processes !== "object" || Array.isArray(processes)) throw new Error("缺少流程配置");
     const normalizedProcesses = Object.fromEntries(PROCESS_KINDS.map((kind) => {
       const current = processConfig(kind);
       const next = processes[kind] || current;
+      const records = workflowRecords(kind);
+      const activeWorkflowId = next.activeWorkflowId || current.activeWorkflowId;
+      if (!records.some((item) => item.id === activeWorkflowId)) throw new Error(`${PROCESS_LABELS[kind]}工作流版本不存在`);
       return [kind, {
         url: normalizeUrl(next.url ?? current.url, `${PROCESS_LABELS[kind]} ComfyUI 地址`),
-        workflow: normalizeWorkflow(next.workflow ?? current.workflow, kind),
+        activeWorkflowId,
       }];
     }));
 
@@ -162,7 +298,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     try {
       for (const kind of PROCESS_KINDS) {
         saveSetting.run(`comfy.${kind}.url`, normalizedProcesses[kind].url, now);
-        saveSetting.run(`comfy.${kind}.workflow`, JSON.stringify(normalizedProcesses[kind].workflow), now);
+        saveSetting.run(`comfy.${kind}.active_workflow_id`, normalizedProcesses[kind].activeWorkflowId, now);
       }
       saveSetting.run("agent.base_url", nextAgent.baseUrl, now);
       saveSetting.run("agent.model", nextAgent.model, now);
@@ -175,5 +311,29 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     return publicSettings();
   }
 
-  return { processConfig, agentConfig, publicSettings, update };
+  function uploadWorkflow(kind, input) {
+    const records = workflowRecords(kind);
+    const customCount = records.filter((item) => item.id !== "default").length;
+    if (customCount >= MAX_CUSTOM_WORKFLOWS) throw new Error(`每类最多保存 ${MAX_CUSTOM_WORKFLOWS} 个自定义工作流`);
+    const workflow = normalizeWorkflow(input?.workflow, kind);
+    const name = displayWorkflowName(input?.name, `${PROCESS_LABELS[kind]}.json`);
+    const record = { id: randomUUID(), name, source: "uploaded", workflow, createdAt: new Date().toISOString() };
+    saveWorkflowRecords(kind, [...records, record]);
+    const { workflow: storedWorkflow, ...metadata } = record;
+    return {
+      settings: publicSettings(),
+      uploaded: { ...metadata, nodeCount: Object.keys(storedWorkflow).length },
+    };
+  }
+
+  function removeWorkflow(kind, id) {
+    if (id === "default") throw new Error("默认工作流不能删除");
+    const records = workflowRecords(kind);
+    if (!records.some((item) => item.id === id)) throw new Error("工作流版本不存在");
+    saveWorkflowRecords(kind, records.filter((item) => item.id !== id));
+    if (selectedId(kind, records) === id) saveSetting.run(`comfy.${kind}.active_workflow_id`, "default", new Date().toISOString());
+    return publicSettings();
+  }
+
+  return { processConfig, agentConfig, publicSettings, getWorkflow, fetchAgentModels, update, uploadWorkflow, removeWorkflow };
 }

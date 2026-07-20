@@ -5,8 +5,12 @@ import {
   Bot,
   Box,
   Check,
+  ChevronDown,
+  ChevronRight,
   Download,
   Expand,
+  FileJson,
+  FolderOpen,
   ImageIcon,
   LoaderCircle,
   Maximize2,
@@ -29,6 +33,7 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  Upload,
   Undo2,
   User,
   X,
@@ -106,9 +111,14 @@ type ProcessSettings = {
   label: string;
   url: string;
   workflow: Record<string, unknown>;
+  activeWorkflowId: string;
+  defaultWorkflowId: string;
+  workflows: WorkflowMetadata[];
   defaultUrl: string;
   defaultWorkflow: Record<string, unknown>;
 };
+type WorkflowMetadata = { id: string; name: string; source: "default" | "uploaded"; createdAt: string | null; nodeCount: number };
+type AgentModelOption = { id: string; name: string };
 type AppSettings = {
   processes: Record<ProcessKind, ProcessSettings>;
   agent: {
@@ -120,7 +130,7 @@ type AppSettings = {
   };
 };
 type SettingsDraft = {
-  processes: Record<ProcessKind, { url: string; workflowJson: string }>;
+  processes: Record<ProcessKind, { url: string; activeWorkflowId: string; workflowJson: string }>;
   agent: { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
 };
 type SystemState = {
@@ -144,6 +154,7 @@ function settingsDraft(settings: AppSettings): SettingsDraft {
   return {
     processes: Object.fromEntries(PROCESS_KINDS.map((kind) => [kind, {
       url: settings.processes[kind].url,
+      activeWorkflowId: settings.processes[kind].activeWorkflowId,
       workflowJson: JSON.stringify(settings.processes[kind].workflow, null, 2),
     }])) as SettingsDraft["processes"],
     agent: {
@@ -194,6 +205,10 @@ export default function Home() {
   const [settingsTab, setSettingsTab] = useState<ProcessKind | "agent">("2d");
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [agentModelsLoading, setAgentModelsLoading] = useState(false);
+  const [agentModels, setAgentModels] = useState<AgentModelOption[]>([]);
+  const [workflowPreviewOpen, setWorkflowPreviewOpen] = useState(false);
+  const [workflowDragging, setWorkflowDragging] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [agentCollapsed, setAgentCollapsed] = useState(false);
   const [agentWidth, setAgentWidth] = useState(360);
@@ -211,6 +226,8 @@ export default function Home() {
   const agentDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const agentFileRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const workflowFileRef = useRef<HTMLInputElement | null>(null);
+  const workflowDirectoryRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("sim-theme");
@@ -468,11 +485,13 @@ export default function Home() {
   async function openSettings() {
     setShowSettings(true);
     setSettingsLoading(true);
+    setWorkflowPreviewOpen(false);
     setError("");
     try {
       const data = await api<AppSettings>("/api/settings");
       setSettings(data);
       setSettingsForm(settingsDraft(data));
+      setAgentModels([{ id: data.agent.model, name: data.agent.model }]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "配置读取失败");
       setShowSettings(false);
@@ -495,18 +514,135 @@ export default function Home() {
     if (!settings) return;
     updateProcessSettings(kind, {
       url: settings.processes[kind].defaultUrl,
+      activeWorkflowId: settings.processes[kind].defaultWorkflowId,
       workflowJson: JSON.stringify(settings.processes[kind].defaultWorkflow, null, 2),
     });
+    setWorkflowPreviewOpen(false);
+  }
+
+  async function selectWorkflow(kind: ProcessKind, workflowId: string) {
+    if (!settingsForm || settingsSaving) return;
+    setError("");
+    try {
+      const workflow = await api<{ workflow: Record<string, unknown> }>(`/api/settings/workflows/${kind}/${encodeURIComponent(workflowId)}`);
+      updateProcessSettings(kind, {
+        activeWorkflowId: workflowId,
+        workflowJson: JSON.stringify(workflow.workflow, null, 2),
+      });
+      setWorkflowPreviewOpen(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "工作流读取失败");
+    }
+  }
+
+  function validateWorkflowFile(file: File) {
+    if (!file.name.toLowerCase().endsWith(".json")) throw new Error(`${file.name} 不是 JSON 文件`);
+    if (file.size > 500_000) throw new Error(`${file.name} 不能超过 500 KB`);
+  }
+
+  async function uploadWorkflowFiles(kind: ProcessKind, files: File[]) {
+    if (!files.length || !settingsForm || settingsSaving) return;
+    setError("");
+    try {
+      let latestSettings: AppSettings | null = null;
+      let latestId = "";
+      let latestGraph: Record<string, unknown> | null = null;
+      for (const file of files) {
+        validateWorkflowFile(file);
+        const graph = JSON.parse(await file.text()) as Record<string, unknown>;
+        if (!graph || Array.isArray(graph) || typeof graph !== "object") throw new Error(`${file.name} 必须是 JSON 对象`);
+        const result = await api<{ settings: AppSettings; uploaded: WorkflowMetadata }>(`/api/settings/workflows/${kind}`, {
+          method: "POST",
+          body: JSON.stringify({ name: file.name, workflow: graph }),
+        });
+        latestSettings = result.settings;
+        latestId = result.uploaded.id;
+        latestGraph = graph;
+      }
+      if (!latestSettings || !latestGraph) return;
+      setSettings(latestSettings);
+      updateProcessSettings(kind, {
+        activeWorkflowId: latestId,
+        workflowJson: JSON.stringify(latestGraph, null, 2),
+      });
+      setWorkflowPreviewOpen(false);
+      setSystem(await api<SystemState>("/api/system?force=1"));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "工作流上传失败");
+    }
+  }
+
+  function handleWorkflowFiles(kind: ProcessKind, fileList: FileList | File[]) {
+    const files = Array.from(fileList);
+    const jsonFiles = files.filter((file) => file.name.toLowerCase().endsWith(".json"));
+    if (!jsonFiles.length) {
+      setError("所选位置没有 JSON 工作流文件");
+      return;
+    }
+    void uploadWorkflowFiles(kind, jsonFiles);
+  }
+
+  function chooseWorkflowDirectory() {
+    const input = workflowDirectoryRef.current;
+    if (!input) return;
+    input.setAttribute("webkitdirectory", "");
+    input.click();
+  }
+
+  async function removeWorkflow(kind: ProcessKind, workflowId: string) {
+    if (!settings || workflowId === settings.processes[kind].defaultWorkflowId || settingsSaving) return;
+    const workflow = settings.processes[kind].workflows.find((item) => item.id === workflowId);
+    if (!workflow || !window.confirm(`删除“${workflow.name}”？`)) return;
+    try {
+      const data = await api<AppSettings>(`/api/settings/workflows/${kind}/${encodeURIComponent(workflowId)}`, { method: "DELETE" });
+      setSettings(data);
+      const active = data.processes[kind];
+      updateProcessSettings(kind, {
+        activeWorkflowId: active.activeWorkflowId,
+        workflowJson: JSON.stringify(active.workflow, null, 2),
+      });
+      setWorkflowPreviewOpen(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "工作流删除失败");
+    }
+  }
+
+  async function fetchAgentModels() {
+    if (!settingsForm || agentModelsLoading) return;
+    setAgentModelsLoading(true);
+    setError("");
+    try {
+      const result = await api<{ baseUrl: string; models: AgentModelOption[] }>("/api/settings/agent/models", {
+        method: "POST",
+        body: JSON.stringify({
+          baseUrl: settingsForm.agent.baseUrl,
+          apiKey: settingsForm.agent.apiKey,
+          clearApiKey: settingsForm.agent.clearApiKey,
+        }),
+      });
+      const currentModel = settingsForm.agent.model;
+      const models = result.models.some((item) => item.id === currentModel)
+        ? result.models
+        : [{ id: currentModel, name: `${currentModel}（当前配置）` }, ...result.models];
+      setAgentModels(models);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "模型列表获取失败");
+    } finally {
+      setAgentModelsLoading(false);
+    }
   }
 
   async function saveSettings(event: FormEvent) {
     event.preventDefault();
     if (!settingsForm || settingsSaving) return;
-    const processes = {} as Record<ProcessKind, { url: string; workflow: Record<string, unknown> }>;
+    const processes = {} as Record<ProcessKind, { url: string; activeWorkflowId: string }>;
     try {
       for (const kind of PROCESS_KINDS) {
-        const workflow = JSON.parse(settingsForm.processes[kind].workflowJson);
-        processes[kind] = { url: settingsForm.processes[kind].url, workflow };
+        JSON.parse(settingsForm.processes[kind].workflowJson);
+        processes[kind] = {
+          url: settingsForm.processes[kind].url,
+          activeWorkflowId: settingsForm.processes[kind].activeWorkflowId,
+        };
       }
     } catch (reason) {
       setError(reason instanceof Error ? `工作流 JSON 无效：${reason.message}` : "工作流 JSON 无效");
@@ -1003,11 +1139,11 @@ export default function Home() {
               <>
                 <div className="settings-tabs" role="tablist" aria-label="配置分类">
                   {PROCESS_KINDS.map((kind) => (
-                    <button key={kind} type="button" role="tab" aria-selected={settingsTab === kind} className={settingsTab === kind ? "active" : ""} onClick={() => setSettingsTab(kind)}>
+                    <button key={kind} type="button" role="tab" aria-selected={settingsTab === kind} className={settingsTab === kind ? "active" : ""} onClick={() => { setSettingsTab(kind); setWorkflowPreviewOpen(false); }}>
                       {kind === "qa" ? "QA" : kind.toUpperCase()}
                     </button>
                   ))}
-                  <button type="button" role="tab" aria-selected={settingsTab === "agent"} className={settingsTab === "agent" ? "active" : ""} onClick={() => setSettingsTab("agent")}>Agent</button>
+                  <button type="button" role="tab" aria-selected={settingsTab === "agent"} className={settingsTab === "agent" ? "active" : ""} onClick={() => { setSettingsTab("agent"); setWorkflowPreviewOpen(false); }}>Agent</button>
                 </div>
 
                 <div className="settings-content">
@@ -1021,20 +1157,67 @@ export default function Home() {
                         <span>请求地址</span>
                         <input type="url" required value={settingsForm.processes[settingsTab].url} onChange={(event) => updateProcessSettings(settingsTab, { url: event.target.value })} />
                       </label>
-                      <label className="settings-field workflow-field">
-                        <span>工作流 JSON</span>
-                        <textarea spellCheck={false} required value={settingsForm.processes[settingsTab].workflowJson} onChange={(event) => updateProcessSettings(settingsTab, { workflowJson: event.target.value })} />
-                      </label>
-                      <div className="workflow-json-status">
-                        {(() => {
-                          try {
-                            const graph = JSON.parse(settingsForm.processes[settingsTab].workflowJson);
-                            return <><i className="valid" /><span>{Object.keys(graph).length} 个节点</span></>;
-                          } catch {
-                            return <><i className="invalid" /><span>JSON 格式错误</span></>;
-                          }
-                        })()}
-                      </div>
+                      {(() => {
+                        const kind = settingsTab;
+                        const process = settings.processes[kind];
+                        const selectedId = settingsForm.processes[kind].activeWorkflowId;
+                        const selected = process.workflows.find((item) => item.id === selectedId);
+                        return <>
+                          <label className="settings-field">
+                            <span>工作流版本</span>
+                            <div className="workflow-select-row">
+                              <select value={selectedId} onChange={(event) => void selectWorkflow(kind, event.target.value)}>
+                                {process.workflows.map((workflow) => (
+                                  <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+                                ))}
+                              </select>
+                              <button className="icon-button" type="button" disabled={!selected || selected.source === "default"} onClick={() => void removeWorkflow(kind, selectedId)} title="删除当前工作流" aria-label="删除当前工作流"><Trash2 size={17} /></button>
+                            </div>
+                          </label>
+
+                          <div
+                            className={`workflow-dropzone ${workflowDragging ? "dragging" : ""}`}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => workflowFileRef.current?.click()}
+                            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") workflowFileRef.current?.click(); }}
+                            onDragEnter={(event) => { event.preventDefault(); setWorkflowDragging(true); }}
+                            onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setWorkflowDragging(true); }}
+                            onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setWorkflowDragging(false); }}
+                            onDrop={(event) => {
+                              event.preventDefault();
+                              setWorkflowDragging(false);
+                              handleWorkflowFiles(kind, event.dataTransfer.files);
+                            }}
+                          >
+                            <input ref={workflowFileRef} type="file" accept="application/json,.json" multiple hidden onChange={(event) => {
+                              if (event.target.files) handleWorkflowFiles(kind, event.target.files);
+                              event.target.value = "";
+                            }} />
+                            <input ref={workflowDirectoryRef} type="file" multiple hidden onChange={(event) => {
+                              if (event.target.files) handleWorkflowFiles(kind, event.target.files);
+                              event.target.value = "";
+                            }} />
+                            <span className="workflow-upload-icon"><Upload size={19} /></span>
+                            <div className="workflow-upload-copy"><strong>上传工作流 JSON</strong><span>拖拽文件或点击选择</span></div>
+                            <div className="workflow-upload-actions">
+                              <button className="icon-button" type="button" onClick={(event) => { event.stopPropagation(); workflowFileRef.current?.click(); }} title="选择 JSON 文件" aria-label="选择 JSON 文件"><Upload size={16} /></button>
+                              <button className="icon-button" type="button" onClick={(event) => { event.stopPropagation(); chooseWorkflowDirectory(); }} title="选择目录" aria-label="选择目录"><FolderOpen size={16} /></button>
+                            </div>
+                          </div>
+
+                          <div className="workflow-summary">
+                            <div>
+                              <FileJson size={17} />
+                              <span><strong>{selected?.name || "工作流"}</strong><small>{selected?.nodeCount ?? 0} 个节点 · {selected?.source === "default" ? "内置" : "已上传"}</small></span>
+                            </div>
+                            <button className="text-icon-button" type="button" onClick={() => setWorkflowPreviewOpen((value) => !value)} aria-expanded={workflowPreviewOpen}>
+                              {workflowPreviewOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}{workflowPreviewOpen ? "收起 JSON" : "预览 JSON"}
+                            </button>
+                          </div>
+                          {workflowPreviewOpen && <pre className="workflow-json-preview">{settingsForm.processes[kind].workflowJson}</pre>}
+                        </>;
+                      })()}
                     </section>
                   ) : (
                     <section className="agent-settings" aria-label="Agent API 配置">
@@ -1044,19 +1227,35 @@ export default function Home() {
                       </div>
                       <label className="settings-field">
                         <span>Base URL</span>
-                        <input type="url" required value={settingsForm.agent.baseUrl} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, baseUrl: event.target.value } })} />
+                        <input type="url" required value={settingsForm.agent.baseUrl} onChange={(event) => {
+                          setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, baseUrl: event.target.value } });
+                          setAgentModels([{ id: settingsForm.agent.model, name: settingsForm.agent.model }]);
+                        }} />
                       </label>
                       <label className="settings-field">
                         <span>模型</span>
-                        <input required maxLength={160} value={settingsForm.agent.model} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, model: event.target.value } })} />
+                        <div className="agent-model-row">
+                          <select required value={settingsForm.agent.model} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, model: event.target.value } })}>
+                            {agentModels.map((model) => <option key={model.id} value={model.id}>{model.name === model.id ? model.id : `${model.name} · ${model.id}`}</option>)}
+                          </select>
+                          <button className="text-icon-button" type="button" onClick={() => void fetchAgentModels()} disabled={agentModelsLoading || settingsForm.agent.clearApiKey}>
+                            <RefreshCw className={agentModelsLoading ? "spinning" : ""} size={15} />{agentModelsLoading ? "获取中" : "获取模型"}
+                          </button>
+                        </div>
                       </label>
                       <label className="settings-field">
                         <span>API Key</span>
-                        <input type="password" autoComplete="off" maxLength={1000} value={settingsForm.agent.apiKey} disabled={settingsForm.agent.clearApiKey} placeholder={settings.agent.apiKeyConfigured ? "留空以保留当前密钥" : "输入 API Key"} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, apiKey: event.target.value } })} />
+                        <input type="password" autoComplete="off" maxLength={1000} value={settingsForm.agent.apiKey} disabled={settingsForm.agent.clearApiKey} placeholder={settings.agent.apiKeyConfigured ? "留空以保留当前密钥" : "输入 API Key"} onChange={(event) => {
+                          setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, apiKey: event.target.value } });
+                          setAgentModels([{ id: settingsForm.agent.model, name: settingsForm.agent.model }]);
+                        }} />
                       </label>
                       {settings.agent.apiKeyConfigured && (
                         <label className="clear-key-control">
-                          <input type="checkbox" checked={settingsForm.agent.clearApiKey} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : settingsForm.agent.apiKey } })} />
+                          <input type="checkbox" checked={settingsForm.agent.clearApiKey} onChange={(event) => {
+                            setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : settingsForm.agent.apiKey } });
+                            setAgentModels([{ id: settingsForm.agent.model, name: settingsForm.agent.model }]);
+                          }} />
                           <span>清除已保存的 API Key</span>
                         </label>
                       )}

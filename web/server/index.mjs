@@ -887,6 +887,33 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
+    if (parts[0] === "api" && parts[1] === "settings" && parts[2] === "workflows" && parts[3]) {
+      const kind = parts[3];
+      if (req.method === "GET" && parts[4]) {
+        json(res, 200, settingsStore.getWorkflow(kind, parts[4]));
+        return;
+      }
+      if (req.method === "POST" && parts.length === 4) {
+        const body = await readBody(req, 750_000);
+        const result = settingsStore.uploadWorkflow(kind, body);
+        systemCache = null;
+        systemCacheAt = 0;
+        json(res, 201, result);
+        return;
+      }
+      if (req.method === "DELETE" && parts[4]) {
+        const result = settingsStore.removeWorkflow(kind, parts[4]);
+        systemCache = null;
+        systemCacheAt = 0;
+        json(res, 200, result);
+        return;
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/api/settings/agent/models") {
+      const body = await readBody(req, 50_000);
+      json(res, 200, await settingsStore.fetchAgentModels(body));
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/settings") {
       json(res, 200, settingsStore.publicSettings());
       return;
