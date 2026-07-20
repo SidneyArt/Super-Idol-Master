@@ -241,6 +241,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   font-size: 14px;
 }
 .run-item.selected .run-avatar { background: var(--accent); color: #fff; }
+.run-avatar.running { color: var(--accent); background: var(--accent-soft); }
+.run-avatar.running svg { animation: spin 900ms linear infinite; }
+.run-item.selected .run-avatar.running { color: #fff; background: var(--accent); }
 .run-copy { min-width: 0; flex: 1; opacity: 1; transition: opacity 150ms ease, transform 220ms ease; }
 .tasks-collapsed .run-copy { display: none; }
 .tasks-collapsed .run-item { justify-content: center; padding-inline: 8px; }

@@ -330,20 +330,26 @@ export default function Home() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [chatMessages, agentBusy]);
 
+  const hasRunningTask = runs.some((item) => item.jobStatus === "running");
+  const selectedTaskIsRunning = runs.some((item) => item.id === selectedId && item.jobStatus === "running");
+
   useEffect(() => {
-    if (!selectedId || detail?.run.jobStatus !== "running") return;
+    if (!hasRunningTask) return;
     const timer = window.setInterval(() => {
-      void api<RunDetail>(`/api/runs/${selectedId}`)
-        .then((data) => {
-          setDetail(data);
-          setViewStage(data.run.currentStage);
-          return api<{ runs: Run[] }>("/api/runs");
+      const detailRequest = selectedId && selectedTaskIsRunning
+        ? api<RunDetail>(`/api/runs/${selectedId}`)
+        : Promise.resolve(null);
+      void Promise.all([api<{ runs: Run[] }>("/api/runs"), detailRequest])
+        .then(([runData, detailData]) => {
+          setRuns(runData.runs);
+          if (!detailData) return;
+          setDetail(detailData);
+          setViewStage(detailData.run.currentStage);
         })
-        .then((data) => setRuns(data.runs))
         .catch((reason) => setError(reason instanceof Error ? reason.message : "DGX 状态读取失败"));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [selectedId, detail?.run.jobStatus]);
+  }, [hasRunningTask, selectedId, selectedTaskIsRunning]);
 
   const run = detail?.run;
   const current = run?.currentStage ?? 0;
@@ -848,7 +854,11 @@ export default function Home() {
                 onClick={() => setSelectedId(item.id)}
                 title={sidebarCollapsed ? item.name : undefined}
               >
-                <span className="run-avatar">{item.name.trim().slice(0, 1).toUpperCase() || "R"}</span>
+                <span className={`run-avatar ${item.jobStatus === "running" ? "running" : ""}`}>
+                  {item.jobStatus === "running"
+                    ? <LoaderCircle size={18} aria-hidden="true" />
+                    : item.name.trim().slice(0, 1).toUpperCase() || "R"}
+                </span>
                 <span className="run-copy">
                   <span className="run-row"><strong>{item.name}</strong><time>{formatTime(item.updatedAt)}</time></span>
                   <span className="run-meta">{item.jobStatus === "running" ? `${jobName(item.jobType)} 执行中` : stages[item.currentStage].title}</span>
