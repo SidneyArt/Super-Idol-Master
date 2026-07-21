@@ -7,6 +7,7 @@ import {
   closeSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readSync,
   readdirSync,
   statSync,
@@ -165,6 +166,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS dispatcher_generations (
     id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL DEFAULT '',
     title TEXT NOT NULL,
     character_count INTEGER NOT NULL,
     prompt TEXT NOT NULL,
@@ -177,7 +179,12 @@ db.exec(`
     FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
   )
 `);
+const dispatcherGenerationColumns = db.prepare("PRAGMA table_info(dispatcher_generations)").all();
+if (!dispatcherGenerationColumns.some((column) => column.name === "session_id")) {
+  db.exec("ALTER TABLE dispatcher_generations ADD COLUMN session_id TEXT NOT NULL DEFAULT ''");
+}
 db.exec("CREATE INDEX IF NOT EXISTS dispatcher_generations_workspace_idx ON dispatcher_generations(workspace_id, created_at DESC)");
+db.exec("CREATE INDEX IF NOT EXISTS dispatcher_generations_session_idx ON dispatcher_generations(workspace_id, session_id, updated_at DESC)");
 db.prepare("UPDATE dispatcher_generations SET status = 'failed', message = '本地服务重启，合集图生成已中断', updated_at = ? WHERE status = 'running'").run(new Date().toISOString());
 
 db.prepare(`
@@ -1167,7 +1174,7 @@ async function createCoordinatorTasks({ workspaceId, tasks, image }) {
 
 function getDispatcherGeneration(id) {
   return db.prepare(`
-    SELECT id, workspace_id AS workspaceId, title, character_count AS characterCount,
+    SELECT id, workspace_id AS workspaceId, session_id AS sessionId, title, character_count AS characterCount,
            prompt, status, message, preview_path AS previewPath,
            created_at AS createdAt, updated_at AS updatedAt
     FROM dispatcher_generations WHERE id = ?
@@ -1176,11 +1183,48 @@ function getDispatcherGeneration(id) {
 
 function listDispatcherGenerations(workspaceId) {
   return db.prepare(`
-    SELECT id, workspace_id AS workspaceId, title, character_count AS characterCount,
+    SELECT id, workspace_id AS workspaceId, session_id AS sessionId, title, character_count AS characterCount,
            prompt, status, message, preview_path AS previewPath,
            created_at AS createdAt, updated_at AS updatedAt
     FROM dispatcher_generations WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 30
   `).all(workspaceId);
+}
+
+function getLatestDispatcherGenerationImage(workspaceId, sessionId = "") {
+  const select = `
+    SELECT id, title, output_path AS outputPath, updated_at AS updatedAt
+    FROM dispatcher_generations
+    WHERE workspace_id = ? AND status = 'succeeded' AND output_path IS NOT NULL
+  `;
+  const candidates = [];
+  if (sessionId) {
+    candidates.push(...db.prepare(`${select} AND session_id = ? ORDER BY updated_at DESC LIMIT 30`).all(workspaceId, sessionId));
+  }
+  candidates.push(...db.prepare(`${select} ORDER BY updated_at DESC LIMIT 30`).all(workspaceId));
+
+  const visited = new Set();
+  for (const candidate of candidates) {
+    if (visited.has(candidate.id)) continue;
+    visited.add(candidate.id);
+    try {
+      const filePath = safeOutputPath(candidate.outputPath, "file");
+      const stats = statSync(filePath);
+      if (stats.size > 12 * 1024 * 1024) continue;
+      const mimeTypes = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
+      const mimeType = mimeTypes[extname(filePath).toLowerCase()];
+      if (!mimeType) continue;
+      return {
+        generationId: candidate.id,
+        title: candidate.title,
+        name: basename(filePath),
+        mimeType,
+        data: readFileSync(filePath).toString("base64"),
+      };
+    } catch {
+      // A stale generation row must not prevent an older valid result from being inherited.
+    }
+  }
+  return null;
 }
 
 function startCharacterSheetGeneration(input = {}) {
@@ -1195,6 +1239,7 @@ function startCharacterSheetGeneration(input = {}) {
   if (descriptions.length !== characterCount) throw new Error("角色描述数量必须与合集图角色数量一致");
   const style = cleanText(input.styleDescription, 1000, "统一风格", true);
   const additional = cleanText(input.additionalPrompt, 2000, "补充要求");
+  const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim().slice(0, 80) : "";
   const negative = cleanText(input.negativePrompt, 2000, "反向提示词") || "角色重复，角色融合，人物重叠，裁切身体，多余人物，文字，水印，低画质，肢体畸形，风格不一致";
   const enumerated = descriptions.map((item, index) => `${index + 1}. ${item}`).join("；");
   const positive = [
@@ -1211,9 +1256,9 @@ function startCharacterSheetGeneration(input = {}) {
   const now = new Date().toISOString();
   db.prepare(`
     INSERT INTO dispatcher_generations (
-      id, workspace_id, title, character_count, prompt, status, message, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 'running', '正在调用文生图模型生成单张角色合集图', ?, ?)
-  `).run(id, workspaceId, title, characterCount, positive, now, now);
+      id, workspace_id, session_id, title, character_count, prompt, status, message, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'running', '正在调用文生图模型生成单张角色合集图', ?, ?)
+  `).run(id, workspaceId, sessionId, title, characterCount, positive, now, now);
   db.prepare("UPDATE workspaces SET updated_at = ? WHERE id = ?").run(now, workspaceId);
 
   const args = [
@@ -1273,6 +1318,7 @@ const coordinatorAgent = createCoordinatorRuntime({
   createWorkspace: createWorkspaceRecord,
   createCharacterTasks: createCoordinatorTasks,
   generateCharacterSheet: startCharacterSheetGeneration,
+  getLatestGeneratedImage: getLatestDispatcherGenerationImage,
   delegateTask: (runId, target) => assetAgent.requestWorkflowPlan(runId, target),
   getImageModelStatus: () => {
     const settings = settingsStore.publicSettings();

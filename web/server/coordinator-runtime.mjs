@@ -60,7 +60,8 @@ export function classifyCoordinatorIntent(message, hasAttachment) {
     || /(创建|生成|制作).{0,20}(合集图|集合图|群像原画)/i.test(text)
   );
   const asksForTasks = /(拆分|拆成|分成).{0,12}(任务|角色)|创建.{0,8}(多个|数个|\d+\s*个).{0,8}任务|分别.{0,20}(模型|绑骨)|每个角色.{0,20}(任务|模型|绑骨)/i.test(text);
-  return { singleSheetOnly: asksForSingleSheet && !asksForTasks };
+  const asksForSplit = /(拆分|拆开|分拆)(?:吧|一下|角色|任务|这张|上(?:一张|图)|合集|原画)?/i.test(text);
+  return { asksForSplit, singleSheetOnly: asksForSingleSheet && !asksForTasks && !asksForSplit };
 }
 
 export function createCoordinatorRuntime({
@@ -71,6 +72,7 @@ export function createCoordinatorRuntime({
   createCharacterTasks,
   delegateTask,
   generateCharacterSheet,
+  getLatestGeneratedImage,
   getImageModelStatus,
   getPermissionMode,
   requestApproval,
@@ -250,7 +252,7 @@ export function createCoordinatorRuntime({
     return getConversation(workspaceId);
   }
 
-  function systemPrompt(workspaceId, history, hasImage) {
+  function systemPrompt(workspaceId, history, imageContext = null) {
     const workspaces = getWorkspaces();
     const current = workspaces.find((item) => item.id === workspaceId) || null;
     const transcript = history.map((item) => `${item.role === "user" ? "用户" : "总调度 Agent"}：${item.content}`).join("\n");
@@ -269,7 +271,8 @@ export function createCoordinatorRuntime({
 
 当前工作空间：${JSON.stringify(current)}
 全部工作空间：${JSON.stringify(workspaces)}
-本轮是否附带合集原画：${hasImage ? "是" : "否"}
+本轮是否附带合集原画：${imageContext ? "是" : "否"}
+本轮合集原画来源：${imageContext?.inherited ? `系统已自动继承最近成功生成的合集图“${imageContext.title || imageContext.name}”，必须直接分析这张图，不要要求用户重新上传` : imageContext ? "用户本轮上传" : "无"}
 最近会话：
 ${transcript.slice(-12000)}
 
@@ -349,12 +352,12 @@ ${transcript.slice(-12000)}
               operation: "generate_character_sheet",
               title: `生成一张包含 ${params.characterCount} 个角色的合集图`,
               description: `只生成“${params.title}”合集原画，不创建角色任务。`,
-              payload: params,
+              payload: { ...params, sessionId: execution.sessionId },
             });
             execution.actions.push({ tool: "approval_required", approvalId: approval.id });
             return textResult(`单张合集图生成需要批准，已提交审批：“${approval.title}”。不会创建角色任务。`, { approval });
           }
-          const job = generateCharacterSheet(params);
+          const job = generateCharacterSheet({ ...params, sessionId: execution.sessionId });
           execution.actions.push({ tool: "generate_character_sheet", jobId: job.id });
           return textResult(`已启动单张合集图“${params.title}”的生成，不会创建角色任务。`, { job });
         },
@@ -427,17 +430,28 @@ ${transcript.slice(-12000)}
     if (activeAgent) throw new Error("总调度 Agent 正在处理上一条消息");
     if (!workspaceId) throw new Error("请先选择工作空间");
     if (!getWorkspaces().some((item) => item.id === workspaceId)) throw new Error("工作空间不存在");
-    const attachment = validateImage(image);
+    const explicitAttachment = validateImage(image);
     const userText = typeof message === "string" && message.trim()
       ? message.trim().slice(0, 6000)
-      : attachment ? "请分析这张角色合集原画，拆分每个独立角色，并在当前工作空间创建图生模型任务。" : "";
+      : explicitAttachment ? "请分析这张角色合集原画，拆分每个独立角色，并在当前工作空间创建图生模型任务。" : "";
     if (!userText) throw new Error("消息不能为空");
-    const history = getMessages(workspaceId, 24);
+    const sessionId = ensureSession(workspaceId);
+    const preliminaryIntent = classifyCoordinatorIntent(userText, Boolean(explicitAttachment));
+    const inherited = !explicitAttachment && preliminaryIntent.asksForSplit
+      ? getLatestGeneratedImage?.(workspaceId, sessionId) || null
+      : null;
+    const attachment = explicitAttachment || validateImage(inherited);
+    const imageContext = attachment ? {
+      inherited: Boolean(inherited),
+      name: attachment.name,
+      title: inherited?.title || null,
+    } : null;
+    const history = getMessages(workspaceId, 24, sessionId);
     const intent = classifyCoordinatorIntent(userText, Boolean(attachment));
-    const execution = { actions: [], toolCalls: 0, turns: 0 };
+    const execution = { actions: [], toolCalls: 0, turns: 0, sessionId };
     const agent = new Agent({
       initialState: {
-        systemPrompt: systemPrompt(workspaceId, history, Boolean(attachment)),
+        systemPrompt: systemPrompt(workspaceId, history, imageContext),
         model: createModel(config),
         thinkingLevel: "off",
         tools: tools(workspaceId, attachment, execution, intent),

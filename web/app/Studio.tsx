@@ -222,6 +222,75 @@ type DispatcherTimelineItem =
   | { kind: "message"; createdAt: string; item: ChatMessage }
   | { kind: "generation"; createdAt: string; item: DispatcherGeneration }
   | { kind: "approval"; createdAt: string; item: ApprovalRequest };
+
+function dispatcherTimelineTime(createdAt: string) {
+  const timestamp = Date.parse(createdAt);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function compareDispatcherTimelineItems(left: DispatcherTimelineItem, right: DispatcherTimelineItem) {
+  const timeDifference = dispatcherTimelineTime(left.createdAt) - dispatcherTimelineTime(right.createdAt);
+  if (timeDifference) return timeDifference;
+
+  const rank = (entry: DispatcherTimelineItem) => entry.kind === "message"
+    ? entry.item.role === "user" ? 0 : 3
+    : entry.kind === "generation" ? 1 : 2;
+  const rankDifference = rank(left) - rank(right);
+  if (rankDifference) return rankDifference;
+
+  return String(left.item.id).localeCompare(String(right.item.id), undefined, { numeric: true });
+}
+
+function buildDispatcherTimeline(
+  messages: ChatMessage[],
+  generations: DispatcherGeneration[],
+  approvalRequests: ApprovalRequest[],
+) {
+  const sortedMessages = [...messages].sort((left, right) => {
+    const timeDifference = dispatcherTimelineTime(left.createdAt) - dispatcherTimelineTime(right.createdAt);
+    if (timeDifference) return timeDifference;
+    if (left.role !== right.role) return left.role === "user" ? -1 : 1;
+    return left.id - right.id;
+  });
+  const approvalsByAssistant = new Map<number, ApprovalRequest[]>();
+  const unanchoredApprovals: ApprovalRequest[] = [];
+
+  [...approvalRequests]
+    .sort((left, right) => dispatcherTimelineTime(left.createdAt) - dispatcherTimelineTime(right.createdAt) || left.id - right.id)
+    .forEach((approval) => {
+      const approvalTime = dispatcherTimelineTime(approval.createdAt);
+      const assistant = sortedMessages.find((message) => {
+        if (message.role !== "assistant" || dispatcherTimelineTime(message.createdAt) < approvalTime) return false;
+        const assistantTime = dispatcherTimelineTime(message.createdAt);
+        return !sortedMessages.some((candidate) => candidate.role === "user"
+          && dispatcherTimelineTime(candidate.createdAt) > approvalTime
+          && dispatcherTimelineTime(candidate.createdAt) <= assistantTime);
+      });
+
+      if (!assistant) {
+        unanchoredApprovals.push(approval);
+        return;
+      }
+      const anchored = approvalsByAssistant.get(assistant.id) || [];
+      anchored.push(approval);
+      approvalsByAssistant.set(assistant.id, anchored);
+    });
+
+  const baseTimeline: DispatcherTimelineItem[] = [
+    ...messages.map((item) => ({ kind: "message" as const, createdAt: item.createdAt, item })),
+    ...generations.map((item) => ({ kind: "generation" as const, createdAt: item.createdAt, item })),
+    ...unanchoredApprovals.map((item) => ({ kind: "approval" as const, createdAt: item.createdAt, item })),
+  ].sort(compareDispatcherTimelineItems);
+
+  return baseTimeline.flatMap((entry) => {
+    if (entry.kind !== "message" || entry.item.role !== "assistant") return [entry];
+    const anchored = approvalsByAssistant.get(entry.item.id) || [];
+    return [
+      entry,
+      ...anchored.map((item) => ({ kind: "approval" as const, createdAt: item.createdAt, item })),
+    ];
+  });
+}
 type AgentWorkflowPlan = {
   runId: string;
   target: "concept_image" | "validated_tpose" | "model" | "rigged_model" | "export";
@@ -585,6 +654,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const dispatcherDropDepthRef = useRef(0);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const dispatcherEndRef = useRef<HTMLDivElement | null>(null);
+  const notificationCenterRef = useRef<HTMLDivElement | null>(null);
   const dispatcherFileRef = useRef<HTMLInputElement | null>(null);
   const taskSourceFileRef = useRef<HTMLInputElement | null>(null);
   const workflowFileRef = useRef<HTMLInputElement | null>(null);
@@ -819,6 +889,16 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }, [toastNotification]);
 
   useEffect(() => {
+    if (!showNotifications) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && !notificationCenterRef.current?.contains(target)) setShowNotifications(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [showNotifications]);
+
+  useEffect(() => {
     dispatcherEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [dispatcherMessages, dispatcherBusy, approvalScrollKey, dispatcherGenerationScrollKey]);
 
@@ -887,18 +967,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const run = selectedDetail?.run || runs.find((item) => item.id === selectedId) || null;
   const coordinatorApprovals = approvals.filter((item) => item.scopeType === "coordinator" && item.workspaceId === selectedWorkspaceId);
   const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
-  const dispatcherTimeline: DispatcherTimelineItem[] = [
-    ...dispatcherMessages.map((item) => ({ kind: "message" as const, createdAt: item.createdAt, item })),
-    ...dispatcherGenerations.map((item) => ({ kind: "generation" as const, createdAt: item.createdAt, item })),
-    ...coordinatorApprovals.map((item) => ({ kind: "approval" as const, createdAt: item.createdAt, item })),
-  ].sort((left, right) => {
-    const timeDifference = Date.parse(left.createdAt) - Date.parse(right.createdAt);
-    if (timeDifference) return timeDifference;
-    const rank = (entry: DispatcherTimelineItem) => entry.kind === "message"
-      ? entry.item.role === "user" ? 0 : 3
-      : entry.kind === "generation" ? 1 : 2;
-    return rank(left) - rank(right);
-  });
+  const dispatcherTimeline = buildDispatcherTimeline(dispatcherMessages, dispatcherGenerations, coordinatorApprovals);
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
 
   useEffect(() => {
@@ -1886,7 +1955,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               <i />DGX {system?.comfyui.online ? `${system.comfyui.latencyMs} ms` : "离线"}
             </span>
           </div>
-          <div className="notification-center">
+          <div className="notification-center" ref={notificationCenterRef}>
             <button className="icon-button notification-button" type="button" onClick={() => setShowNotifications((value) => !value)} title="通知" aria-label={`通知，${unreadNotificationCount} 条未读`}>
               <Bell size={18} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
             </button>

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a 2D concept image through the Stepfun image edit API."""
+"""Generate or edit a 2D concept image through the StepFun image API."""
 
 from __future__ import annotations
 
@@ -21,6 +21,24 @@ from PIL import Image
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = REPO_ROOT / "output" / "2d-api"
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
+MAX_PROMPT_CHARS = 512
+STEPFUN_GENERATION_MODELS = {"step-image-edit-2", "step-2x-large", "step-1x-medium"}
+STEPFUN_EDIT_MODELS = {"step-image-edit-2"}
+CONTENT_BLOCK_MARKERS = (
+    "blocked",
+    "content_filtered",
+    "content filtered",
+    "moderation",
+    "safety",
+    "审核",
+    "审查",
+    "未审核通过",
+)
+SAFE_NEGATIVE_PROMPT = "低画质，重复角色，角色重叠，裁切，文字，水印，风格不一致"
+
+
+class ContentBlockedError(RuntimeError):
+    """The provider rejected either the request or generated image in review."""
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,6 +57,172 @@ def response_error(response: requests.Response) -> str:
     except ValueError:
         return response.text.strip() or f"HTTP {response.status_code}"
     return str(payload.get("error", {}).get("message") or payload.get("message") or payload)[:1200]
+
+
+def normalize_prompt(value: str, label: str) -> str:
+    prompt = " ".join(value.split()).strip()
+    if not prompt:
+        raise RuntimeError(f"{label}不能为空")
+    if len(prompt) > MAX_PROMPT_CHARS:
+        print(
+            f"[2d-api] {label}超过 StepFun 的 {MAX_PROMPT_CHARS} 字符限制，已安全截断",
+            file=sys.stderr,
+            flush=True,
+        )
+        prompt = prompt[: MAX_PROMPT_CHARS - 1].rstrip() + "…"
+    return prompt
+
+
+def operation_for(source_image: str | None) -> str:
+    return "edit" if source_image else "generation"
+
+
+def validate_model_usage(base_url: str, model: str, operation: str) -> None:
+    parsed = urlparse(base_url)
+    if parsed.hostname != "api.stepfun.com":
+        return
+    if "/step_plan/" in parsed.path and model != "step-image-edit-2":
+        raise RuntimeError("Step Plan 图片接口目前只支持 step-image-edit-2")
+    allowed = STEPFUN_EDIT_MODELS if operation == "edit" else STEPFUN_GENERATION_MODELS
+    if model not in allowed:
+        capability = "图像编辑" if operation == "edit" else "文生图"
+        raise RuntimeError(f"模型 {model} 不支持 StepFun {capability}接口")
+
+
+def endpoint_for(base_url: str, operation: str) -> str:
+    resource = "edits" if operation == "edit" else "generations"
+    return f"{base_url.rstrip('/')}/images/{resource}"
+
+
+def safe_semantic_rewrite(prompt: str) -> str:
+    replacements = (
+        ("暗杀", "秘密侦察"),
+        ("刺杀", "潜行侦察"),
+        ("杀戮", "竞技对抗"),
+        ("杀手", "潜行专家"),
+        ("刺客", "潜行侦察员"),
+        ("鲜血", "红色装饰"),
+        ("血腥", "激烈冲突"),
+        ("尸体", "训练假人"),
+        ("匕首", "装饰性短刃道具"),
+        ("枪械", "科幻道具"),
+    )
+    rewritten = prompt
+    for unsafe, safe in replacements:
+        rewritten = rewritten.replace(unsafe, safe)
+    prefix = "全年龄虚构游戏角色概念设计，不涉及现实人物、真实组织、伤害画面或恐怖内容。"
+    return normalize_prompt(f"{prefix}{rewritten}", "安全改写提示词")
+
+
+def content_block_reason(response: requests.Response, payload: dict | None = None) -> str | None:
+    message = response_error(response)
+    haystack = message.lower()
+    if response.status_code == 451 or any(marker in haystack for marker in CONTENT_BLOCK_MARKERS):
+        return message
+    if payload:
+        items = payload.get("data")
+        if isinstance(items, list):
+            for item in items:
+                finish_reason = str(item.get("finish_reason", "")).lower() if isinstance(item, dict) else ""
+                if finish_reason and finish_reason != "success" and any(
+                    marker in finish_reason for marker in CONTENT_BLOCK_MARKERS
+                ):
+                    return finish_reason
+    return None
+
+
+def submit_request(
+    session: requests.Session,
+    *,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    negative_prompt: str,
+    source_path: Path | None,
+) -> requests.Response:
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    common = {
+        "model": model,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "response_format": "b64_json",
+        "cfg_scale": 1.5,
+        "steps": 8,
+        "text_mode": False,
+    }
+    if source_path is None:
+        return session.post(
+            endpoint,
+            headers={**headers, "Content-Type": "application/json"},
+            json={**common, "size": "1024x1024"},
+            timeout=1800,
+        )
+    multipart = {key: str(value).lower() if isinstance(value, bool) else str(value) for key, value in common.items()}
+    with source_path.open("rb") as image_file:
+        return session.post(
+            endpoint,
+            headers=headers,
+            data=multipart,
+            files={"image": (source_path.name, image_file, "image/png")},
+            timeout=1800,
+        )
+
+
+def parse_payload(response: requests.Response) -> dict:
+    if not response.ok:
+        reason = content_block_reason(response)
+        if reason:
+            raise ContentBlockedError(reason)
+        raise RuntimeError(f"图像 API 请求失败（HTTP {response.status_code}）：{response_error(response)}")
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as error:
+        raise RuntimeError("图像 API 返回了非 JSON 响应") from error
+    reason = content_block_reason(response, payload)
+    if reason:
+        raise ContentBlockedError(reason)
+    return payload
+
+
+def request_with_content_retry(
+    session: requests.Session,
+    *,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    negative_prompt: str,
+    source_path: Path | None,
+) -> dict:
+    current_prompt = prompt
+    current_negative = negative_prompt
+    for attempt in range(2):
+        response = submit_request(
+            session,
+            endpoint=endpoint,
+            api_key=api_key,
+            model=model,
+            prompt=current_prompt,
+            negative_prompt=current_negative,
+            source_path=source_path,
+        )
+        try:
+            return parse_payload(response)
+        except ContentBlockedError as error:
+            if attempt == 1:
+                raise RuntimeError(
+                    "图像 API 内容审核拦截：原始请求及一次全年龄安全语义改写重试均未通过；"
+                    "请调整角色名称、动作、道具或场景描述后重试。"
+                ) from error
+            print(
+                "[2d-api] 内容审核拦截首个请求，正在使用全年龄安全语义改写重试一次",
+                file=sys.stderr,
+                flush=True,
+            )
+            current_prompt = safe_semantic_rewrite(current_prompt)
+            current_negative = SAFE_NEGATIVE_PROMPT
+    raise RuntimeError("图像 API 没有返回结果")
 
 
 def decode_image(payload: dict, session: requests.Session) -> bytes:
@@ -84,9 +268,16 @@ def main() -> int:
     if not api_key:
         raise RuntimeError("2D API Key 未配置")
 
+    operation = operation_for(args.source_image)
+    validate_model_usage(args.base_url, args.model, operation)
+    prompt = normalize_prompt(args.positive, "正向提示词")
+    negative_prompt = " ".join(args.negative.split()).strip()
+    if len(negative_prompt) > MAX_PROMPT_CHARS:
+        negative_prompt = negative_prompt[: MAX_PROMPT_CHARS - 1].rstrip() + "…"
+
     run_dir = OUTPUT_ROOT / f"{datetime.now():%Y%m%d-%H%M%S}_{uuid.uuid4().hex}"
     run_dir.mkdir(parents=True, exist_ok=False)
-    source_path = run_dir / ("source.png" if args.source_image else "blank-source.png")
+    source_path = run_dir / "source.png" if args.source_image else None
     if args.source_image:
         input_path = Path(args.source_image).resolve()
         if not input_path.is_file():
@@ -97,36 +288,20 @@ def main() -> int:
                 source_image.convert("RGB").save(source_path, format="PNG")
         except (OSError, ValueError) as error:
             raise RuntimeError("2D API 输入图片不是有效图片") from error
-    else:
-        Image.new("RGB", (1024, 1024), "white").save(source_path, format="PNG")
-
-    prompt = args.positive.strip()
-    if args.negative.strip():
-        prompt = f"{prompt}\n请避免以下内容：{args.negative.strip()}"
 
     session = requests.Session()
     session.trust_env = False
-    endpoint = f"{args.base_url.rstrip('/')}/images/edits"
+    endpoint = endpoint_for(args.base_url, operation)
     print(f"[2d-api] submitting model={args.model} endpoint={endpoint}", file=sys.stderr, flush=True)
-    with source_path.open("rb") as image_file:
-        response = session.post(
-            endpoint,
-            headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-            data={
-                "model": args.model,
-                "prompt": prompt,
-                "size": "1024x1024",
-                "response_format": "b64_json",
-            },
-            files={"image": (source_path.name, image_file, "image/png")},
-            timeout=1800,
-        )
-    if not response.ok:
-        raise RuntimeError(f"图像 API 请求失败：{response_error(response)}")
-    try:
-        payload = response.json()
-    except json.JSONDecodeError as error:
-        raise RuntimeError("图像 API 返回了非 JSON 响应") from error
+    payload = request_with_content_retry(
+        session,
+        endpoint=endpoint,
+        api_key=api_key,
+        model=args.model,
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        source_path=source_path,
+    )
 
     destination = run_dir / "concept.png"
     save_validated_png(decode_image(payload, session), destination)
