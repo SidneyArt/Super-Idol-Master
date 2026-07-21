@@ -25,9 +25,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "node_modules" (
-  echo Installing dependencies for the first run...
-  call npm install
+echo Checking frontend dependencies...
+call npm ls --depth=0 --silent >nul 2>nul
+if errorlevel 1 (
+  echo Frontend dependencies are missing or out of date. Installing...
+  call npm ci --no-audit --no-fund
   if errorlevel 1 (
     echo [ERROR] Dependency installation failed.
     pause
