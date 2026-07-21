@@ -219,6 +219,22 @@ export function createApprovalRuntime({ db }) {
     return getNotification(id);
   }
 
+  function markAllNotificationsRead() {
+    const readAt = new Date().toISOString();
+    const result = db.prepare("UPDATE app_notifications SET read_at = ? WHERE read_at IS NULL").run(readAt);
+    return { updated: Number(result.changes), readAt };
+  }
+
+  function deleteNotification(id) {
+    const result = db.prepare("DELETE FROM app_notifications WHERE id = ?").run(id);
+    return { id, deleted: Number(result.changes) === 1 };
+  }
+
+  function clearNotifications() {
+    const result = db.prepare("DELETE FROM app_notifications").run();
+    return { deleted: Number(result.changes) };
+  }
+
   return {
     permission,
     setPermission,
@@ -230,6 +246,9 @@ export function createApprovalRuntime({ db }) {
     addNotification,
     listNotifications,
     markNotificationRead,
+    markAllNotificationsRead,
+    deleteNotification,
+    clearNotifications,
     setExecutor(value) { executor = value; },
   };
 }

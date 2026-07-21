@@ -1398,6 +1398,20 @@ const server = createServer(async (req, res) => {
       json(res, 200, { notifications: approvalRuntime.listNotifications(url.searchParams.get("limit")) });
       return;
     }
+    if (req.method === "POST" && url.pathname === "/api/notifications/read-all") {
+      json(res, 200, approvalRuntime.markAllNotificationsRead());
+      return;
+    }
+    if (req.method === "DELETE" && url.pathname === "/api/notifications") {
+      json(res, 200, approvalRuntime.clearNotifications());
+      return;
+    }
+    if (parts[0] === "api" && parts[1] === "notifications" && parts[2] && parts.length === 3 && req.method === "DELETE") {
+      const notificationId = Number(parts[2]);
+      if (!Number.isInteger(notificationId) || notificationId <= 0) throw new Error("通知不存在");
+      json(res, 200, approvalRuntime.deleteNotification(notificationId));
+      return;
+    }
     if (parts[0] === "api" && parts[1] === "notifications" && parts[2] && req.method === "POST" && parts[3] === "read") {
       json(res, 200, approvalRuntime.markNotificationRead(Number(parts[2])));
       return;

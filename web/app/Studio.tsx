@@ -40,7 +40,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import ModelViewer from "./components/ModelViewer";
@@ -218,6 +218,10 @@ type DispatcherGeneration = {
   createdAt: string;
   updatedAt: string;
 };
+type DispatcherTimelineItem =
+  | { kind: "message"; createdAt: string; item: ChatMessage }
+  | { kind: "generation"; createdAt: string; item: DispatcherGeneration }
+  | { kind: "approval"; createdAt: string; item: ApprovalRequest };
 type AgentWorkflowPlan = {
   runId: string;
   target: "concept_image" | "validated_tpose" | "model" | "rigged_model" | "export";
@@ -462,11 +466,23 @@ function StyledSelect({ value, options, onChange, ariaLabel, placement = "down",
 function ContextUsage({ context, compact = false }: { context: ConversationContext | null; compact?: boolean }) {
   const used = context?.estimatedTokens || 0;
   const limit = context?.contextWindow || 131_072;
-  const percent = context?.usagePercent || 0;
+  const percent = Math.min(100, Math.max(0, context?.usagePercent || 0));
+  const tooltipId = useId();
+  const description = context
+    ? `上下文已使用 ${percent}%，${used.toLocaleString()} / ${limit.toLocaleString()} tokens，剩余约 ${context.availableTokens.toLocaleString()} tokens`
+    : "正在读取上下文用量";
   return (
-    <span className={`context-usage ${compact ? "compact" : ""}`} title={context ? `估算上下文 ${used.toLocaleString()} tokens；预留回复 ${context.responseReserve.toLocaleString()} tokens；剩余约 ${context.availableTokens.toLocaleString()} tokens` : "正在读取上下文用量"}>
-      <span>上下文 {formatTokenCount(used)} / {formatTokenCount(limit)}</span>
-      <i><b style={{ width: `${percent}%` }} /></i>
+    <span className={`context-usage ${compact ? "compact" : ""}`}>
+      <button className="context-usage-trigger" type="button" aria-label={description} aria-describedby={tooltipId}>
+        <span className="context-usage-pie" aria-hidden="true" style={{ background: `conic-gradient(var(--accent) ${percent * 3.6}deg, var(--border-strong) 0deg)` }} />
+      </button>
+      <span className="context-usage-tooltip" id={tooltipId} role="tooltip">
+        <small>Context</small>
+        <strong>{context ? `${percent}% · ${formatTokenCount(used)} / ${formatTokenCount(limit)}` : "正在读取…"}</strong>
+        <span className="context-usage-divider" />
+        <span className="context-usage-detail"><span>剩余可用</span><b>{context ? formatTokenCount(context.availableTokens) : "—"}</b></span>
+        <span className="context-usage-detail"><span>消息</span><b>{context ? `${context.messageCount} 条` : "—"}</b></span>
+      </span>
     </span>
   );
 }
@@ -537,6 +553,7 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
   const [dispatcherAttachment, setDispatcherAttachment] = useState<AgentAttachment | null>(null);
   const [dispatcherDragging, setDispatcherDragging] = useState(false);
   const [dispatcherGenerations, setDispatcherGenerations] = useState<DispatcherGeneration[]>([]);
+  const dispatcherGenerationScrollKey = dispatcherGenerations.map((item) => `${item.id}:${item.updatedAt}`).join("|");
   const [showWorkspaceCreate, setShowWorkspaceCreate] = useState(false);
   const [workspaceForm, setWorkspaceForm] = useState({ name: "", description: "" });
   const [form, setForm] = useState({ name: "", workspaceId: "default", pipelineType: "text_to_model" as "text_to_model" | "image_to_model" });
@@ -547,6 +564,7 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
   const approvalScrollKey = approvals.map((item) => item.id).join("|");
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [notificationAction, setNotificationAction] = useState<number | "read-all" | "clear" | null>(null);
   const [toastQueue, setToastQueue] = useState<AppNotification[]>([]);
   const [approvalBusyId, setApprovalBusyId] = useState<number | null>(null);
   const [promptDraft, setPromptDraft] = useState({
@@ -794,7 +812,7 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
 
   useEffect(() => {
     dispatcherEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [dispatcherMessages, dispatcherBusy, approvalScrollKey]);
+  }, [dispatcherMessages, dispatcherBusy, approvalScrollKey, dispatcherGenerationScrollKey]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -861,6 +879,18 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
   const run = selectedDetail?.run || runs.find((item) => item.id === selectedId) || null;
   const coordinatorApprovals = approvals.filter((item) => item.scopeType === "coordinator" && item.workspaceId === selectedWorkspaceId);
   const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
+  const dispatcherTimeline: DispatcherTimelineItem[] = [
+    ...dispatcherMessages.map((item) => ({ kind: "message" as const, createdAt: item.createdAt, item })),
+    ...dispatcherGenerations.map((item) => ({ kind: "generation" as const, createdAt: item.createdAt, item })),
+    ...coordinatorApprovals.map((item) => ({ kind: "approval" as const, createdAt: item.createdAt, item })),
+  ].sort((left, right) => {
+    const timeDifference = Date.parse(left.createdAt) - Date.parse(right.createdAt);
+    if (timeDifference) return timeDifference;
+    const rank = (entry: DispatcherTimelineItem) => entry.kind === "message"
+      ? entry.item.role === "user" ? 0 : 3
+      : entry.kind === "generation" ? 1 : 2;
+    return rank(left) - rank(right);
+  });
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
   const visibleChatMessages = run?.id === selectedId ? chatMessages : [];
   const artDirectorRun = selectedDetail?.agentRoleRuns?.find((item) =>
@@ -1586,6 +1616,47 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
     else openHome();
   }
 
+  async function markAllNotificationsRead() {
+    if (notificationAction !== null || !notifications.some((item) => !item.readAt)) return;
+    setNotificationAction("read-all");
+    try {
+      const result = await api<{ readAt: string }>("/api/notifications/read-all", { method: "POST" });
+      setNotifications((items) => items.map((item) => item.readAt ? item : { ...item, readAt: result.readAt }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "通知全部已读失败");
+    } finally {
+      setNotificationAction(null);
+    }
+  }
+
+  async function clearAllNotifications() {
+    if (notificationAction !== null || notifications.length === 0) return;
+    setNotificationAction("clear");
+    try {
+      await api("/api/notifications", { method: "DELETE" });
+      setNotifications([]);
+      setToastQueue([]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "清空通知失败");
+    } finally {
+      setNotificationAction(null);
+    }
+  }
+
+  async function deleteNotification(notificationId: number) {
+    if (notificationAction !== null) return;
+    setNotificationAction(notificationId);
+    try {
+      await api(`/api/notifications/${notificationId}`, { method: "DELETE" });
+      setNotifications((items) => items.filter((item) => item.id !== notificationId));
+      setToastQueue((items) => items.filter((item) => item.id !== notificationId));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "删除通知失败");
+    } finally {
+      setNotificationAction(null);
+    }
+  }
+
   function replaceAgentQueue(items: AgentQueueItem[]) {
     agentQueueRef.current = items;
     setAgentQueue(items);
@@ -1766,13 +1837,23 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
             </button>
             {showNotifications && (
               <div className="notification-menu">
-                <div className="notification-menu-header"><strong>通知</strong><span>{unreadNotificationCount} 条未读</span></div>
+                <div className="notification-menu-header">
+                  <strong>通知</strong>
+                  <div className="notification-menu-actions">
+                    <span>{unreadNotificationCount} 条未读</span>
+                    <button type="button" disabled={notificationAction !== null || unreadNotificationCount === 0} onClick={() => void markAllNotificationsRead()}><Check size={13} />全部已读</button>
+                    <button className="clear" type="button" disabled={notificationAction !== null || notifications.length === 0} onClick={() => void clearAllNotifications()}><Trash2 size={13} />清空</button>
+                  </div>
+                </div>
                 <div className="notification-list">
                   {notifications.map((notification) => (
                     <article className={notification.readAt ? "read" : "unread"} key={notification.id}>
                       <span><Bell size={15} /></span>
                       <div><strong>{notification.title}</strong><p>{notification.message}</p><small>{formatTime(notification.createdAt)}</small></div>
-                      <button type="button" onClick={() => void viewNotification(notification)}>View</button>
+                      <div className="notification-item-actions">
+                        <button type="button" onClick={() => void viewNotification(notification)}>查看</button>
+                        <button className="delete" type="button" disabled={notificationAction !== null} onClick={() => void deleteNotification(notification.id)} title="删除通知" aria-label={`删除通知：${notification.title}`}><Trash2 size={14} /></button>
+                      </div>
                     </article>
                   ))}
                   {!notifications.length && <p className="notification-empty">暂时没有通知。</p>}
@@ -1882,38 +1963,49 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
             </div>
 
             <div className="dispatcher-thread">
-              {!dispatcherMessages.length && (
-                <div className="dispatcher-welcome"><span><ImageIcon size={28} /></span><h2>从一个目标开始整个角色项目</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分。总调度 Agent 会根据你的目标选择单图生成或任务编排。</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传并拆分</button></div></div>
-              )}
-              {dispatcherGenerations.map((generation) => (
-                <section className={`dispatcher-generation ${generation.status}`} key={generation.id}>
-                  <header><span><ImageIcon size={16} /></span><div><strong>{generation.title}</strong><small>单张合集图 · {generation.characterCount} 个角色</small></div><em>{generation.status === "running" ? <><LoaderCircle className="spinning" size={13} />生成中</> : generation.status === "succeeded" ? "已完成" : "失败"}</em></header>
-                  {generation.previewPath && <Image src={generation.previewPath} alt={generation.title} width={1024} height={1024} unoptimized />}
-                  <p>{generation.message}</p>
-                  <details><summary>查看生成要求</summary><p>{generation.prompt}</p></details>
-                </section>
-              ))}
-              {dispatcherMessages.map((message) => (
-                <div className={`dispatcher-message ${message.role}`} key={message.id}>
-                  <span>{message.role === "assistant" ? <Bot size={17} /> : <User size={17} />}</span>
-                  <div><strong>{message.role === "assistant" ? "总调度 Agent" : "你"}</strong>{message.attachmentName && <small><ImageIcon size={13} />{message.attachmentName}</small>}<div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{message.content}</ReactMarkdown></div></div>
-                </div>
-              ))}
-              {dispatcherBusy && <div className="dispatcher-message assistant pending"><span><Bot size={17} /></span><div><strong>总调度 Agent</strong><p><LoaderCircle size={15} />正在分析并调度任务</p></div></div>}
-              {coordinatorApprovals.map((approval) => (
-                <section className="approval-card" key={approval.id}>
-                  <span><ShieldCheck size={18} /></span>
-                  <div><small>总调度 Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
-                  <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={15} /> : <Check size={15} />}批准</button></div>
-                </section>
-              ))}
-              <div ref={dispatcherEndRef} />
+              <div className="dispatcher-thread-content">
+                {!dispatcherTimeline.length && (
+                  <div className="dispatcher-welcome"><span><ImageIcon size={28} /></span><h2>从一个目标开始整个角色项目</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分。总调度 Agent 会根据你的目标选择单图生成或任务编排。</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传并拆分</button></div></div>
+                )}
+                {dispatcherTimeline.map((entry) => {
+                  if (entry.kind === "generation") {
+                    const generation = entry.item;
+                    return (
+                      <section className={`dispatcher-generation ${generation.status}`} key={`generation-${generation.id}`}>
+                        <header><span><ImageIcon size={16} /></span><div><strong>{generation.title}</strong><small>单张合集图 · {generation.characterCount} 个角色</small></div><em>{generation.status === "running" ? <><LoaderCircle className="spinning" size={13} />生成中</> : generation.status === "succeeded" ? "已完成" : "失败"}</em></header>
+                        {generation.previewPath && <Image src={generation.previewPath} alt={generation.title} width={1024} height={1024} unoptimized />}
+                        <p>{generation.message}</p>
+                        <details><summary>查看生成要求</summary><p>{generation.prompt}</p></details>
+                      </section>
+                    );
+                  }
+                  if (entry.kind === "approval") {
+                    const approval = entry.item;
+                    return (
+                      <section className="approval-card" key={`approval-${approval.id}`}>
+                        <span><ShieldCheck size={18} /></span>
+                        <div><small>总调度 Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
+                        <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={15} /> : <Check size={15} />}批准</button></div>
+                      </section>
+                    );
+                  }
+                  const message = entry.item;
+                  return (
+                    <div className={`dispatcher-message ${message.role}`} key={`message-${message.id}`}>
+                      <span>{message.role === "assistant" ? <Bot size={17} /> : <User size={17} />}</span>
+                      <div><strong>{message.role === "assistant" ? "总调度 Agent" : "你"}</strong>{message.attachmentName && <small><ImageIcon size={13} />{message.attachmentName}</small>}<div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{message.content}</ReactMarkdown></div></div>
+                    </div>
+                  );
+                })}
+                {dispatcherBusy && <div className="dispatcher-message assistant pending"><span><Bot size={17} /></span><div><strong>总调度 Agent</strong><p><LoaderCircle size={15} />正在分析并调度任务</p></div></div>}
+                <div ref={dispatcherEndRef} />
+              </div>
             </div>
 
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
               <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
-              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><ContextUsage context={dispatcherContext} />{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false}><Send size={16} />发送调度</button></div>
+              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><ContextUsage context={dispatcherContext} /><span className="dispatcher-composer-actions">{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()} title="停止调度" aria-label="停止调度"><X size={16} /></button>}<button className="primary-button dispatcher-send-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false} title="发送调度" aria-label="发送调度"><Send size={16} /></button></span></div>
             </form>
             {dispatcherDragging && <div className="dispatcher-drop"><ImageIcon size={34} /><strong>松开以分析合集原画</strong><span>支持最多 12 MB 的 PNG、JPEG 或 WebP</span></div>}
           </section>
