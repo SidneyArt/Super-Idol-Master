@@ -161,7 +161,7 @@ npm run lint
 npm run build
 
 cd "D:\dgx比赛\Super-Idol-Master"
-python -m py_compile scripts\comfy_workflow\*.py
+uv run --locked --project web/server/pipeline python -m compileall -q web/server/pipeline
 ```
 
 Vinext 本地环境已关闭图片优化，避免缺少 Cloudflare `ASSETS/IMAGES` 绑定导致 `reading 'fetch'` 错误。

@@ -32,27 +32,34 @@ if (existsSync(localEnvPath)) loadEnvFile(localEnvPath);
 const HOST = process.env.API_HOST || "127.0.0.1";
 const PORT = Number(process.env.API_PORT || 8787);
 const DEFAULT_COMFYUI_URL = process.env.COMFYUI_URL || "http://100.120.236.113:8188";
-const PYTHON_COMMAND = process.env.PYTHON_COMMAND || "python";
 const outputRoot = resolve(repoRoot, "output");
 const generatedDir = join(webRoot, "public", "generated");
 const dataDir = join(webRoot, "data");
 const runtimeWorkflowDir = join(dataDir, "runtime-workflows");
 const dbPath = process.env.DATABASE_PATH || join(dataDir, "super-idol-master.db");
-const workflowDir = join(repoRoot, "scripts", "comfy_workflow");
+const pipelineDir = join(webRoot, "server", "pipeline");
+const managedPython = process.platform === "win32"
+  ? join(pipelineDir, ".venv", "Scripts", "python.exe")
+  : join(pipelineDir, ".venv", "bin", "python");
+const PYTHON_OVERRIDE = process.env.PYTHON_COMMAND?.trim() || "";
+const PYTHON_COMMAND = PYTHON_OVERRIDE || managedPython;
+if (!PYTHON_OVERRIDE && !existsSync(managedPython)) {
+  throw new Error(`Python 执行环境不存在：${PYTHON_COMMAND}\n请先运行 uv sync --locked --project "${pipelineDir}"`);
+}
 
 const scripts = {
-  "2d": join(workflowDir, "run_2d_generation.py"),
-  "2d-api": join(workflowDir, "run_2d_stepfun_api.py"),
-  qa: join(workflowDir, "run_tpose_qa.py"),
-  "3d": join(workflowDir, "run_3d_generation.py"),
-  rig: join(workflowDir, "run_3d_skinning.py"),
-  crop: join(workflowDir, "crop_character_sheet.py"),
+  "2d": join(pipelineDir, "run_2d_generation.py"),
+  "2d-api": join(pipelineDir, "run_2d_stepfun_api.py"),
+  qa: join(pipelineDir, "run_tpose_qa.py"),
+  "3d": join(pipelineDir, "run_3d_generation.py"),
+  rig: join(pipelineDir, "run_3d_skinning.py"),
+  crop: join(pipelineDir, "crop_character_sheet.py"),
 };
 const workflowFiles = {
-  "2d": join(workflowDir, "2D_Gen_QwenImage2512.json"),
-  qa: join(workflowDir, "TPose_QA_SDPose.json"),
-  "3d": join(workflowDir, "3D_Gen_Pixal3D.json"),
-  rig: join(workflowDir, "3D_Skin_SkinTokens.json"),
+  "2d": join(pipelineDir, "2D_Gen_QwenImage2512.json"),
+  qa: join(pipelineDir, "TPose_QA_SDPose.json"),
+  "3d": join(pipelineDir, "3D_Gen_Pixal3D.json"),
+  rig: join(pipelineDir, "3D_Skin_SkinTokens.json"),
 };
 
 mkdirSync(dataDir, { recursive: true });
@@ -1197,8 +1204,8 @@ function startCharacterSheetGeneration(input = {}) {
     "横向整齐排列，每个角色完整全身、彼此分离且不重叠，比例统一，光照统一，背景简洁，清晰展示服装、配色和身份差异。不要拆成多张图片，不要生成角色卡边框或文字标签。",
     additional,
   ].filter(Boolean).join(" ").slice(0, 6000);
-  const imageConfig = settingsStore.imageConfig("text_to_model");
-  if (!imageConfig.apiKey) throw new Error("文生图 API Key 未配置");
+  const imageConfig = settingsStore.coordinatorImageConfig("text_to_model");
+  if (!imageConfig.apiKey) throw new Error("总调度文生图 API Key 未配置");
 
   const id = randomUUID();
   const now = new Date().toISOString();
@@ -1261,7 +1268,7 @@ function startCharacterSheetGeneration(input = {}) {
 
 const coordinatorAgent = createCoordinatorRuntime({
   db,
-  getAgentConfig: settingsStore.agentConfig,
+  getAgentConfig: settingsStore.coordinatorAgentConfig,
   getWorkspaces: getWorkspacesSummary,
   createWorkspace: createWorkspaceRecord,
   createCharacterTasks: createCoordinatorTasks,
@@ -1269,7 +1276,7 @@ const coordinatorAgent = createCoordinatorRuntime({
   delegateTask: (runId, target) => assetAgent.requestWorkflowPlan(runId, target),
   getImageModelStatus: () => {
     const settings = settingsStore.publicSettings();
-    return settings.imageModels;
+    return settings.coordinator.imageModels;
   },
   getPermissionMode: () => approvalRuntime.permission("coordinator", "global"),
   requestApproval: approvalRuntime.requestApproval,

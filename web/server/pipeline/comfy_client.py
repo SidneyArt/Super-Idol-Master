@@ -19,7 +19,7 @@ import requests
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = SCRIPT_DIR.parents[1]
+PROJECT_ROOT = SCRIPT_DIR.parents[2]
 OUTPUT_ROOT = PROJECT_ROOT / "output"
 DEFAULT_COMFYUI_URL = "http://100.120.236.113:8188"
 DEFAULT_COMFYUI_ROOT = "/home/sidney/comfy/ComfyUI"

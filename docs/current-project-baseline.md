@@ -7,7 +7,7 @@
 - 正确仓库：`https://github.com/SidneyArt/Super-Idol-Master.git`
 - Windows 工作目录：`D:\dgx比赛\Super-Idol-Master`
 - 本地流程网站：`D:\dgx比赛\Super-Idol-Master\web`
-- Python 流水线：`D:\dgx比赛\Super-Idol-Master\scripts\comfy_workflow`
+- Python 流水线：`D:\dgx比赛\Super-Idol-Master\web\server\pipeline`（uv 管理）
 - 生成结果：`D:\dgx比赛\Super-Idol-Master\output`
 
 此前误认过 `OmniEcho`，也误克隆过其他仓库；后续工作只以 `Super-Idol-Master` 为准。

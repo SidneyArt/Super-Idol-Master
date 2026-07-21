@@ -18,10 +18,10 @@
 
 当前工程已经通过 Python 和 ComfyUI 实现了确定性的 `2D → 3D → SkinTokens 蒙皮`流程：
 
-- `scripts/comfy_workflow/run_2d_generation.py`
-- `scripts/comfy_workflow/run_3d_generation.py`
-- `scripts/comfy_workflow/run_3d_skinning.py`
-- `scripts/comfy_workflow/run_comfy_workflows.py`
+- `web/server/pipeline/run_2d_generation.py`
+- `web/server/pipeline/run_3d_generation.py`
+- `web/server/pipeline/run_3d_skinning.py`
+- `web/server/pipeline/run_comfy_workflows.py`
 
 因此，选型重点并不是寻找一个能够自由操作 Shell 的代码 Agent，而是寻找一个可以嵌入桌面应用、支持多轮对话、能够稳定调用领域工具的 Agent Runtime。
 

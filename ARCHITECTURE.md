@@ -20,16 +20,6 @@ Super-Idol-Master/
 │   ├── technical-implementation-guide.md
 │   ├── agent-runtime-pi-adr.md       # Pi Agent Runtime 技术决策
 │   └── agent-backend-selection.md    # Agent 后端选型记录
-├── scripts/comfy_workflow/
-│   ├── comfy_client.py               # ComfyUI 上传、提交、轮询和下载客户端
-│   ├── run_2d_generation.py          # Qwen Image 2D 生成入口
-│   ├── run_2d_stepfun_api.py         # Stepfun 图片 API 入口
-│   ├── crop_character_sheet.py       # 合集原画的受控角色裁切入口
-│   ├── run_tpose_qa.py               # SDPose T-Pose 检查入口
-│   ├── run_3d_generation.py          # Pixal3D 生成入口
-│   ├── run_3d_skinning.py            # SkinTokens 绑骨入口
-│   ├── run_comfy_workflows.py        # 独立 Python 全流程编排入口
-│   └── *.json                        # 各阶段默认 ComfyUI 工作流
 ├── web/
 │   ├── app/
 │   │   ├── page.tsx                  # 工作空间首页、任务控制台和 Agent 面板
@@ -40,7 +30,15 @@ Super-Idol-Master/
 │   │   ├── agent-runtime.mjs         # Supervisor、多 Agent 与持续执行计划
 │   │   ├── approval-runtime.mjs      # 权限模式、审批队列与全局通知
 │   │   ├── coordinator-runtime.mjs   # 跨工作空间总调度与批量任务委派
-│   │   └── settings.mjs              # 工作流、端点、模型和密钥配置
+│   │   ├── settings.mjs              # 工作流、端点、模型和密钥配置
+│   │   └── pipeline/                 # 后端私有 Python / uv 子项目
+│   │       ├── pyproject.toml         # Python 版本约束与直接依赖
+│   │       ├── uv.lock                # 可复现依赖锁
+│   │       ├── .python-version        # 固定 Python 3.12
+│   │       ├── comfy_client.py        # ComfyUI 上传、提交、轮询和下载客户端
+│   │       ├── run_*.py               # 各阶段受控执行入口
+│   │       ├── crop_character_sheet.py
+│   │       └── *.json                 # 默认 ComfyUI 工作流模板
 │   ├── scripts/
 │   │   ├── start-local.mjs           # 前后端联合启动器
 │   │   ├── run-vinext.mjs            # Vinext 命令入口
@@ -52,7 +50,7 @@ Super-Idol-Master/
 └── 启动本地网站.cmd                  # 本地启动入口
 ```
 
-当前系统采用本地模块化单体结构。前端、API、Agent Runtime 和 Job 编排位于同一个 `web/` 应用中；计算密集型生成任务通过固定 Python 脚本委派给 DGX / ComfyUI。
+当前系统采用本地模块化单体结构。前端、API、Agent Runtime 和 Job 编排位于同一个 `web/` 应用中；计算密集型生成任务通过 `web/server/pipeline/` 中的后端私有 Python 执行器委派给 DGX / ComfyUI。
 
 ## 2. 高层系统图
 
@@ -189,6 +187,8 @@ Super-Idol-Master/
 
 **技术栈：** Python、Requests、Pillow、ComfyUI HTTP API。
 
+**运行边界：** `pipeline/` 是 Node 后端的私有子项目，不属于面向用户的仓库级脚本。uv 根据 `.python-version`、`pyproject.toml` 和 `uv.lock` 创建 `pipeline/.venv`；联合启动器先执行 `uv sync --locked`，后端随后直接调用该虚拟环境的解释器。除显式设置 `PYTHON_COMMAND` 用于调试外，运行时不依赖系统 Python 或 `PATH`。
+
 ### 3.5. DGX 生成服务
 
 **名称：** DGX / ComfyUI Runtime
@@ -240,7 +240,8 @@ Super-Idol-Master/
 | `output/` | Python 下载的 PNG、GLB、工作流快照和历史记录 | 否 |
 | `web/public/generated/` | 前端直接展示的预览图片和姿态覆盖图 | 否 |
 | `web/data/runtime-workflows/` | 每次 Job 使用的临时工作流 JSON | 否 |
-| `scripts/comfy_workflow/*.json` | 默认、可追踪的工作流模板 | 是 |
+| `web/server/pipeline/*.json` | 后端使用的默认、可追踪工作流模板 | 是 |
+| `web/server/pipeline/.venv/` | uv 管理的 Python 3.12 虚拟环境 | 否 |
 
 数据库只保存本地绝对路径和前端预览 URL，不把二进制产物写入 SQLite。
 

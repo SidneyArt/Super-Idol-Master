@@ -38,7 +38,7 @@ def main() -> int:
         from PIL import Image
     except ModuleNotFoundError as error:
         raise RuntimeError(
-            "缺少 Pillow；请运行 python -m pip install -r scripts/comfy_workflow/requirements.txt"
+            "缺少 Pillow；请运行 uv sync --locked --project web/server/pipeline"
         ) from error
     source = Path(args.source).resolve()
     output_dir = Path(args.output_dir).resolve()

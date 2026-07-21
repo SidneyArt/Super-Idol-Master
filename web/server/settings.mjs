@@ -92,6 +92,11 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     model: process.env.STEPFUN_MODEL?.trim() || "step-3.7-flash",
     apiKey: process.env.STEPFUN_API_KEY?.trim() || "",
   };
+  const coordinatorAgentDefaults = {
+    baseUrl: normalizeUrl(process.env.COORDINATOR_BASE_URL || agentDefaults.baseUrl, "总调度 Agent Base URL"),
+    model: process.env.COORDINATOR_MODEL?.trim() || agentDefaults.model,
+    apiKey: process.env.COORDINATOR_API_KEY?.trim() || agentDefaults.apiKey,
+  };
   const imageApiDefaults = {
     textToImage: {
       baseUrl: normalizeUrl(process.env.STEPFUN_TEXT_IMAGE_BASE_URL || process.env.STEPFUN_IMAGE_BASE_URL || DEFAULT_IMAGE_API_BASE_URL, "文生图 API Base URL"),
@@ -223,9 +228,58 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     };
   }
 
+  function coordinatorAgentConfig() {
+    return {
+      baseUrl: normalizeUrl(read("coordinator.agent.base_url", coordinatorAgentDefaults.baseUrl), "总调度 Agent Base URL"),
+      model: read("coordinator.agent.model", coordinatorAgentDefaults.model).trim() || coordinatorAgentDefaults.model,
+      apiKey: read("coordinator.agent.api_key", coordinatorAgentDefaults.apiKey).trim(),
+    };
+  }
+
+  function coordinatorImageConfig(pipelineType) {
+    const isImage = pipelineType === "image_to_model";
+    const prefix = isImage ? "coordinator.image.image_to_image" : "coordinator.image.text_to_image";
+    const defaults = isImage ? imageApiDefaults.imageToImage : imageApiDefaults.textToImage;
+    return {
+      baseUrl: normalizeUrl(read(`${prefix}.base_url`, defaults.baseUrl), isImage ? "总调度图生图 API Base URL" : "总调度文生图 API Base URL"),
+      model: read(`${prefix}.model`, defaults.model).trim() || defaults.model,
+      apiKey: read(`${prefix}.api_key`, defaults.apiKey).trim(),
+    };
+  }
+
+  function seedCoordinatorSettings() {
+    if (findSetting.get("coordinator.agent.base_url")) return;
+    const now = new Date().toISOString();
+    const currentAgent = agentConfig();
+    const currentTextImage = imageConfig("text_to_model");
+    const currentImageEdit = imageConfig("image_to_model");
+    const seeds = [
+      ["coordinator.agent.base_url", currentAgent.baseUrl],
+      ["coordinator.agent.model", currentAgent.model],
+      ["coordinator.agent.api_key", currentAgent.apiKey],
+      ["coordinator.image.text_to_image.base_url", currentTextImage.baseUrl],
+      ["coordinator.image.text_to_image.model", currentTextImage.model],
+      ["coordinator.image.text_to_image.api_key", currentTextImage.apiKey],
+      ["coordinator.image.image_to_image.base_url", currentImageEdit.baseUrl],
+      ["coordinator.image.image_to_image.model", currentImageEdit.model],
+      ["coordinator.image.image_to_image.api_key", currentImageEdit.apiKey],
+    ];
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const [key, value] of seeds) saveSetting.run(key, value, now);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  seedCoordinatorSettings();
+
   async function fetchAgentModels(input = {}) {
-    const current = agentConfig();
-    const baseUrl = normalizeUrl(input.baseUrl ?? current.baseUrl, "Agent Base URL");
+    const coordinator = input.scope === "coordinator";
+    const current = coordinator ? coordinatorAgentConfig() : agentConfig();
+    const baseUrl = normalizeUrl(input.baseUrl ?? current.baseUrl, coordinator ? "总调度 Agent Base URL" : "Asset Agent Base URL");
     const apiKey = input.clearApiKey === true
       ? ""
       : typeof input.apiKey === "string" && input.apiKey.trim()
@@ -320,6 +374,31 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
           defaultModel: imageApiDefaults.imageToImage.model,
         },
       },
+      coordinator: {
+        agent: {
+          baseUrl: coordinatorAgentConfig().baseUrl,
+          model: coordinatorAgentConfig().model,
+          apiKeyConfigured: Boolean(coordinatorAgentConfig().apiKey),
+          defaultBaseUrl: coordinatorAgentDefaults.baseUrl,
+          defaultModel: coordinatorAgentDefaults.model,
+        },
+        imageModels: {
+          textToImage: {
+            baseUrl: coordinatorImageConfig("text_to_model").baseUrl,
+            model: coordinatorImageConfig("text_to_model").model,
+            apiKeyConfigured: Boolean(coordinatorImageConfig("text_to_model").apiKey),
+            defaultBaseUrl: imageApiDefaults.textToImage.baseUrl,
+            defaultModel: imageApiDefaults.textToImage.model,
+          },
+          imageToImage: {
+            baseUrl: coordinatorImageConfig("image_to_model").baseUrl,
+            model: coordinatorImageConfig("image_to_model").model,
+            apiKeyConfigured: Boolean(coordinatorImageConfig("image_to_model").apiKey),
+            defaultBaseUrl: imageApiDefaults.imageToImage.baseUrl,
+            defaultModel: imageApiDefaults.imageToImage.model,
+          },
+        },
+      },
     };
   }
 
@@ -388,6 +467,41 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       imageToImage: normalizeImageModel("imageToImage", "image_to_model"),
     };
 
+    const coordinatorInput = input.coordinator && typeof input.coordinator === "object" ? input.coordinator : {};
+    const currentCoordinatorAgent = coordinatorAgentConfig();
+    const coordinatorAgentInput = coordinatorInput.agent && typeof coordinatorInput.agent === "object" ? coordinatorInput.agent : {};
+    const nextCoordinatorAgent = {
+      baseUrl: normalizeUrl(coordinatorAgentInput.baseUrl ?? currentCoordinatorAgent.baseUrl, "总调度 Agent Base URL"),
+      model: typeof coordinatorAgentInput.model === "string" ? coordinatorAgentInput.model.trim() : currentCoordinatorAgent.model,
+      apiKey: currentCoordinatorAgent.apiKey,
+    };
+    if (!nextCoordinatorAgent.model) throw new Error("总调度 Agent 模型不能为空");
+    if (nextCoordinatorAgent.model.length > 160) throw new Error("总调度 Agent 模型不能超过 160 个字符");
+    if (coordinatorAgentInput.clearApiKey === true) nextCoordinatorAgent.apiKey = "";
+    else if (typeof coordinatorAgentInput.apiKey === "string" && coordinatorAgentInput.apiKey.trim()) nextCoordinatorAgent.apiKey = coordinatorAgentInput.apiKey.trim();
+    if (nextCoordinatorAgent.apiKey.length > 1000) throw new Error("总调度 Agent API Key 不能超过 1,000 个字符");
+
+    const coordinatorImageModelsInput = coordinatorInput.imageModels && typeof coordinatorInput.imageModels === "object" ? coordinatorInput.imageModels : {};
+    const normalizeCoordinatorImageModel = (key, pipeline) => {
+      const current = coordinatorImageConfig(pipeline);
+      const next = coordinatorImageModelsInput[key] && typeof coordinatorImageModelsInput[key] === "object" ? coordinatorImageModelsInput[key] : {};
+      const label = key === "textToImage" ? "总调度文生图" : "总调度图生图";
+      const value = {
+        baseUrl: normalizeUrl(next.baseUrl ?? current.baseUrl, `${label} API Base URL`),
+        model: typeof next.model === "string" ? next.model.trim() : current.model,
+        apiKey: current.apiKey,
+      };
+      if (!value.model || value.model.length > 160) throw new Error(`${label}模型无效`);
+      if (next.clearApiKey === true) value.apiKey = "";
+      else if (typeof next.apiKey === "string" && next.apiKey.trim()) value.apiKey = next.apiKey.trim();
+      if (value.apiKey.length > 1000) throw new Error(`${label} API Key 不能超过 1,000 个字符`);
+      return value;
+    };
+    const nextCoordinatorImageModels = {
+      textToImage: normalizeCoordinatorImageModel("textToImage", "text_to_model"),
+      imageToImage: normalizeCoordinatorImageModel("imageToImage", "image_to_model"),
+    };
+
     const now = new Date().toISOString();
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -404,6 +518,15 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       saveSetting.run("agent.api_key", nextAgent.apiKey, now);
       for (const [key, value] of Object.entries(nextImageModels)) {
         const prefix = key === "textToImage" ? "image.text_to_image" : "image.image_to_image";
+        saveSetting.run(`${prefix}.base_url`, value.baseUrl, now);
+        saveSetting.run(`${prefix}.model`, value.model, now);
+        saveSetting.run(`${prefix}.api_key`, value.apiKey, now);
+      }
+      saveSetting.run("coordinator.agent.base_url", nextCoordinatorAgent.baseUrl, now);
+      saveSetting.run("coordinator.agent.model", nextCoordinatorAgent.model, now);
+      saveSetting.run("coordinator.agent.api_key", nextCoordinatorAgent.apiKey, now);
+      for (const [key, value] of Object.entries(nextCoordinatorImageModels)) {
+        const prefix = key === "textToImage" ? "coordinator.image.text_to_image" : "coordinator.image.image_to_image";
         saveSetting.run(`${prefix}.base_url`, value.baseUrl, now);
         saveSetting.run(`${prefix}.model`, value.model, now);
         saveSetting.run(`${prefix}.api_key`, value.apiKey, now);
@@ -440,5 +563,5 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     return publicSettings();
   }
 
-  return { processConfig, imageConfig, agentConfig, publicSettings, getWorkflow, fetchAgentModels, update, uploadWorkflow, removeWorkflow };
+  return { processConfig, imageConfig, agentConfig, coordinatorAgentConfig, coordinatorImageConfig, publicSettings, getWorkflow, fetchAgentModels, update, uploadWorkflow, removeWorkflow };
 }

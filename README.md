@@ -76,7 +76,7 @@ Asset Agent 支持把以下自然语言目标登记为持久化执行计划：
 
 - Windows 10 或更高版本；
 - Node.js 22.19 或更高版本；
-- Python 3；
+- [uv](https://docs.astral.sh/uv/)；Python 3.12 由 uv 自动安装和固定；
 - 能够访问 DGX / ComfyUI 的 Tailscale 网络；
 - 使用 Asset Agent 时需要 Stepfun API Key。
 
@@ -86,7 +86,7 @@ Asset Agent 支持把以下自然语言目标登记为持久化执行计划：
 cd web
 npm install
 cd ..
-python -m pip install -r scripts/comfy_workflow/requirements.txt
+uv sync --locked --project web/server/pipeline
 ```
 
 ### 配置 Agent
@@ -128,10 +128,10 @@ Super-Idol-Master/
 ├── README.md                    # 项目概览与快速开始
 ├── docs/                        # PRD、运行基线、集成与技术决策
 ├── output/                      # 本地生成产物，不进入 Git
-├── scripts/comfy_workflow/      # Python 客户端、工作流 JSON 和阶段脚本
 ├── web/
 │   ├── app/                     # React/Vinext 前端
 │   ├── server/                  # Node.js API、Agent Runtime 和任务编排
+│   │   └── pipeline/            # 后端私有 Python 执行器、uv 项目与工作流模板
 │   ├── data/                    # SQLite 与运行时工作流，不进入 Git
 │   ├── public/generated/        # 页面预览资源，不进入 Git
 │   └── scripts/                 # 本地启动与 Agent 兼容性检查
@@ -143,13 +143,13 @@ Super-Idol-Master/
 
 ## 独立运行工作流
 
-Python 脚本也可以脱离网站单独调用：
+Python 执行器也可以通过锁定的 uv 环境脱离网站单独调用：
 
 ```powershell
-python scripts/comfy_workflow/run_2d_generation.py --positive "角色描述" --negative "低画质，肢体畸形"
-python scripts/comfy_workflow/run_tpose_qa.py path/to/character.png
-python scripts/comfy_workflow/run_3d_generation.py path/to/character.png
-python scripts/comfy_workflow/run_3d_skinning.py path/to/model.glb
+uv run --locked --project web/server/pipeline python web/server/pipeline/run_2d_generation.py --positive "角色描述" --negative "低画质，肢体畸形"
+uv run --locked --project web/server/pipeline python web/server/pipeline/run_tpose_qa.py path/to/character.png
+uv run --locked --project web/server/pipeline python web/server/pipeline/run_3d_generation.py path/to/character.png
+uv run --locked --project web/server/pipeline python web/server/pipeline/run_3d_skinning.py path/to/model.glb
 ```
 
 所有下载到本机的生成结果都必须位于项目的 `output/` 目录。完整参数和工作流节点映射见 [`docs/dgx-pipeline-integration.md`](./docs/dgx-pipeline-integration.md)。
@@ -160,10 +160,11 @@ python scripts/comfy_workflow/run_3d_skinning.py path/to/model.glb
 cd web
 npm run lint
 npm run build
+npm run python:check
 npm run agent:verify
 ```
 
-`agent:verify` 会实际访问配置的模型 API；运行前需要有效的 Stepfun API Key。当前仓库以 ESLint、生产构建和 Agent 兼容性脚本为主要自动检查，尚未建立完整的单元测试与 E2E 测试套件。
+`npm run local` 和 `npm run backend` 会先执行 `uv sync --locked`，之后 Node 后端直接调用 `web/server/pipeline/.venv` 中的解释器，不依赖系统 `PATH` 中的 Python。`PYTHON_COMMAND` 仅保留为显式调试覆盖。`agent:verify` 会实际访问配置的模型 API；运行前需要有效的 Stepfun API Key。
 
 ## 文档
 

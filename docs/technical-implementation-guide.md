@@ -106,12 +106,12 @@ Day 1 可以在独立 Worker 中调用现有同步函数完成一次临时竖切
 
 ### 1.4 Python 包边界
 
-后端不能依赖运行时 `sys.path` 注入。Day 1 应完成：
+后端不能依赖系统 Python、全局 site-packages 或运行时 `sys.path` 注入。当前实现采用：
 
-1. 为 `scripts/` 和 `scripts/comfy_workflow/` 添加 `__init__.py`。
-2. 将工作流脚本的同级导入改为包相对导入。
-3. 保留薄 CLI 入口，CLI 和 Web Worker 复用同一实现。
-4. 为 `apps/api` 添加 `pyproject.toml` 并使用 editable install。
+1. 把执行器收口到 Node 后端私有目录 `web/server/pipeline/`；
+2. 使用 `.python-version`、`pyproject.toml` 和 `uv.lock` 固定 Python 与依赖；
+3. 启动时执行 `uv sync --locked`，Job 直接调用 `pipeline/.venv` 的解释器；
+4. 保留薄 CLI 入口，CLI 和 Web Job 复用同一实现。
 
 所有开发和生产命令从仓库根目录运行。`APP_DATA_ROOT` 等相对路径由 `config.py` 相对仓库根目录解析，不能依赖当前 Shell 工作目录。
 
@@ -361,7 +361,8 @@ Super-Idol-Master/
 │   │   │   ├── integration/
 │   │   │   └── fixtures/
 │   │   ├── pyproject.toml
-│   │   ├── requirements.txt
+│   │   ├── uv.lock
+│   │   ├── .python-version
 │   │   └── .env.example
 │   └── web/
 │       ├── src/
@@ -400,11 +401,10 @@ Super-Idol-Master/
 │   ├── workspaces/
 │   ├── jobs/
 │   └── exports/
-├── scripts/
-│   ├── __init__.py
-│   └── comfy_workflow/
-│       ├── __init__.py
-│       └── ...                    # 现有工作流与 CLI
+├── web/server/pipeline/
+│   ├── pyproject.toml
+│   ├── uv.lock
+│   └── ...                        # 后端私有工作流与 CLI
 └── docs/
 ```
 
@@ -417,7 +417,7 @@ API Routes
     → Agent Runtime
     → Job Service
       → Workflow Adapters
-        → existing comfy_workflow scripts
+        → web/server/pipeline executors
 ```
 
 禁止反向依赖：
@@ -471,11 +471,8 @@ ENABLE_LOCAL_NEMOTRON=false
 后端：
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r apps/api/requirements.txt
-python -m pip install -e apps/api
-uvicorn app.main:app --reload
+uv sync --locked --project apps/api
+uv run --locked --project apps/api uvicorn app.main:app --reload
 ```
 
 GPU Worker 在仓库根目录使用另一个终端启动，不能使用热重载：

@@ -140,6 +140,13 @@ type AgentRoleRun = {
   createdAt: string;
   completedAt: string | null;
 };
+type UiConfirmation = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  tone: "warning" | "danger";
+  action: () => Promise<void>;
+};
 type Workspace = {
   id: string;
   name: string;
@@ -225,18 +232,26 @@ type ProcessSettings = {
 };
 type WorkflowMetadata = { id: string; name: string; source: "default" | "uploaded"; createdAt: string | null; nodeCount: number };
 type AgentModelOption = { id: string; name: string };
+type AgentApiSettings = {
+  baseUrl: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  defaultBaseUrl: string;
+  defaultModel: string;
+};
 type AppSettings = {
   processes: Record<ProcessKind, ProcessSettings>;
-  agent: {
-    baseUrl: string;
-    model: string;
-    apiKeyConfigured: boolean;
-    defaultBaseUrl: string;
-    defaultModel: string;
-  };
+  agent: AgentApiSettings;
   imageModels: {
     textToImage: ImageModelSettings;
     imageToImage: ImageModelSettings;
+  };
+  coordinator: {
+    agent: AgentApiSettings;
+    imageModels: {
+      textToImage: ImageModelSettings;
+      imageToImage: ImageModelSettings;
+    };
   };
 };
 type ImageModelSettings = {
@@ -247,6 +262,7 @@ type ImageModelSettings = {
   defaultModel: string;
 };
 type ImageModelDraft = { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
+type AgentApiDraft = { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
 type SettingsDraft = {
   processes: Record<ProcessKind, {
     mode: "comfyui" | "api";
@@ -255,8 +271,12 @@ type SettingsDraft = {
     workflowJson: string;
     api?: { baseUrl: string; model: string; apiKey: string };
   }>;
-  agent: { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
+  agent: AgentApiDraft;
   imageModels: { textToImage: ImageModelDraft; imageToImage: ImageModelDraft };
+  coordinator: {
+    agent: AgentApiDraft;
+    imageModels: { textToImage: ImageModelDraft; imageToImage: ImageModelDraft };
+  };
 };
 type SystemState = {
   api: boolean;
@@ -299,6 +319,18 @@ function settingsDraft(settings: AppSettings): SettingsDraft {
     imageModels: {
       textToImage: { baseUrl: settings.imageModels.textToImage.baseUrl, model: settings.imageModels.textToImage.model, apiKey: "", clearApiKey: false },
       imageToImage: { baseUrl: settings.imageModels.imageToImage.baseUrl, model: settings.imageModels.imageToImage.model, apiKey: "", clearApiKey: false },
+    },
+    coordinator: {
+      agent: {
+        baseUrl: settings.coordinator.agent.baseUrl,
+        model: settings.coordinator.agent.model,
+        apiKey: "",
+        clearApiKey: false,
+      },
+      imageModels: {
+        textToImage: { baseUrl: settings.coordinator.imageModels.textToImage.baseUrl, model: settings.coordinator.imageModels.textToImage.model, apiKey: "", clearApiKey: false },
+        imageToImage: { baseUrl: settings.coordinator.imageModels.imageToImage.baseUrl, model: settings.coordinator.imageModels.imageToImage.model, apiKey: "", clearApiKey: false },
+      },
     },
   };
 }
@@ -352,6 +384,51 @@ function AgentPermissionMenu({ mode, onChange, title }: { mode: ApprovalMode; on
   );
 }
 
+type StyledSelectOption = { value: string; label: string; disabled?: boolean };
+
+function StyledSelect({ value, options, onChange, ariaLabel, placement = "down" }: {
+  value: string;
+  options: StyledSelectOption[];
+  onChange: (value: string) => void;
+  ariaLabel: string;
+  placement?: "up" | "down";
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected = options.find((option) => option.value === value) || options[0];
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+  return (
+    <div className={`styled-select ${open ? "open" : ""} placement-${placement}`} ref={rootRef}>
+      <button type="button" className="styled-select-trigger" onClick={() => setOpen((current) => !current)} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open}>
+        <span>{selected?.label || "请选择"}</span><ChevronDown size={15} />
+      </button>
+      {open && (
+        <div className="styled-select-options" role="listbox" aria-label={ariaLabel}>
+          {options.map((option) => (
+            <button key={option.value} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} className={option.value === value ? "selected" : ""} onClick={() => { onChange(option.value); setOpen(false); }}>
+              <span>{option.label}</span>{option.value === value && <Check size={14} />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [screen, setScreen] = useState<"home" | "task">("home");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -366,14 +443,17 @@ export default function Home() {
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [revertStage, setRevertStage] = useState<number | null>(null);
+  const [uiConfirmation, setUiConfirmation] = useState<UiConfirmation | null>(null);
+  const [uiConfirmationBusy, setUiConfirmationBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsForm, setSettingsForm] = useState<SettingsDraft | null>(null);
-  const [settingsTab, setSettingsTab] = useState<ProcessKind | "agent">("2d");
+  const [settingsTab, setSettingsTab] = useState<ProcessKind | "agent" | "coordinator">("2d");
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [agentModelsLoading, setAgentModelsLoading] = useState(false);
   const [agentModels, setAgentModels] = useState<AgentModelOption[]>([]);
+  const [coordinatorModels, setCoordinatorModels] = useState<AgentModelOption[]>([]);
   const [workflowPreviewOpen, setWorkflowPreviewOpen] = useState(false);
   const [workflowDragging, setWorkflowDragging] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -723,24 +803,52 @@ export default function Home() {
     }
   }
 
-  async function resetRun() {
-    if (!run || busy || !window.confirm("重置会清除当前任务的产物引用和进度，确定继续吗？")) return;
-    await runAction("reset", "重置失败");
+  function resetRun() {
+    if (!run || busy) return;
+    setUiConfirmation({
+      title: `重置“${run.name}”？`,
+      description: "这会清除当前任务的产物引用和流程进度，任务本身及聊天记录会保留。",
+      confirmLabel: "确认重置",
+      tone: "warning",
+      action: () => runAction("reset", "重置失败"),
+    });
   }
 
-  async function deleteRun() {
-    if (!run || !window.confirm(`确定删除“${run.name}”及其历史记录吗？`)) return;
-    setBusy(true);
+  function deleteRun() {
+    if (!run || busy) return;
+    const runId = run.id;
+    const runName = run.name;
+    setUiConfirmation({
+      title: `删除“${runName}”？`,
+      description: "任务、流程进度、Agent 对话和历史记录都会被永久删除。",
+      confirmLabel: "确认删除",
+      tone: "danger",
+      action: async () => {
+        setBusy(true);
+        try {
+          await api(`/api/runs/${runId}`, { method: "DELETE" });
+          selectRun(null);
+          setDetail(null);
+          setChatMessages([]);
+          await refreshRuns();
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "删除失败");
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
+  }
+
+  async function confirmUiAction() {
+    if (!uiConfirmation || uiConfirmationBusy) return;
+    const action = uiConfirmation.action;
+    setUiConfirmationBusy(true);
     try {
-      await api(`/api/runs/${run.id}`, { method: "DELETE" });
-      selectRun(null);
-      setDetail(null);
-      setChatMessages([]);
-      await refreshRuns();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "删除失败");
+      await action();
+      setUiConfirmation(null);
     } finally {
-      setBusy(false);
+      setUiConfirmationBusy(false);
     }
   }
 
@@ -861,6 +969,7 @@ export default function Home() {
       setSettings(data);
       setSettingsForm(settingsDraft(data));
       setAgentModels([{ id: data.agent.model, name: data.agent.model }]);
+      setCoordinatorModels([{ id: data.coordinator.agent.model, name: data.coordinator.agent.model }]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "配置读取失败");
       setShowSettings(false);
@@ -877,6 +986,31 @@ export default function Home() {
         [kind]: { ...current.processes[kind], ...patch },
       },
     } : current);
+  }
+
+  function updateAgentApiSettings(scope: "agent" | "coordinator", patch: Partial<AgentApiDraft>) {
+    setSettingsForm((current) => {
+      if (!current) return current;
+      if (scope === "coordinator") return {
+        ...current,
+        coordinator: { ...current.coordinator, agent: { ...current.coordinator.agent, ...patch } },
+      };
+      return { ...current, agent: { ...current.agent, ...patch } };
+    });
+  }
+
+  function updateImageModelSettings(scope: "agent" | "coordinator", key: "textToImage" | "imageToImage", patch: Partial<ImageModelDraft>) {
+    setSettingsForm((current) => {
+      if (!current) return current;
+      if (scope === "coordinator") return {
+        ...current,
+        coordinator: {
+          ...current.coordinator,
+          imageModels: { ...current.coordinator.imageModels, [key]: { ...current.coordinator.imageModels[key], ...patch } },
+        },
+      };
+      return { ...current, imageModels: { ...current.imageModels, [key]: { ...current.imageModels[key], ...patch } } };
+    });
   }
 
   function restoreProcessDefaults(kind: ProcessKind) {
@@ -966,42 +1100,53 @@ export default function Home() {
     input.click();
   }
 
-  async function removeWorkflow(kind: ProcessKind, workflowId: string) {
+  function removeWorkflow(kind: ProcessKind, workflowId: string) {
     if (!settings || workflowId === settings.processes[kind].defaultWorkflowId || settingsSaving) return;
     const workflow = settings.processes[kind].workflows.find((item) => item.id === workflowId);
-    if (!workflow || !window.confirm(`删除“${workflow.name}”？`)) return;
-    try {
-      const data = await api<AppSettings>(`/api/settings/workflows/${kind}/${encodeURIComponent(workflowId)}`, { method: "DELETE" });
-      setSettings(data);
-      const active = data.processes[kind];
-      updateProcessSettings(kind, {
-        activeWorkflowId: active.activeWorkflowId,
-        workflowJson: JSON.stringify(active.workflow, null, 2),
-      });
-      setWorkflowPreviewOpen(false);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "工作流删除失败");
-    }
+    if (!workflow) return;
+    setUiConfirmation({
+      title: `删除“${workflow.name}”？`,
+      description: "这个自定义工作流版本会被永久移除；内置默认工作流不会受到影响。",
+      confirmLabel: "删除工作流",
+      tone: "danger",
+      action: async () => {
+        try {
+          const data = await api<AppSettings>(`/api/settings/workflows/${kind}/${encodeURIComponent(workflowId)}`, { method: "DELETE" });
+          setSettings(data);
+          const active = data.processes[kind];
+          updateProcessSettings(kind, {
+            activeWorkflowId: active.activeWorkflowId,
+            workflowJson: JSON.stringify(active.workflow, null, 2),
+          });
+          setWorkflowPreviewOpen(false);
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "工作流删除失败");
+        }
+      },
+    });
   }
 
-  async function fetchAgentModels() {
+  async function fetchAgentModels(scope: "agent" | "coordinator" = "agent") {
     if (!settingsForm || agentModelsLoading) return;
     setAgentModelsLoading(true);
     setError("");
     try {
+      const draft = scope === "coordinator" ? settingsForm.coordinator.agent : settingsForm.agent;
       const result = await api<{ baseUrl: string; models: AgentModelOption[] }>("/api/settings/agent/models", {
         method: "POST",
         body: JSON.stringify({
-          baseUrl: settingsForm.agent.baseUrl,
-          apiKey: settingsForm.agent.apiKey,
-          clearApiKey: settingsForm.agent.clearApiKey,
+          scope,
+          baseUrl: draft.baseUrl,
+          apiKey: draft.apiKey,
+          clearApiKey: draft.clearApiKey,
         }),
       });
-      const currentModel = settingsForm.agent.model;
+      const currentModel = draft.model;
       const models = result.models.some((item) => item.id === currentModel)
         ? result.models
         : [{ id: currentModel, name: `${currentModel}（当前配置）` }, ...result.models];
-      setAgentModels(models);
+      if (scope === "coordinator") setCoordinatorModels(models);
+      else setAgentModels(models);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "模型列表获取失败");
     } finally {
@@ -1037,7 +1182,7 @@ export default function Home() {
     try {
       const data = await api<AppSettings>("/api/settings", {
         method: "PUT",
-        body: JSON.stringify({ processes, agent: settingsForm.agent, imageModels: settingsForm.imageModels }),
+        body: JSON.stringify({ processes, agent: settingsForm.agent, imageModels: settingsForm.imageModels, coordinator: settingsForm.coordinator }),
       });
       setSettings(data);
       setSettingsForm(settingsDraft(data));
@@ -1174,7 +1319,7 @@ export default function Home() {
   async function sendDispatcherMessage(event: FormEvent) {
     event.preventDefault();
     const message = dispatcherInput.trim();
-    if ((!message && !dispatcherAttachment) || dispatcherBusy || system?.agent.configured === false) return;
+    if ((!message && !dispatcherAttachment) || dispatcherBusy || settings?.coordinator.agent.apiKeyConfigured === false) return;
     setDispatcherBusy(true);
     setError("");
     const optimistic: ChatMessage = {
@@ -1515,14 +1660,14 @@ export default function Home() {
               <div className="dispatcher-title"><span><Bot size={22} /></span><div><small>总调度中心</small><h1>Workspace Coordinator</h1><p>{selectedWorkspace ? `当前空间：${selectedWorkspace.name}` : "创建工作空间后开始调度"}</p></div></div>
               <div className="dispatcher-actions">
                 <button className="secondary-button" type="button" onClick={() => { setForm({ name: "", workspaceId: selectedWorkspaceId, pipelineType: "text_to_model" }); setShowCreate(true); }}><Plus size={16} />新建任务</button>
-                <button className="secondary-button" type="button" onClick={() => { setSettingsTab("agent"); void openSettings(); }}><Settings size={16} />模型配置</button>
+                <button className="secondary-button" type="button" onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Settings size={16} />模型配置</button>
               </div>
             </header>
 
             <div className="dispatcher-models">
-              <div className={settings?.imageModels.textToImage.apiKeyConfigured ? "configured" : "missing"}><Sparkles size={16} /><span><small>文生图 API</small><strong>{settings?.imageModels.textToImage.model || "未读取"}</strong></span><em>{settings?.imageModels.textToImage.apiKeyConfigured ? "已配置" : "待配置"}</em></div>
-              <div className={settings?.imageModels.imageToImage.apiKeyConfigured ? "configured" : "missing"}><ImageIcon size={16} /><span><small>图生图 API</small><strong>{settings?.imageModels.imageToImage.model || "未读取"}</strong></span><em>{settings?.imageModels.imageToImage.apiKeyConfigured ? "已配置" : "待配置"}</em></div>
-              <div className={system?.agent.configured ? "configured" : "missing"}><Bot size={16} /><span><small>调度模型</small><strong>{system?.agent.model || "未读取"}</strong></span><em>{system?.agent.configured ? "已配置" : "待配置"}</em></div>
+              <button type="button" className={settings?.coordinator.imageModels.textToImage.apiKeyConfigured ? "configured" : "missing"} onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Sparkles size={16} /><span><small>文生图 API</small><strong>{settings?.coordinator.imageModels.textToImage.model || "未读取"}</strong></span><em>{settings?.coordinator.imageModels.textToImage.apiKeyConfigured ? "已配置" : "待配置"}</em></button>
+              <button type="button" className={settings?.coordinator.imageModels.imageToImage.apiKeyConfigured ? "configured" : "missing"} onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><ImageIcon size={16} /><span><small>图生图 API</small><strong>{settings?.coordinator.imageModels.imageToImage.model || "未读取"}</strong></span><em>{settings?.coordinator.imageModels.imageToImage.apiKeyConfigured ? "已配置" : "待配置"}</em></button>
+              <button type="button" className={settings?.coordinator.agent.apiKeyConfigured ? "configured" : "missing"} onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Bot size={16} /><span><small>调度模型</small><strong>{settings?.coordinator.agent.model || "未读取"}</strong></span><em>{settings?.coordinator.agent.apiKeyConfigured ? "已配置" : "待配置"}</em></button>
             </div>
 
             <div className="dispatcher-thread">
@@ -1557,7 +1702,7 @@ export default function Home() {
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
               <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
-              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span>{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || system?.agent.configured === false}><Send size={16} />发送调度</button></div>
+              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span>{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false}><Send size={16} />发送调度</button></div>
             </form>
             {dispatcherDragging && <div className="dispatcher-drop"><ImageIcon size={34} /><strong>松开以分析合集原画</strong><span>支持最多 12 MB 的 PNG、JPEG 或 WebP</span></div>}
           </section>
@@ -2051,11 +2196,12 @@ export default function Home() {
                       {kind === "qa" ? "QA" : kind.toUpperCase()}
                     </button>
                   ))}
-                  <button type="button" role="tab" aria-selected={settingsTab === "agent"} className={settingsTab === "agent" ? "active" : ""} onClick={() => { setSettingsTab("agent"); setWorkflowPreviewOpen(false); }}>Agent</button>
+                  <button type="button" role="tab" aria-selected={settingsTab === "agent"} className={settingsTab === "agent" ? "active" : ""} onClick={() => { setSettingsTab("agent"); setWorkflowPreviewOpen(false); }}>任务 Agent</button>
+                  <button type="button" role="tab" aria-selected={settingsTab === "coordinator"} className={settingsTab === "coordinator" ? "active" : ""} onClick={() => { setSettingsTab("coordinator"); setWorkflowPreviewOpen(false); }}>总调度 Agent</button>
                 </div>
 
                 <div className="settings-content">
-                  {settingsTab !== "agent" ? (
+                  {settingsTab !== "agent" && settingsTab !== "coordinator" ? (
                     <section className="process-settings" aria-label={`${settings.processes[settingsTab].label}配置`}>
                       <div className="settings-section-heading">
                         <div><span>{settingsTab === "2d" && settingsForm.processes["2d"].mode === "api" ? "API" : "ComfyUI"}</span><h3>{settings.processes[settingsTab].label}</h3></div>
@@ -2076,17 +2222,13 @@ export default function Home() {
                           const selectedId = settingsForm.processes[kind].activeWorkflowId;
                           const selected = process.workflows.find((item) => item.id === selectedId);
                           return <>
-                          <label className="settings-field">
+                          <div className="settings-field">
                             <span>工作流版本</span>
                             <div className="workflow-select-row">
-                              <select value={selectedId} onChange={(event) => void selectWorkflow(kind, event.target.value)}>
-                                {process.workflows.map((workflow) => (
-                                  <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
-                                ))}
-                              </select>
+                              <StyledSelect value={selectedId} options={process.workflows.map((workflow) => ({ value: workflow.id, label: workflow.name }))} onChange={(value) => void selectWorkflow(kind, value)} ariaLabel={`${process.label}工作流版本`} />
                               <button className="icon-button" type="button" disabled={!selected || selected.source === "default"} onClick={() => void removeWorkflow(kind, selectedId)} title="删除当前工作流" aria-label="删除当前工作流"><Trash2 size={17} /></button>
                             </div>
-                          </label>
+                          </div>
 
                           <div
                             className={`workflow-dropzone ${workflowDragging ? "dragging" : ""}`}
@@ -2149,64 +2291,55 @@ export default function Home() {
                         </label>
                       </>}
                     </section>
-                  ) : (
-                    <section className="agent-settings" aria-label="Agent API 配置">
+                  ) : (() => {
+                    const scope = settingsTab === "coordinator" ? "coordinator" : "agent";
+                    const isCoordinator = scope === "coordinator";
+                    const currentAgent = isCoordinator ? settings.coordinator.agent : settings.agent;
+                    const draftAgent = isCoordinator ? settingsForm.coordinator.agent : settingsForm.agent;
+                    const currentImages = isCoordinator ? settings.coordinator.imageModels : settings.imageModels;
+                    const draftImages = isCoordinator ? settingsForm.coordinator.imageModels : settingsForm.imageModels;
+                    const models = isCoordinator ? coordinatorModels : agentModels;
+                    const resetModels = () => {
+                      const current = [{ id: draftAgent.model, name: draftAgent.model }];
+                      if (isCoordinator) setCoordinatorModels(current);
+                      else setAgentModels(current);
+                    };
+                    return <section className="agent-settings" aria-label={`${isCoordinator ? "总调度" : "任务"} Agent API 配置`}>
+                      <div className="agent-scope-note"><ShieldCheck size={15} /><span>此处配置仅供{isCoordinator ? "总调度 Agent" : "任务 Asset Agent"}使用，与另一套 Agent 配置完全独立。</span></div>
                       <div className="settings-section-heading">
-                        <div><span>Asset Agent</span><h3>模型 API</h3></div>
-                        <span className={`config-state ${settings.agent.apiKeyConfigured ? "configured" : ""}`}><i />{settings.agent.apiKeyConfigured ? "已配置" : "未配置"}</span>
+                        <div><span>{isCoordinator ? "Workspace Coordinator" : "Asset Agent"}</span><h3>{isCoordinator ? "调度模型 API" : "任务模型 API"}</h3></div>
+                        <span className={`config-state ${currentAgent.apiKeyConfigured ? "configured" : ""}`}><i />{currentAgent.apiKeyConfigured ? "已配置" : "未配置"}</span>
                       </div>
-                      <label className="settings-field">
-                        <span>Base URL</span>
-                        <input type="url" required value={settingsForm.agent.baseUrl} onChange={(event) => {
-                          setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, baseUrl: event.target.value } });
-                          setAgentModels([{ id: settingsForm.agent.model, name: settingsForm.agent.model }]);
-                        }} />
-                      </label>
-                      <label className="settings-field">
+                      <label className="settings-field"><span>Base URL</span><input type="url" required value={draftAgent.baseUrl} onChange={(event) => { updateAgentApiSettings(scope, { baseUrl: event.target.value }); resetModels(); }} /></label>
+                      <div className="settings-field">
                         <span>模型</span>
                         <div className="agent-model-row">
-                          <select required value={settingsForm.agent.model} onChange={(event) => setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, model: event.target.value } })}>
-                            {agentModels.map((model) => <option key={model.id} value={model.id}>{model.name === model.id ? model.id : `${model.name} · ${model.id}`}</option>)}
-                          </select>
-                          <button className="text-icon-button" type="button" onClick={() => void fetchAgentModels()} disabled={agentModelsLoading || settingsForm.agent.clearApiKey}>
+                          <StyledSelect value={draftAgent.model} options={models.map((model) => ({ value: model.id, label: model.name === model.id ? model.id : `${model.name} · ${model.id}` }))} onChange={(value) => updateAgentApiSettings(scope, { model: value })} ariaLabel={`${isCoordinator ? "总调度" : "任务"} Agent 模型`} />
+                          <button className="text-icon-button" type="button" onClick={() => void fetchAgentModels(scope)} disabled={agentModelsLoading || draftAgent.clearApiKey}>
                             <RefreshCw className={agentModelsLoading ? "spinning" : ""} size={15} />{agentModelsLoading ? "获取中" : "获取模型"}
                           </button>
                         </div>
-                      </label>
-                      <label className="settings-field">
-                        <span>API Key</span>
-                        <input type="password" autoComplete="off" maxLength={1000} value={settingsForm.agent.apiKey} disabled={settingsForm.agent.clearApiKey} placeholder={settings.agent.apiKeyConfigured ? "留空以保留当前密钥" : "输入 API Key"} onChange={(event) => {
-                          setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, apiKey: event.target.value } });
-                          setAgentModels([{ id: settingsForm.agent.model, name: settingsForm.agent.model }]);
-                        }} />
-                      </label>
-                      {settings.agent.apiKeyConfigured && (
-                        <label className="clear-key-control">
-                          <input type="checkbox" checked={settingsForm.agent.clearApiKey} onChange={(event) => {
-                            setSettingsForm({ ...settingsForm, agent: { ...settingsForm.agent, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : settingsForm.agent.apiKey } });
-                            setAgentModels([{ id: settingsForm.agent.model, name: settingsForm.agent.model }]);
-                          }} />
-                          <span>清除已保存的 API Key</span>
-                        </label>
-                      )}
+                      </div>
+                      <label className="settings-field"><span>API Key</span><input type="password" autoComplete="off" maxLength={1000} value={draftAgent.apiKey} disabled={draftAgent.clearApiKey} placeholder={currentAgent.apiKeyConfigured ? "留空以保留当前密钥" : "输入 API Key"} onChange={(event) => { updateAgentApiSettings(scope, { apiKey: event.target.value }); resetModels(); }} /></label>
+                      {currentAgent.apiKeyConfigured && <label className="clear-key-control"><input type="checkbox" checked={draftAgent.clearApiKey} onChange={(event) => { updateAgentApiSettings(scope, { clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draftAgent.apiKey }); resetModels(); }} /><span>清除已保存的 API Key</span></label>}
                       <div className="settings-section-heading image-model-heading">
-                        <div><span>总调度 Agent</span><h3>图片模型 API</h3></div>
-                        <span className={`config-state ${settings.imageModels.textToImage.apiKeyConfigured && settings.imageModels.imageToImage.apiKeyConfigured ? "configured" : ""}`}><i />{settings.imageModels.textToImage.apiKeyConfigured && settings.imageModels.imageToImage.apiKeyConfigured ? "两项均已配置" : "需要分别配置"}</span>
+                        <div><span>{isCoordinator ? "总调度 Agent" : "任务生成流程"}</span><h3>图片模型 API</h3></div>
+                        <span className={`config-state ${currentImages.textToImage.apiKeyConfigured && currentImages.imageToImage.apiKeyConfigured ? "configured" : ""}`}><i />{currentImages.textToImage.apiKeyConfigured && currentImages.imageToImage.apiKeyConfigured ? "两项均已配置" : "需要分别配置"}</span>
                       </div>
                       {(["textToImage", "imageToImage"] as const).map((key) => {
                         const label = key === "textToImage" ? "文生图" : "图生图";
-                        const current = settings.imageModels[key];
-                        const draft = settingsForm.imageModels[key];
+                        const current = currentImages[key];
+                        const draft = draftImages[key];
                         return <fieldset className="image-model-config" key={key}>
                           <legend>{label}模型</legend>
-                          <label className="settings-field"><span>Base URL</span><input type="url" required value={draft.baseUrl} onChange={(event) => setSettingsForm({ ...settingsForm, imageModels: { ...settingsForm.imageModels, [key]: { ...draft, baseUrl: event.target.value } } })} /></label>
-                          <label className="settings-field"><span>模型</span><input type="text" required maxLength={160} value={draft.model} onChange={(event) => setSettingsForm({ ...settingsForm, imageModels: { ...settingsForm.imageModels, [key]: { ...draft, model: event.target.value } } })} /></label>
-                          <label className="settings-field"><span>API Key</span><input type="password" autoComplete="off" maxLength={1000} disabled={draft.clearApiKey} value={draft.apiKey} placeholder={current.apiKeyConfigured ? "留空以保留当前密钥" : "输入 API Key"} onChange={(event) => setSettingsForm({ ...settingsForm, imageModels: { ...settingsForm.imageModels, [key]: { ...draft, apiKey: event.target.value } } })} /></label>
-                          {current.apiKeyConfigured && <label className="clear-key-control"><input type="checkbox" checked={draft.clearApiKey} onChange={(event) => setSettingsForm({ ...settingsForm, imageModels: { ...settingsForm.imageModels, [key]: { ...draft, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draft.apiKey } } })} /><span>清除已保存的 {label} API Key</span></label>}
+                          <label className="settings-field"><span>Base URL</span><input type="url" required value={draft.baseUrl} onChange={(event) => updateImageModelSettings(scope, key, { baseUrl: event.target.value })} /></label>
+                          <label className="settings-field"><span>模型</span><input type="text" required maxLength={160} value={draft.model} onChange={(event) => updateImageModelSettings(scope, key, { model: event.target.value })} /></label>
+                          <label className="settings-field"><span>API Key</span><input type="password" autoComplete="off" maxLength={1000} disabled={draft.clearApiKey} value={draft.apiKey} placeholder={current.apiKeyConfigured ? "留空以保留当前密钥" : "输入 API Key"} onChange={(event) => updateImageModelSettings(scope, key, { apiKey: event.target.value })} /></label>
+                          {current.apiKeyConfigured && <label className="clear-key-control"><input type="checkbox" checked={draft.clearApiKey} onChange={(event) => updateImageModelSettings(scope, key, { clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draft.apiKey })} /><span>清除已保存的 {label} API Key</span></label>}
                         </fieldset>;
                       })}
-                    </section>
-                  )}
+                    </section>;
+                  })()}
                 </div>
 
                 <div className="settings-actions">
@@ -2225,8 +2358,8 @@ export default function Home() {
             <div className="modal-header"><div><span>新资产</span><h2>创建角色资产</h2></div><button className="icon-button" type="button" onClick={() => setShowCreate(false)} aria-label="关闭"><X size={19} /></button></div>
             <label>资产名称<input autoFocus required maxLength={80} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：未来城市女飞行员" /></label>
             <div className="create-form-grid">
-              <label>工作空间<select required value={form.workspaceId} onChange={(event) => setForm({ ...form, workspaceId: event.target.value })}>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label>
-              <label>工作流<select value={form.pipelineType} onChange={(event) => { const value = event.target.value as "text_to_model" | "image_to_model"; setForm({ ...form, pipelineType: value }); if (value === "text_to_model") setTaskSourceImage(null); }}><option value="text_to_model">文生图 → T-Pose → 模型 → 绑定</option><option value="image_to_model">原画 → T-Pose 图 → 模型 → 绑定</option></select></label>
+              <div className="create-select-field"><span>工作空间</span><StyledSelect value={form.workspaceId} options={workspaces.map((workspace) => ({ value: workspace.id, label: workspace.name }))} onChange={(value) => setForm({ ...form, workspaceId: value })} ariaLabel="任务所属工作空间" placement="up" /></div>
+              <div className="create-select-field"><span>工作流</span><StyledSelect value={form.pipelineType} options={[{ value: "text_to_model", label: "文生图 → T-Pose → 模型 → 绑定" }, { value: "image_to_model", label: "原画 → T-Pose 图 → 模型 → 绑定" }]} onChange={(value) => { const pipelineType = value as "text_to_model" | "image_to_model"; setForm({ ...form, pipelineType }); if (pipelineType === "text_to_model") setTaskSourceImage(null); }} ariaLabel="任务工作流" placement="up" /></div>
             </div>
             {form.pipelineType === "image_to_model" && (
               <div className="task-source-upload" role="button" tabIndex={0} onClick={() => taskSourceFileRef.current?.click()} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") taskSourceFileRef.current?.click(); }}>
@@ -2247,6 +2380,23 @@ export default function Home() {
             <label>说明<textarea rows={4} maxLength={500} value={workspaceForm.description} onChange={(event) => setWorkspaceForm({ ...workspaceForm, description: event.target.value })} placeholder="描述该工作空间要管理的角色、风格或交付目标" /></label>
             <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowWorkspaceCreate(false)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "创建中…" : "创建工作空间"}</button></div>
           </form>
+        </div>
+      )}
+
+      {uiConfirmation && (
+        <div className="modal-backdrop ui-confirmation-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !uiConfirmationBusy) setUiConfirmation(null); }}>
+          <div className={`revert-confirm-modal ui-confirmation-modal ${uiConfirmation.tone}`} role="dialog" aria-modal="true" aria-labelledby="ui-confirmation-title">
+            <div className="revert-confirm-icon">{uiConfirmation.tone === "danger" ? <Trash2 size={21} /> : <RotateCcw size={21} />}</div>
+            <div className="revert-confirm-copy">
+              <span>{uiConfirmation.tone === "danger" ? "删除确认" : "操作确认"}</span>
+              <h2 id="ui-confirmation-title">{uiConfirmation.title}</h2>
+              <p>{uiConfirmation.description}</p>
+            </div>
+            <div className="revert-confirm-actions">
+              <button autoFocus type="button" className="secondary-button" onClick={() => setUiConfirmation(null)} disabled={uiConfirmationBusy}>取消</button>
+              <button type="button" className={uiConfirmation.tone === "danger" ? "danger-button" : "warning-button"} onClick={() => void confirmUiAction()} disabled={uiConfirmationBusy}>{uiConfirmationBusy ? <LoaderCircle className="spinning" size={16} /> : uiConfirmation.tone === "danger" ? <Trash2 size={16} /> : <RotateCcw size={16} />}{uiConfirmationBusy ? "处理中…" : uiConfirmation.confirmLabel}</button>
+            </div>
+          </div>
         </div>
       )}
     </main>

@@ -18,7 +18,7 @@ import requests
 from PIL import Image
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = REPO_ROOT / "output" / "2d-api"
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 

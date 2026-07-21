@@ -1,0 +1,12 @@
+[project]
+name = "super-idol-master-pipeline"
+version = "0.1.0"
+description = "Private Python executors for the Super Idol Master backend"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "pillow>=10,<13",
+  "requests>=2.31,<3",
+]
+
+[tool.uv]
+package = false

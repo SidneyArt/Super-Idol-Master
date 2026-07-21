@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 const root = process.cwd();
+const pipelineDir = join(root, "server", "pipeline");
 const children = [];
 let stopping = false;
 
@@ -59,14 +60,27 @@ function stop(code = 0) {
   setTimeout(() => process.exit(code), 500);
 }
 
+function syncPythonEnvironment() {
+  console.log("正在同步后端 Python 环境（uv）…");
+  const result = spawnSync("uv", ["sync", "--locked", "--project", pipelineDir], {
+    cwd: root,
+    stdio: "inherit",
+    env: process.env,
+    windowsHide: true,
+  });
+  if (result.error?.code === "ENOENT") throw new Error("未找到 uv，请先安装 uv 并确保 uv 命令已加入 PATH");
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`uv sync 失败，退出代码 ${result.status ?? "unknown"}`);
+}
+
 console.log("\nSuper Idol Master 本地系统正在启动…\n");
 
-launch("后端", process.execPath, [join(root, "server", "index.mjs")], {
-  NODE_NO_WARNINGS: "1",
-});
-launch("前端", process.execPath, [join(root, "scripts", "run-vinext.mjs"), "dev", "--host", "127.0.0.1", "--port", "3100"]);
-
 try {
+  syncPythonEnvironment();
+  launch("后端", process.execPath, [join(root, "server", "index.mjs")], {
+    NODE_NO_WARNINGS: "1",
+  });
+  launch("前端", process.execPath, [join(root, "scripts", "run-vinext.mjs"), "dev", "--host", "127.0.0.1", "--port", "3100"]);
   await Promise.all([
     waitFor("http://127.0.0.1:8787/api/health"),
     waitFor("http://localhost:3100"),
