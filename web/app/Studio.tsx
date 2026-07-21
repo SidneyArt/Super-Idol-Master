@@ -171,6 +171,7 @@ type ApprovalRequest = {
   errorMessage: string;
   createdAt: string;
   resolvedAt: string | null;
+  sessionId: string;
 };
 type AppNotification = {
   id: number;
@@ -209,6 +210,7 @@ type ConversationPayload = {
 type DispatcherGeneration = {
   id: string;
   workspaceId: string;
+  sessionId: string;
   title: string;
   characterCount: number;
   prompt: string;
@@ -645,6 +647,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
   });
   const agentDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const dispatcherSessionIdRef = useRef("");
   const agentQueueRef = useRef<AgentQueueItem[]>([]);
   const agentProcessingRef = useRef(false);
   const agentQueueIdRef = useRef(0);
@@ -708,6 +711,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
 
   function applyDispatcherConversation(data: ConversationPayload) {
     setDispatcherMessages(data.messages);
+    dispatcherSessionIdRef.current = data.sessionId;
     setDispatcherSessionId(data.sessionId);
     setDispatcherSessions(data.sessions);
     setDispatcherContext(data.context);
@@ -729,9 +733,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
 
   function clearDispatcherConversation() {
     setDispatcherMessages([]);
+    dispatcherSessionIdRef.current = "";
     setDispatcherSessionId("");
     setDispatcherSessions([]);
     setDispatcherContext(null);
+    setDispatcherGenerations([]);
   }
 
   useEffect(() => {
@@ -761,18 +767,22 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   async function refreshActivity(showToast = false) {
     const runId = selectedIdRef.current;
     const workspaceId = selectedWorkspaceIdRef.current || "default";
+    const sessionId = dispatcherSessionIdRef.current;
     const controlParams = new URLSearchParams({ workspaceId });
     if (runId) controlParams.set("runId", runId);
+    if (sessionId) controlParams.set("sessionId", sessionId);
     const [controls, notificationData, generationData] = await Promise.all([
       api<{ coordinatorMode: ApprovalMode; taskMode: ApprovalMode | null; approvals: ApprovalRequest[] }>(`/api/agent-controls?${controlParams.toString()}`),
       api<{ notifications: AppNotification[] }>("/api/notifications?limit=50"),
-      api<{ generations: DispatcherGeneration[] }>(`/api/dispatcher/generations?workspaceId=${encodeURIComponent(workspaceId)}`),
+      api<{ generations: DispatcherGeneration[] }>(`/api/dispatcher/generations?workspaceId=${encodeURIComponent(workspaceId)}&sessionId=${encodeURIComponent(sessionId)}`),
     ]);
     setCoordinatorMode(controls.coordinatorMode);
     if (controls.taskMode) setTaskAgentMode(controls.taskMode);
     setApprovals(controls.approvals);
     setNotifications(notificationData.notifications);
-    if (workspaceId === selectedWorkspaceIdRef.current) setDispatcherGenerations(generationData.generations);
+    if (workspaceId === selectedWorkspaceIdRef.current && sessionId === dispatcherSessionIdRef.current) {
+      setDispatcherGenerations(generationData.generations);
+    }
     const newest = notificationData.notifications[0];
     if (newest) {
       if (showToast && notificationsInitializedRef.current && newest.id > latestNotificationIdRef.current) {
@@ -875,7 +885,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
 
   useEffect(() => {
     void refreshActivity(false).catch(() => undefined);
-  }, [selectedId, selectedWorkspaceId]);
+  }, [selectedId, selectedWorkspaceId, dispatcherSessionId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => void refreshActivity(true).catch(() => undefined), 3000);
@@ -965,7 +975,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }, [hasRunningTask, selectedId, selectedPlanIsRunning, selectedRoleIsRunning, selectedTaskIsRunning]);
 
   const run = selectedDetail?.run || runs.find((item) => item.id === selectedId) || null;
-  const coordinatorApprovals = approvals.filter((item) => item.scopeType === "coordinator" && item.workspaceId === selectedWorkspaceId);
+  const coordinatorApprovals = approvals.filter((item) => (
+    item.scopeType === "coordinator"
+    && item.workspaceId === selectedWorkspaceId
+    && item.sessionId === dispatcherSessionId
+  ));
   const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
   const dispatcherTimeline = buildDispatcherTimeline(dispatcherMessages, dispatcherGenerations, coordinatorApprovals);
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
@@ -979,10 +993,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       const workspaceFrame = window.requestAnimationFrame(() => {
         selectedWorkspaceIdRef.current = workspaceId;
         setSelectedWorkspaceId(workspaceId);
-        setDispatcherMessages([]);
-        setDispatcherSessionId("");
-        setDispatcherSessions([]);
-        setDispatcherContext(null);
+        clearDispatcherConversation();
       });
       return () => window.cancelAnimationFrame(workspaceFrame);
     }
@@ -1643,6 +1654,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     if (dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId) return;
     setDispatcherSessionBusy(true);
     setError("");
+    setDispatcherMessages([]);
+    setDispatcherGenerations([]);
+    setDispatcherContext(null);
+    dispatcherSessionIdRef.current = "";
+    setDispatcherSessionId("");
     try {
       const data = await api<ConversationPayload>("/api/dispatcher/sessions", {
         method: "POST",
@@ -1653,6 +1669,12 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       setDispatcherAttachment(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "新建总调度会话失败");
+      try {
+        const history = await api<ConversationPayload>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`);
+        applyDispatcherConversation(history);
+      } catch {
+        // Keep the cleared state when the current conversation cannot be restored.
+      }
     } finally {
       setDispatcherSessionBusy(false);
     }
@@ -1662,6 +1684,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     if (sessionId === dispatcherSessionId || dispatcherBusy || dispatcherSessionBusy) return;
     setDispatcherSessionBusy(true);
     setError("");
+    setDispatcherMessages([]);
+    setDispatcherGenerations([]);
+    setDispatcherContext(null);
+    dispatcherSessionIdRef.current = "";
+    setDispatcherSessionId("");
     try {
       const data = await api<ConversationPayload>("/api/dispatcher/sessions/current", {
         method: "PUT",
@@ -1670,6 +1697,12 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       applyDispatcherConversation(data);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "切换总调度会话失败");
+      try {
+        const history = await api<ConversationPayload>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`);
+        applyDispatcherConversation(history);
+      } catch {
+        // Keep the cleared state when the current conversation cannot be restored.
+      }
     } finally {
       setDispatcherSessionBusy(false);
     }

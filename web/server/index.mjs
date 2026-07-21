@@ -1181,13 +1181,15 @@ function getDispatcherGeneration(id) {
   `).get(id) || null;
 }
 
-function listDispatcherGenerations(workspaceId) {
+function listDispatcherGenerations(workspaceId, sessionId) {
   return db.prepare(`
     SELECT id, workspace_id AS workspaceId, session_id AS sessionId, title, character_count AS characterCount,
            prompt, status, message, preview_path AS previewPath,
            created_at AS createdAt, updated_at AS updatedAt
-    FROM dispatcher_generations WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 30
-  `).all(workspaceId);
+    FROM dispatcher_generations
+    WHERE workspace_id = ? AND session_id = ?
+    ORDER BY created_at DESC LIMIT 30
+  `).all(workspaceId, sessionId);
 }
 
 function getLatestDispatcherGenerationImage(workspaceId, sessionId = "") {
@@ -1419,9 +1421,10 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/agent-controls") {
       const runId = url.searchParams.get("runId");
       const workspaceId = url.searchParams.get("workspaceId");
+      const sessionId = url.searchParams.get("sessionId");
       const approvals = approvalRuntime.listApprovals("pending").filter((item) => (
         item.scopeType === "coordinator"
-          ? Boolean(workspaceId) && item.workspaceId === workspaceId
+          ? Boolean(workspaceId) && Boolean(sessionId) && item.workspaceId === workspaceId && item.sessionId === sessionId
           : Boolean(runId) && item.runId === runId
       ));
       json(res, 200, {
@@ -1498,8 +1501,9 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "GET" && url.pathname === "/api/dispatcher/generations") {
       const workspaceId = url.searchParams.get("workspaceId") || "default";
+      const sessionId = url.searchParams.get("sessionId") || "";
       if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
-      json(res, 200, { generations: listDispatcherGenerations(workspaceId) });
+      json(res, 200, { generations: listDispatcherGenerations(workspaceId, sessionId) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/dispatcher/messages") {

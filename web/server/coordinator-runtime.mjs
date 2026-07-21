@@ -318,7 +318,7 @@ ${transcript.slice(-12000)}
               operation: "create_workspace",
               title: `创建工作空间“${params.name}”`,
               description: params.description || "总调度 Agent 请求创建工作空间。",
-              payload: params,
+              payload: { ...params, sessionId: execution.sessionId },
             });
             execution.actions.push({ tool: "approval_required", approvalId: approval.id });
             return textResult(`创建工作空间需要批准，已提交审批：“${approval.title}”。`, { approval });
@@ -400,7 +400,7 @@ ${transcript.slice(-12000)}
               description: params.delegateToAgents
                 ? `将创建任务并委派各任务的专属 Asset Agent，目标为 ${params.target}。`
                 : "将按分析结果创建角色任务。",
-              payload: { ...params, image: attachment },
+              payload: { ...params, image: attachment, sessionId: execution.sessionId },
             });
             execution.actions.push({ tool: "approval_required", approvalId: approval.id });
             return textResult(`批量创建与调度需要批准，已提交审批：“${approval.title}”。`, { approval });

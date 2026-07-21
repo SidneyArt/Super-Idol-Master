@@ -92,6 +92,7 @@ export function createApprovalRuntime({ db }) {
 
   function serializeApproval(row) {
     if (!row) return null;
+    const payload = parseJson(row.payload, {});
     return {
       id: Number(row.id),
       scopeType: row.scopeType,
@@ -101,7 +102,8 @@ export function createApprovalRuntime({ db }) {
       operation: row.operation,
       title: row.title,
       description: row.description,
-      payload: parseJson(row.payload, {}),
+      payload,
+      sessionId: typeof payload?.sessionId === "string" ? payload.sessionId : "",
       status: row.status,
       result: parseJson(row.result, null),
       errorMessage: row.errorMessage,
