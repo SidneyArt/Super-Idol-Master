@@ -4,13 +4,15 @@
 
 ## 当前必读
 
-1. [当前工程基线与运行信息](./current-project-baseline.md)
+1. [系统架构概览](../ARCHITECTURE.md)
+   - 代码结构、高层系统图、组件边界、数据存储、安全和架构路线图。
+2. [当前工程基线与运行信息](./current-project-baseline.md)
    - 当前仓库、已实现脚本、真实运行结果、已知问题和安全边界。
-2. [DGX 环境与访问](./dgx-access-and-network.md)
+3. [DGX 环境与访问](./dgx-access-and-network.md)
    - Tailscale、SSH、ComfyUI、两台 DGX 的访问关系和排障方法。
-3. [本地全栈网站实施方案](./local-fullstack-web.md)
+4. [本地全栈网站实施方案](./local-fullstack-web.md)
    - Windows 本地启动方式、前后端边界、SQLite 数据库和 API 约定。
-4. [DGX / ComfyUI 全链路对应关系](./dgx-pipeline-integration.md)
+5. [DGX / ComfyUI 全链路对应关系](./dgx-pipeline-integration.md)
    - 四套真实工作流、自动 SDPose QA、状态机、产物校验与 E2E 证据。
 
 ## 产品与工程设计

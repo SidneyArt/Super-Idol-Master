@@ -1,6 +1,6 @@
 # 本地全栈网站运行与维护
 
-更新日期：2026-07-18
+更新日期：2026-07-21
 
 ## 1. 当前实现
 
@@ -61,6 +61,8 @@ IDEA
   --用户确认--> OUT / completed
 ```
 
+以上是页面按钮触发的手动路径。用户通过 Asset Agent 明确指定终点时，Supervisor 会创建持久化的 `agent_workflow_plans` 记录；每个异步 Job 完成后自动恢复编排，并在门禁通过后代替重复的阶段确认。自动路径不会绕过 SDPose、Visual QA、GLB mesh 或 skin / joints 检查。
+
 失败行为：
 
 - 2D 失败：停留在 2D，可重试。
@@ -68,7 +70,7 @@ IDEA
 - 3D 失败：停留在 3D，上游 PNG 保留。
 - 绑骨失败：停留在 RIG，静态 GLB 保留。
 - 页面点击阶段卡片不会解锁后续阶段。
-- 任何生成或检查任务成功后都停留在当前阶段；只有用户调用完成确认才进入下一阶段。
+- 手动路径中的生成或检查任务成功后停留在当前阶段；存在用户明确授权的持续执行计划时，后端完成事件可以自动推进到计划目标。
 - 回退到 2D 会清除 PNG、QA 和 3D/RIG 引用；回退到 QA 保留 PNG；回退到 3D 保留已通过 QA；回退到 RIG 保留静态 GLB。
 
 ## 4. API
@@ -80,6 +82,9 @@ IDEA
 | `GET` | `/api/runs` | 任务列表 |
 | `POST` | `/api/runs` | 使用资产名称新建任务 |
 | `GET` | `/api/runs/:id` | 任务、自动 QA 和事件详情 |
+| `GET` | `/api/runs/:id/agent/messages` | 获取当前任务的 Agent 对话 |
+| `POST` | `/api/runs/:id/agent/messages` | 向 Asset Agent 下达任务或持续执行目标 |
+| `POST` | `/api/runs/:id/agent/cancel` | 取消当前 Agent 推理请求 |
 | `POST` | `/api/runs/:id/start` | 保存正反提示词，确认角色设定并进入 2D |
 | `POST` | `/api/runs/:id/generate-2d` | 执行 Qwen Image |
 | `POST` | `/api/runs/:id/check-tpose` | 执行 SDPose 自动检查 |
