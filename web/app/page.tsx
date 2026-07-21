@@ -175,6 +175,18 @@ type AppNotification = {
   readAt: string | null;
   createdAt: string;
 };
+type DispatcherGeneration = {
+  id: string;
+  workspaceId: string;
+  title: string;
+  characterCount: number;
+  prompt: string;
+  status: "running" | "succeeded" | "failed";
+  message: string;
+  previewPath: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 type AgentWorkflowPlan = {
   runId: string;
   target: "concept_image" | "validated_tpose" | "model" | "rigged_model" | "export";
@@ -314,6 +326,32 @@ function jobName(type: JobType) {
   return { none: "本地流程", "2d": "Qwen Image", qa: "SDPose", "3d": "Pixal3D", rig: "SkinTokens" }[type];
 }
 
+function AgentPermissionMenu({ mode, onChange, title }: { mode: ApprovalMode; onChange: (mode: ApprovalMode) => void; title: string }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [open]);
+  return (
+    <div className={`agent-permission-menu ${open ? "open" : ""}`} ref={rootRef}>
+      <button type="button" className="agent-permission-trigger" onClick={() => setOpen((value) => !value)} title={title} aria-haspopup="listbox" aria-expanded={open}>
+        <ShieldCheck size={14} /><span>{mode === "request" ? "请求批准" : "Auto"}</span><ChevronDown size={13} />
+      </button>
+      {open && (
+        <div className="agent-permission-options" role="listbox" aria-label={title}>
+          <button type="button" className={mode === "request" ? "selected" : ""} role="option" aria-selected={mode === "request"} onClick={() => { onChange("request"); setOpen(false); }}><ShieldCheck size={14} /><span><strong>请求批准</strong><small>执行变更前询问</small></span>{mode === "request" && <Check size={14} />}</button>
+          <button type="button" className={mode === "auto" ? "selected" : ""} role="option" aria-selected={mode === "auto"} onClick={() => { onChange("auto"); setOpen(false); }}><Sparkles size={14} /><span><strong>Auto</strong><small>自动批准受控操作</small></span>{mode === "auto" && <Check size={14} />}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [screen, setScreen] = useState<"home" | "task">("home");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
@@ -356,6 +394,7 @@ export default function Home() {
   const [dispatcherBusy, setDispatcherBusy] = useState(false);
   const [dispatcherAttachment, setDispatcherAttachment] = useState<AgentAttachment | null>(null);
   const [dispatcherDragging, setDispatcherDragging] = useState(false);
+  const [dispatcherGenerations, setDispatcherGenerations] = useState<DispatcherGeneration[]>([]);
   const [showWorkspaceCreate, setShowWorkspaceCreate] = useState(false);
   const [workspaceForm, setWorkspaceForm] = useState({ name: "", description: "" });
   const [form, setForm] = useState({ name: "", workspaceId: "default", pipelineType: "text_to_model" as "text_to_model" | "image_to_model" });
@@ -363,6 +402,7 @@ export default function Home() {
   const [coordinatorMode, setCoordinatorMode] = useState<ApprovalMode>("request");
   const [taskAgentMode, setTaskAgentMode] = useState<ApprovalMode>("request");
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const approvalScrollKey = approvals.map((item) => item.id).join("|");
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [toastQueue, setToastQueue] = useState<AppNotification[]>([]);
@@ -376,6 +416,7 @@ export default function Home() {
   const agentProcessingRef = useRef(false);
   const agentQueueIdRef = useRef(0);
   const selectedIdRef = useRef<string | null>(selectedId);
+  const selectedWorkspaceIdRef = useRef(selectedWorkspaceId);
   const agentDropDepthRef = useRef(0);
   const dispatcherDropDepthRef = useRef(0);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -391,6 +432,10 @@ export default function Home() {
   useEffect(() => {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
+
+  useEffect(() => {
+    selectedWorkspaceIdRef.current = selectedWorkspaceId;
+  }, [selectedWorkspaceId]);
 
   function selectRun(runId: string | null) {
     selectedIdRef.current = runId;
@@ -423,14 +468,19 @@ export default function Home() {
 
   async function refreshActivity(showToast = false) {
     const runId = selectedIdRef.current;
-    const [controls, notificationData] = await Promise.all([
-      api<{ coordinatorMode: ApprovalMode; taskMode: ApprovalMode | null; approvals: ApprovalRequest[] }>(`/api/agent-controls${runId ? `?runId=${encodeURIComponent(runId)}` : ""}`),
+    const workspaceId = selectedWorkspaceIdRef.current || "default";
+    const controlParams = new URLSearchParams({ workspaceId });
+    if (runId) controlParams.set("runId", runId);
+    const [controls, notificationData, generationData] = await Promise.all([
+      api<{ coordinatorMode: ApprovalMode; taskMode: ApprovalMode | null; approvals: ApprovalRequest[] }>(`/api/agent-controls?${controlParams.toString()}`),
       api<{ notifications: AppNotification[] }>("/api/notifications?limit=50"),
+      api<{ generations: DispatcherGeneration[] }>(`/api/dispatcher/generations?workspaceId=${encodeURIComponent(workspaceId)}`),
     ]);
     setCoordinatorMode(controls.coordinatorMode);
     if (controls.taskMode) setTaskAgentMode(controls.taskMode);
     setApprovals(controls.approvals);
     setNotifications(notificationData.notifications);
+    if (workspaceId === selectedWorkspaceIdRef.current) setDispatcherGenerations(generationData.generations);
     const newest = notificationData.notifications[0];
     if (newest) {
       if (showToast && notificationsInitializedRef.current && newest.id > latestNotificationIdRef.current) {
@@ -521,7 +571,7 @@ export default function Home() {
 
   useEffect(() => {
     void refreshActivity(false).catch(() => undefined);
-  }, [selectedId]);
+  }, [selectedId, selectedWorkspaceId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => void refreshActivity(true).catch(() => undefined), 3000);
@@ -536,7 +586,7 @@ export default function Home() {
 
   useEffect(() => {
     dispatcherEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [dispatcherMessages, dispatcherBusy]);
+  }, [dispatcherMessages, dispatcherBusy, approvalScrollKey]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -566,7 +616,7 @@ export default function Home() {
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [chatMessages, agentBusy, agentQueue.length]);
+  }, [chatMessages, agentBusy, agentQueue.length, approvalScrollKey]);
 
   const selectedDetail = detail?.run.id === selectedId ? detail : null;
   const hasRunningTask = runs.some((item) => item.jobStatus === "running");
@@ -601,7 +651,7 @@ export default function Home() {
   }, [hasRunningTask, selectedId, selectedPlanIsRunning, selectedRoleIsRunning, selectedTaskIsRunning]);
 
   const run = selectedDetail?.run;
-  const coordinatorApprovals = approvals.filter((item) => item.scopeType === "coordinator");
+  const coordinatorApprovals = approvals.filter((item) => item.scopeType === "coordinator" && item.workspaceId === selectedWorkspaceId);
   const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
   const visibleChatMessages = run?.id === selectedId ? chatMessages : [];
@@ -1477,13 +1527,14 @@ export default function Home() {
 
             <div className="dispatcher-thread">
               {!dispatcherMessages.length && (
-                <div className="dispatcher-welcome"><span><ImageIcon size={28} /></span><h2>从一个目标开始整个角色项目</h2><p>描述角色清单，或者直接拖入包含多个角色的合集原画。总调度 Agent 会创建工作空间、拆分单体原画、建立任务，并把生成目标委派给每个任务的专属 Agent。</p><div><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传合集原画</button></div></div>
+                <div className="dispatcher-welcome"><span><ImageIcon size={28} /></span><h2>从一个目标开始整个角色项目</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分。总调度 Agent 会根据你的目标选择单图生成或任务编排。</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传并拆分</button></div></div>
               )}
-              {coordinatorApprovals.map((approval) => (
-                <section className="approval-card" key={approval.id}>
-                  <span><ShieldCheck size={18} /></span>
-                  <div><small>总调度 Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
-                  <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={15} /> : <Check size={15} />}批准</button></div>
+              {dispatcherGenerations.map((generation) => (
+                <section className={`dispatcher-generation ${generation.status}`} key={generation.id}>
+                  <header><span><ImageIcon size={16} /></span><div><strong>{generation.title}</strong><small>单张合集图 · {generation.characterCount} 个角色</small></div><em>{generation.status === "running" ? <><LoaderCircle className="spinning" size={13} />生成中</> : generation.status === "succeeded" ? "已完成" : "失败"}</em></header>
+                  {generation.previewPath && <Image src={generation.previewPath} alt={generation.title} width={1024} height={1024} unoptimized />}
+                  <p>{generation.message}</p>
+                  <details><summary>查看生成要求</summary><p>{generation.prompt}</p></details>
                 </section>
               ))}
               {dispatcherMessages.map((message) => (
@@ -1493,13 +1544,20 @@ export default function Home() {
                 </div>
               ))}
               {dispatcherBusy && <div className="dispatcher-message assistant pending"><span><Bot size={17} /></span><div><strong>总调度 Agent</strong><p><LoaderCircle size={15} />正在分析并调度任务</p></div></div>}
+              {coordinatorApprovals.map((approval) => (
+                <section className="approval-card" key={approval.id}>
+                  <span><ShieldCheck size={18} /></span>
+                  <div><small>总调度 Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
+                  <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={15} /> : <Check size={15} />}批准</button></div>
+                </section>
+              ))}
               <div ref={dispatcherEndRef} />
             </div>
 
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
-              <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="描述一个项目，或拖入角色合集原画，让总调度 Agent 拆分并分派任务…" />
-              <div><label className="agent-permission-control compact" title="选择总调度 Agent 的变更审批方式"><ShieldCheck size={14} /><select value={coordinatorMode} onChange={(event) => void changeAgentMode("coordinator", event.target.value as ApprovalMode)}><option value="request">请求批准</option><option value="auto">Auto</option></select></label><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span>{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || system?.agent.configured === false}><Send size={16} />发送调度</button></div>
+              <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
+              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span>{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || system?.agent.configured === false}><Send size={16} />发送调度</button></div>
             </form>
             {dispatcherDragging && <div className="dispatcher-drop"><ImageIcon size={34} /><strong>松开以分析合集原画</strong><span>支持最多 12 MB 的 PNG、JPEG 或 WebP</span></div>}
           </section>
@@ -1862,13 +1920,6 @@ export default function Home() {
             )}
           </div>
           <div className="chat-thread" key={selectedId || "no-run"}>
-            {taskApprovals.map((approval) => (
-              <section className="approval-card compact-card" key={approval.id}>
-                <span><ShieldCheck size={17} /></span>
-                <div><small>Asset Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
-                <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={14} /> : <Check size={14} />}批准</button></div>
-              </section>
-            ))}
             {visibleChatMessages.map((message) => (
               <div className={`chat-message ${message.role}`} key={message.id}>
                 <span className="chat-avatar">{message.role === "assistant" ? <Bot size={16} /> : <User size={16} />}</span>
@@ -1930,6 +1981,13 @@ export default function Home() {
                 </div>
               </section>
             )}
+            {taskApprovals.map((approval) => (
+              <section className="approval-card compact-card" key={approval.id}>
+                <span><ShieldCheck size={17} /></span>
+                <div><small>Asset Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
+                <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={14} /> : <Check size={14} />}批准</button></div>
+              </section>
+            ))}
             <div ref={chatEndRef} />
           </div>
           {agentImageDragging && !agentCollapsed && (
@@ -1945,7 +2003,7 @@ export default function Home() {
             <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={handleComposerKeyDown} rows={3} placeholder={agentBusy ? "继续输入，消息将进入待发送队列…" : "给 Agent 下达资产生成任务…"} />
             <div className="composer-footer">
               <div className="composer-meta">
-                {run && <label className="agent-permission-control compact" title="选择当前任务 Agent 的变更审批方式"><ShieldCheck size={14} /><select value={taskAgentMode} onChange={(event) => void changeAgentMode("task", event.target.value as ApprovalMode)}><option value="request">请求批准</option><option value="auto">Auto</option></select></label>}
+                {run && <AgentPermissionMenu mode={taskAgentMode} onChange={(mode) => void changeAgentMode("task", mode)} title="选择当前任务 Agent 的变更审批方式" />}
                 <span><MessageSquare size={15} />{system?.agent.model || "当前会话"}</span>
               </div>
               <div className="composer-actions">

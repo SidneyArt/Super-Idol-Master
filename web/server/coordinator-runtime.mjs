@@ -51,6 +51,16 @@ function validateImage(image) {
   };
 }
 
+export function classifyCoordinatorIntent(message, hasAttachment) {
+  const text = typeof message === "string" ? message : "";
+  const asksForSingleSheet = !hasAttachment && (
+    /(一张|单张).{0,20}(合集|集合|群像).{0,8}(图|原画)/i.test(text)
+    || /(创建|生成|制作).{0,20}(合集图|集合图|群像原画)/i.test(text)
+  );
+  const asksForTasks = /(拆分|拆成|分成).{0,12}(任务|角色)|创建.{0,8}(多个|数个|\d+\s*个).{0,8}任务|分别.{0,20}(模型|绑骨)|每个角色.{0,20}(任务|模型|绑骨)/i.test(text);
+  return { singleSheetOnly: asksForSingleSheet && !asksForTasks };
+}
+
 export function createCoordinatorRuntime({
   db,
   getAgentConfig,
@@ -58,6 +68,7 @@ export function createCoordinatorRuntime({
   createWorkspace,
   createCharacterTasks,
   delegateTask,
+  generateCharacterSheet,
   getImageModelStatus,
   getPermissionMode,
   requestApproval,
@@ -113,13 +124,15 @@ export function createCoordinatorRuntime({
     return `你是 Super Idol Master 的总调度 Agent，负责管理工作空间并把大型角色资产需求拆分给不同任务的专属 Asset Agent。
 
 规则：
-1. 创建任何任务前，先确定目标工作空间；用户未指定时使用当前工作空间，仍不存在则先创建工作空间。
-2. 用户上传包含多个不同角色的合集原画时，必须视觉分析每个独立角色，为每个角色给出名称、角色描述、提示词和归一化裁切框，再调用 create_character_tasks。裁切框 x/y/width/height 均为 0–1，相对于整张图片，必须完整包住单个角色且尽量不包含相邻角色。
-3. 有合集原画时每个拆分任务使用 image_to_model；纯文本批量需求使用 text_to_model。
-4. 用户要求直接执行、生成到模型或绑骨时，把 delegateToAgents 设为 true，并选择对应 target。系统会让每个任务的专属 Agent 独立质检和持续执行。
-5. 不得声称未创建的工作空间、任务或产物已经完成。工具失败时解释真实原因。
-6. API Key 不通过聊天收集；需要配置时提醒用户使用首页的模型配置区域。
-7. 最终用 Markdown 简洁汇总创建的工作空间、任务数量、工作流和委派目标。
+1. 必须区分“生成一张角色合集图”和“创建多个角色任务”。用户说“创建/生成一张合集图、角色集合图、群像原画，里面有 N 个角色”时，N 只是画面内角色数量，必须只调用 generate_character_sheet，一张图对应一个生成 Job；绝对不要调用 create_character_tasks。
+2. 只有用户明确要求“拆分角色、建立多个任务、分别生成模型/绑骨”，或者上传已有合集原画并要求拆分时，才调用 create_character_tasks。
+3. 创建任何任务前，先确定目标工作空间；用户未指定时使用当前工作空间，仍不存在则先创建工作空间。
+4. 用户上传包含多个不同角色的合集原画并要求拆分时，视觉分析每个独立角色，为每个角色给出名称、角色描述、提示词和归一化裁切框。裁切框 x/y/width/height 均为 0–1，相对于整张图片，必须完整包住单个角色且尽量不包含相邻角色。
+5. 有合集原画的拆分任务使用 image_to_model；纯文本批量任务使用 text_to_model。
+6. 用户要求多个任务直接执行、生成到模型或绑骨时，把 delegateToAgents 设为 true，并选择对应 target。系统会让每个任务的专属 Agent 独立质检和持续执行。
+7. 不得声称未创建的工作空间、任务或产物已经完成。工具失败时解释真实原因。
+8. API Key 不通过聊天收集；需要配置时提醒用户使用首页的模型配置区域。
+9. 最终用 Markdown 简洁说明实际启动的是单张合集图生成，还是多个任务及其委派目标。
 
 当前工作空间：${JSON.stringify(current)}
 全部工作空间：${JSON.stringify(workspaces)}
@@ -130,7 +143,7 @@ ${transcript.slice(-12000)}
 当前权限模式：${getPermissionMode() === "auto" ? "Auto（变更工具自动批准）" : "请求批准（变更工具只创建审批，批准前不得声称已执行）"}`;
   }
 
-  function tools(workspaceId, attachment, execution) {
+  function tools(workspaceId, attachment, execution, intent) {
     return [
       {
         name: "list_workspaces",
@@ -180,6 +193,40 @@ ${transcript.slice(-12000)}
         },
       },
       {
+        name: "generate_character_sheet",
+        label: "生成单张角色合集图",
+        description: "仅生成一张包含多个不同角色的统一风格合集原画，不创建任何角色任务。用户要求一张合集图时必须使用此工具。",
+        parameters: Type.Object({
+          workspaceId: Type.String({ minLength: 1, maxLength: 80 }),
+          title: Type.String({ minLength: 1, maxLength: 80 }),
+          characterCount: Type.Integer({ minimum: 1, maximum: 12 }),
+          styleDescription: Type.String({ minLength: 1, maxLength: 1000 }),
+          characterDescriptions: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 12 }),
+          additionalPrompt: Type.String({ maxLength: 2000 }),
+          negativePrompt: Type.String({ maxLength: 2000 }),
+        }),
+        executionMode: "sequential",
+        execute: async (_id, params) => {
+          if (params.characterDescriptions.length !== params.characterCount) throw new Error("角色描述数量必须与合集图角色数量一致");
+          if (getPermissionMode() !== "auto") {
+            const approval = requestApproval({
+              scopeType: "coordinator",
+              scopeId: "global",
+              workspaceId: params.workspaceId || workspaceId,
+              operation: "generate_character_sheet",
+              title: `生成一张包含 ${params.characterCount} 个角色的合集图`,
+              description: `只生成“${params.title}”合集原画，不创建角色任务。`,
+              payload: params,
+            });
+            execution.actions.push({ tool: "approval_required", approvalId: approval.id });
+            return textResult(`单张合集图生成需要批准，已提交审批：“${approval.title}”。不会创建角色任务。`, { approval });
+          }
+          const job = generateCharacterSheet(params);
+          execution.actions.push({ tool: "generate_character_sheet", jobId: job.id });
+          return textResult(`已启动单张合集图“${params.title}”的生成，不会创建角色任务。`, { job });
+        },
+      },
+      {
         name: "create_character_tasks",
         label: "拆分并创建角色任务",
         description: "批量创建角色任务；有合集图片时会按归一化裁切框生成单体原画，并可委派每个任务的专属 Agent 自动执行。",
@@ -206,6 +253,7 @@ ${transcript.slice(-12000)}
         }),
         executionMode: "sequential",
         execute: async (_id, params) => {
+          if (intent.singleSheetOnly) throw new Error("用户要求的是单张角色合集图，禁止创建多个任务；请改用 generate_character_sheet");
           if (getPermissionMode() !== "auto") {
             const approval = requestApproval({
               scopeType: "coordinator",
@@ -251,13 +299,14 @@ ${transcript.slice(-12000)}
       : attachment ? "请分析这张角色合集原画，拆分每个独立角色，并在当前工作空间创建图生模型任务。" : "";
     if (!userText) throw new Error("消息不能为空");
     const history = getMessages(workspaceId, 24);
+    const intent = classifyCoordinatorIntent(userText, Boolean(attachment));
     const execution = { actions: [], toolCalls: 0, turns: 0 };
     const agent = new Agent({
       initialState: {
         systemPrompt: systemPrompt(workspaceId, history, Boolean(attachment)),
         model: createModel(config),
         thinkingLevel: "off",
-        tools: tools(workspaceId, attachment, execution),
+        tools: tools(workspaceId, attachment, execution, intent),
       },
       getApiKey: () => config.apiKey,
       toolExecution: "sequential",

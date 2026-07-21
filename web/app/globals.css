@@ -236,12 +236,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .dispatcher-title h1 { margin-top: 2px; font-size: 18px; }
 .dispatcher-title p { margin-top: 2px; color: var(--muted); font-size: 11px; }
 .dispatcher-actions { display: flex; align-items: center; gap: 8px; }
-.agent-permission-control { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface-soft); color: var(--muted); white-space: nowrap; }
-.agent-permission-control > svg { color: var(--warning); }
-.agent-permission-control select { max-width: 112px; border: 0; outline: 0; background: transparent; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
-.agent-permission-control select option { background: var(--surface-raised); color: var(--text); }
-.agent-permission-control.compact { min-height: 30px; padding-inline: 6px; }
-.agent-permission-control.compact select { max-width: 88px; }
+.agent-permission-menu { position: relative; flex: 0 0 auto; }
+.agent-permission-trigger { min-height: 32px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface-soft); color: var(--text-secondary); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.agent-permission-trigger > svg:first-child { color: var(--warning); }
+.agent-permission-trigger > svg:last-child { color: var(--muted); transition: transform 140ms ease; }
+.agent-permission-menu.open .agent-permission-trigger { border-color: var(--accent); background: var(--accent-soft); }
+.agent-permission-menu.open .agent-permission-trigger > svg:last-child { transform: rotate(180deg); }
+.agent-permission-options { position: absolute; z-index: 70; bottom: calc(100% + 8px); left: 0; width: 228px; padding: 5px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-raised); box-shadow: var(--shadow); }
+.agent-permission-options > button { width: 100%; display: grid; grid-template-columns: 24px minmax(0, 1fr) 18px; align-items: center; gap: 7px; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; }
+.agent-permission-options > button:hover { background: var(--surface-hover); }
+.agent-permission-options > button.selected { background: var(--accent-soft); color: var(--accent); }
+.agent-permission-options > button > svg:first-child { color: var(--warning); }
+.agent-permission-options > button > span strong, .agent-permission-options > button > span small { display: block; }
+.agent-permission-options > button > span strong { color: var(--text); font-size: 11px; }
+.agent-permission-options > button > span small { margin-top: 1px; color: var(--muted); font-size: 9px; }
 .dispatcher-models { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; padding: 12px 24px; border-bottom: 1px solid var(--border); background: var(--surface-soft); }
 .dispatcher-models > div { min-width: 0; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
 .dispatcher-models > div > svg { color: var(--accent); }
@@ -277,7 +285,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .approval-card.compact-card { grid-template-columns: 32px minmax(0, 1fr); margin: 4px 0 10px; padding: 10px; }
 .approval-card.compact-card > span { width: 30px; height: 30px; }
 .approval-card.compact-card .approval-actions { grid-column: 2; justify-content: flex-end; }
-.dispatcher-composer { width: min(920px, calc(100% - 48px)); margin: 0 auto 20px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow); overflow: hidden; }
+.dispatcher-generation { max-width: 820px; margin: 0 auto 14px; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.dispatcher-generation.running { border-color: color-mix(in srgb, var(--accent) 48%, var(--border)); }
+.dispatcher-generation.failed { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
+.dispatcher-generation > header { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 9px; }
+.dispatcher-generation > header > span { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 7px; background: var(--accent-soft); color: var(--accent); }
+.dispatcher-generation > header strong, .dispatcher-generation > header small { display: block; }
+.dispatcher-generation > header strong { font-size: 12px; }
+.dispatcher-generation > header small { margin-top: 2px; color: var(--muted); font-size: 10px; }
+.dispatcher-generation > header em { display: inline-flex; align-items: center; gap: 5px; color: var(--success); font-size: 10px; font-style: normal; }
+.dispatcher-generation.running > header em { color: var(--accent); }
+.dispatcher-generation.failed > header em { color: var(--danger); }
+.dispatcher-generation > img { width: 100%; height: auto; max-height: 620px; display: block; margin-top: 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--preview-bg); object-fit: contain; }
+.dispatcher-generation > p { margin: 9px 0 0; color: var(--text-secondary); font-size: 11px; }
+.dispatcher-generation details { margin-top: 7px; color: var(--muted); font-size: 10px; }
+.dispatcher-generation summary { width: fit-content; cursor: pointer; }
+.dispatcher-generation details p { margin: 6px 0 0; padding: 8px; border-radius: 6px; background: var(--surface-soft); line-height: 1.55; }
+.dispatcher-composer { width: min(920px, calc(100% - 48px)); margin: 0 auto 20px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow); overflow: visible; }
 .dispatcher-composer:focus-within { border-color: var(--accent); }
 .dispatcher-composer textarea { width: 100%; min-height: 90px; display: block; padding: 14px 16px; border: 0; outline: 0; resize: none; background: transparent; color: var(--text); line-height: 1.55; }
 .dispatcher-composer > div:last-child { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); }
@@ -681,7 +705,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .agent-panel.agent-collapsed { grid-template-rows: 66px; }
 .agent-panel.agent-collapsed .agent-resizer { display: none; }
 .agent-panel.agent-collapsed .agent-header { justify-content: center; padding-inline: 0; }
-.agent-panel.agent-collapsed .agent-title, .agent-panel.agent-collapsed .agent-state, .agent-panel.agent-collapsed .agent-permission-control, .agent-panel.agent-collapsed > :not(.agent-header):not(.agent-resizer) { display: none; }
+.agent-panel.agent-collapsed .agent-title, .agent-panel.agent-collapsed .agent-state, .agent-panel.agent-collapsed .agent-permission-menu, .agent-panel.agent-collapsed > :not(.agent-header):not(.agent-resizer) { display: none; }
 .agent-summary { min-height: 0; max-height: min(42vh, 420px); overflow-y: auto; overscroll-behavior: contain; }
 .agent-context { margin: 12px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); }
 .agent-context strong { display: block; margin-top: 3px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -758,7 +782,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .agent-queue-item > button:hover { background: var(--danger-soft); color: var(--danger); }
 .chat-attachment { width: fit-content; max-width: 100%; display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-secondary); font-size: 11px; overflow: hidden; }
 .chat-attachment svg { flex: 0 0 auto; }
-.chat-composer { margin: 0 12px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-raised); overflow: hidden; box-shadow: var(--shadow); }
+.chat-composer { margin: 0 12px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-raised); overflow: visible; box-shadow: var(--shadow); }
 .chat-composer:focus-within { border-color: var(--accent); }
 .chat-composer textarea { width: 100%; min-height: 84px; display: block; padding: 12px; border: 0; outline: 0; resize: none; background: transparent; color: var(--text); font-size: 13px; line-height: 1.55; }
 .chat-composer textarea::placeholder { color: var(--muted); }

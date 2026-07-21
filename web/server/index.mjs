@@ -154,6 +154,24 @@ db.prepare("UPDATE runs SET workspace_id = 'default' WHERE workspace_id IS NULL 
 db.prepare("UPDATE runs SET pipeline_type = 'text_to_model' WHERE pipeline_type IS NULL OR pipeline_type = ''").run();
 db.exec("CREATE INDEX IF NOT EXISTS runs_workspace_id_idx ON runs(workspace_id, updated_at DESC)");
 const approvalRuntime = createApprovalRuntime({ db });
+db.exec(`
+  CREATE TABLE IF NOT EXISTS dispatcher_generations (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    character_count INTEGER NOT NULL,
+    prompt TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running', 'succeeded', 'failed')),
+    message TEXT NOT NULL DEFAULT '',
+    preview_path TEXT,
+    output_path TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+  )
+`);
+db.exec("CREATE INDEX IF NOT EXISTS dispatcher_generations_workspace_idx ON dispatcher_generations(workspace_id, created_at DESC)");
+db.prepare("UPDATE dispatcher_generations SET status = 'failed', message = '本地服务重启，合集图生成已中断', updated_at = ? WHERE status = 'running'").run(new Date().toISOString());
 
 db.prepare(`
   UPDATE runs SET generation_status = 'failed', generation_message = '本地服务重启，原 DGX 任务已中断'
@@ -645,6 +663,7 @@ function inspectGlb(filePath, requireRig = false) {
 }
 
 const activeJobs = new Map();
+const activeDispatcherJobs = new Map();
 
 function persistJobProgress(runId, jobType, progress, message, node = null) {
   db.prepare(`
@@ -1139,12 +1158,114 @@ async function createCoordinatorTasks({ workspaceId, tasks, image }) {
   return created;
 }
 
+function getDispatcherGeneration(id) {
+  return db.prepare(`
+    SELECT id, workspace_id AS workspaceId, title, character_count AS characterCount,
+           prompt, status, message, preview_path AS previewPath,
+           created_at AS createdAt, updated_at AS updatedAt
+    FROM dispatcher_generations WHERE id = ?
+  `).get(id) || null;
+}
+
+function listDispatcherGenerations(workspaceId) {
+  return db.prepare(`
+    SELECT id, workspace_id AS workspaceId, title, character_count AS characterCount,
+           prompt, status, message, preview_path AS previewPath,
+           created_at AS createdAt, updated_at AS updatedAt
+    FROM dispatcher_generations WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 30
+  `).all(workspaceId);
+}
+
+function startCharacterSheetGeneration(input = {}) {
+  const workspaceId = cleanText(input.workspaceId, 80, "工作空间 ID", true);
+  if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
+  const title = cleanText(input.title, 80, "合集图名称", true);
+  const characterCount = Number(input.characterCount);
+  if (!Number.isInteger(characterCount) || characterCount < 1 || characterCount > 12) throw new Error("合集图角色数量必须为 1–12 个");
+  const descriptions = Array.isArray(input.characterDescriptions)
+    ? input.characterDescriptions.map((item, index) => cleanText(item, 500, `角色 ${index + 1} 描述`, true))
+    : [];
+  if (descriptions.length !== characterCount) throw new Error("角色描述数量必须与合集图角色数量一致");
+  const style = cleanText(input.styleDescription, 1000, "统一风格", true);
+  const additional = cleanText(input.additionalPrompt, 2000, "补充要求");
+  const negative = cleanText(input.negativePrompt, 2000, "反向提示词") || "角色重复，角色融合，人物重叠，裁切身体，多余人物，文字，水印，低画质，肢体畸形，风格不一致";
+  const enumerated = descriptions.map((item, index) => `${index + 1}. ${item}`).join("；");
+  const positive = [
+    `生成一张角色原画合集图，单张画布内准确包含 ${characterCount} 个不同角色。`,
+    `所有角色保持完全一致的美术风格：${style}。`,
+    `角色设定：${enumerated}。`,
+    "横向整齐排列，每个角色完整全身、彼此分离且不重叠，比例统一，光照统一，背景简洁，清晰展示服装、配色和身份差异。不要拆成多张图片，不要生成角色卡边框或文字标签。",
+    additional,
+  ].filter(Boolean).join(" ").slice(0, 6000);
+  const imageConfig = settingsStore.imageConfig("text_to_model");
+  if (!imageConfig.apiKey) throw new Error("文生图 API Key 未配置");
+
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO dispatcher_generations (
+      id, workspace_id, title, character_count, prompt, status, message, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'running', '正在调用文生图模型生成单张角色合集图', ?, ?)
+  `).run(id, workspaceId, title, characterCount, positive, now, now);
+  db.prepare("UPDATE workspaces SET updated_at = ? WHERE id = ?").run(now, workspaceId);
+
+  const args = [
+    scripts["2d-api"],
+    "--positive", positive,
+    "--negative", negative,
+    "--base-url", imageConfig.baseUrl,
+    "--model", imageConfig.model,
+  ];
+  const child = spawn(PYTHON_COMMAND, args, {
+    cwd: repoRoot,
+    windowsHide: true,
+    env: { ...process.env, PYTHONUTF8: "1", STEPFUN_IMAGE_API_KEY: imageConfig.apiKey },
+  });
+  const active = { child, stdout: "", stderr: "", finalized: false };
+  activeDispatcherJobs.set(id, active);
+  child.stdout.on("data", (chunk) => { active.stdout = `${active.stdout}${chunk.toString("utf8")}`.slice(-100_000); });
+  child.stderr.on("data", (chunk) => { active.stderr = `${active.stderr}${chunk.toString("utf8")}`.slice(-100_000); });
+
+  const finalize = (success, errorMessage = "") => {
+    if (active.finalized) return;
+    active.finalized = true;
+    activeDispatcherJobs.delete(id);
+    const completedAt = new Date().toISOString();
+    try {
+      if (!success) throw new Error((errorMessage || active.stderr || "合集图生成失败").trim().slice(-1200));
+      const lines = active.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const source = safeOutputPath(lines.at(-1), "file");
+      const previewName = `character-sheet-${id}.png`;
+      copyFileSync(source, join(generatedDir, previewName));
+      const previewPath = `/generated/${previewName}?v=${Date.now()}`;
+      db.prepare(`
+        UPDATE dispatcher_generations SET status = 'succeeded', message = '单张角色合集图生成完成',
+          preview_path = ?, output_path = ?, updated_at = ? WHERE id = ?
+      `).run(previewPath, source, completedAt, id);
+      approvalRuntime.addNotification({
+        kind: "generation_completed",
+        title: "角色合集图生成完成",
+        message: `${title}：已生成包含 ${characterCount} 个角色的单张合集原画`,
+        workspaceId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "合集图生成失败";
+      db.prepare("UPDATE dispatcher_generations SET status = 'failed', message = ?, updated_at = ? WHERE id = ?").run(message.slice(0, 1200), completedAt, id);
+      approvalRuntime.addNotification({ kind: "generation_failed", title: "角色合集图生成失败", message: `${title}：${message}`, workspaceId });
+    }
+  };
+  child.on("error", (error) => finalize(false, error.message));
+  child.on("close", (code) => finalize(code === 0, code === 0 ? "" : active.stderr || `Python 退出代码 ${code}`));
+  return getDispatcherGeneration(id);
+}
+
 const coordinatorAgent = createCoordinatorRuntime({
   db,
   getAgentConfig: settingsStore.agentConfig,
   getWorkspaces: getWorkspacesSummary,
   createWorkspace: createWorkspaceRecord,
   createCharacterTasks: createCoordinatorTasks,
+  generateCharacterSheet: startCharacterSheetGeneration,
   delegateTask: (runId, target) => assetAgent.requestWorkflowPlan(runId, target),
   getImageModelStatus: () => {
     const settings = settingsStore.publicSettings();
@@ -1159,6 +1280,7 @@ approvalRuntime.setExecutor(async (approval) => {
     return assetAgent.executeApprovedOperation(approval.runId, approval.operation, approval.payload);
   }
   if (approval.operation === "create_workspace") return createWorkspaceRecord(approval.payload);
+  if (approval.operation === "generate_character_sheet") return startCharacterSheetGeneration(approval.payload);
   if (approval.operation === "create_character_tasks") {
     const { image, ...params } = approval.payload;
     const tasks = await createCoordinatorTasks({ ...params, image });
@@ -1243,10 +1365,16 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "GET" && url.pathname === "/api/agent-controls") {
       const runId = url.searchParams.get("runId");
+      const workspaceId = url.searchParams.get("workspaceId");
+      const approvals = approvalRuntime.listApprovals("pending").filter((item) => (
+        item.scopeType === "coordinator"
+          ? Boolean(workspaceId) && item.workspaceId === workspaceId
+          : Boolean(runId) && item.runId === runId
+      ));
       json(res, 200, {
         coordinatorMode: approvalRuntime.permission("coordinator", "global"),
         taskMode: runId ? approvalRuntime.permission("task", runId) : null,
-        approvals: approvalRuntime.listApprovals("pending"),
+        approvals,
       });
       return;
     }
@@ -1286,6 +1414,12 @@ const server = createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/api/dispatcher/messages") {
       const workspaceId = url.searchParams.get("workspaceId");
       json(res, 200, { messages: coordinatorAgent.getMessages(workspaceId) });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/dispatcher/generations") {
+      const workspaceId = url.searchParams.get("workspaceId") || "default";
+      if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
+      json(res, 200, { generations: listDispatcherGenerations(workspaceId) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/dispatcher/messages") {
@@ -1436,6 +1570,7 @@ function shutdown() {
     if (activeJob.socket) activeJob.socket.close();
     activeJob.child.kill();
   }
+  for (const activeJob of activeDispatcherJobs.values()) activeJob.child.kill();
   server.close(() => {
     db.close();
     process.exit(0);
