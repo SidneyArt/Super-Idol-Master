@@ -61,7 +61,17 @@ export function classifyCoordinatorIntent(message, hasAttachment) {
   );
   const asksForTasks = /(拆分|拆成|分成).{0,12}(任务|角色)|创建.{0,8}(多个|数个|\d+\s*个).{0,8}任务|分别.{0,20}(模型|绑骨)|每个角色.{0,20}(任务|模型|绑骨)/i.test(text);
   const asksForSplit = /(拆分|拆开|分拆)(?:吧|一下|角色|任务|这张|上(?:一张|图)|合集|原画)?/i.test(text);
-  return { asksForSplit, singleSheetOnly: asksForSingleSheet && !asksForTasks && !asksForSplit };
+  const asksAboutImage = (
+    /(?:能|可以|是否|有没有).{0,8}(?:看见|看到|看清|识别)(?:.{0,8}(?:图|图片|原画|画面|生成结果))?/i.test(text)
+    || /(?:这张|上一张|最后一张|刚才|刚刚|前面|最近|已生成|生成的).{0,16}(?:图|图片|原画|画面|生成结果)/i.test(text)
+    || /(?:图|图片|原画|画面|生成结果).{0,16}(?:看|识别|分析|描述|几个人|几个角色|多少人|内容|有什么|怎么样)/i.test(text)
+    || /(?:几个人|几个角色|多少人|多少个角色)/i.test(text)
+  );
+  return {
+    asksForSplit,
+    asksAboutImage,
+    singleSheetOnly: asksForSingleSheet && !asksForTasks && !asksForSplit && !asksAboutImage,
+  };
 }
 
 export function createCoordinatorRuntime({
@@ -268,6 +278,7 @@ export function createCoordinatorRuntime({
 7. 不得声称未创建的工作空间、任务或产物已经完成。工具失败时解释真实原因。
 8. API Key 不通过聊天收集；需要配置时提醒用户使用首页的模型配置区域。
 9. 最终用 Markdown 简洁说明实际启动的是单张合集图生成，还是多个任务及其委派目标。
+10. 若本轮附带或自动继承了图片，必须依据实际视觉内容回答人数、角色和画面问题；不得声称当前没有图片，也不得要求用户重新上传。只有无法从画面确认的细节才说明不确定。
 
 当前工作空间：${JSON.stringify(current)}
 全部工作空间：${JSON.stringify(workspaces)}
@@ -437,7 +448,7 @@ ${transcript.slice(-12000)}
     if (!userText) throw new Error("消息不能为空");
     const sessionId = ensureSession(workspaceId);
     const preliminaryIntent = classifyCoordinatorIntent(userText, Boolean(explicitAttachment));
-    const inherited = !explicitAttachment && preliminaryIntent.asksForSplit
+    const inherited = !explicitAttachment && (preliminaryIntent.asksForSplit || preliminaryIntent.asksAboutImage)
       ? getLatestGeneratedImage?.(workspaceId, sessionId) || null
       : null;
     const attachment = explicitAttachment || validateImage(inherited);

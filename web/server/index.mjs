@@ -1198,11 +1198,9 @@ function getLatestDispatcherGenerationImage(workspaceId, sessionId = "") {
     FROM dispatcher_generations
     WHERE workspace_id = ? AND status = 'succeeded' AND output_path IS NOT NULL
   `;
-  const candidates = [];
-  if (sessionId) {
-    candidates.push(...db.prepare(`${select} AND session_id = ? ORDER BY updated_at DESC LIMIT 30`).all(workspaceId, sessionId));
-  }
-  candidates.push(...db.prepare(`${select} ORDER BY updated_at DESC LIMIT 30`).all(workspaceId));
+  const candidates = sessionId
+    ? db.prepare(`${select} AND session_id = ? ORDER BY updated_at DESC LIMIT 30`).all(workspaceId, sessionId)
+    : db.prepare(`${select} ORDER BY updated_at DESC LIMIT 30`).all(workspaceId);
 
   const visited = new Set();
   for (const candidate of candidates) {

@@ -980,7 +980,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .text-icon-button:hover { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text); }
 .text-icon-button:disabled { opacity: .5; cursor: not-allowed; }
-.text-icon-button .spinning { animation: spin 1s linear infinite; }
+.spinning {
+  display: inline-block;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spin 1s linear infinite;
+}
 .settings-field { display: block; margin-top: 15px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .settings-field > span { display: block; margin-bottom: 6px; }
 .settings-field input, .settings-field textarea {
