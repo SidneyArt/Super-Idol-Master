@@ -323,14 +323,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .agent-scope-note { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--accent-soft); color: var(--text-secondary); font-size: 11px; }
 .agent-scope-note svg { flex: 0 0 auto; color: var(--accent); }
 .dispatcher-thread { min-width: 0; min-height: 0; width: 100%; overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; }
-.dispatcher-thread-content { width: min(960px, 100%); min-height: 100%; margin: 0 auto; padding: 22px 28px; }
-.dispatcher-welcome { max-width: 680px; margin: 8vh auto 0; text-align: center; }
+.dispatcher-thread-content { width: min(1120px, 100%); min-height: 100%; margin: 0 auto; padding: 22px 28px; }
+.dispatcher-welcome { max-width: 780px; margin: 8vh auto 0; text-align: center; }
 .dispatcher-welcome > span { width: 58px; height: 58px; display: grid; place-items: center; margin: 0 auto; border-radius: 12px; background: var(--accent-soft); color: var(--accent); }
 .dispatcher-welcome h2 { margin: 16px 0 6px; font-size: 22px; }
 .dispatcher-welcome p { margin: 0 auto; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .dispatcher-welcome > div { display: flex; justify-content: center; gap: 8px; margin-top: 18px; }
 .dispatcher-welcome button { padding: 8px 11px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text-secondary); cursor: pointer; }
-.dispatcher-message { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; max-width: 820px; margin: 0 auto 14px; }
+.dispatcher-message, .dispatcher-timeline-card-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; max-width: 960px; margin: 0 auto 14px; }
+.dispatcher-timeline-card-row > .dispatcher-generation, .dispatcher-timeline-card-row > .approval-card { grid-column: 2; width: 100%; max-width: none; margin: 0; }
 .dispatcher-message > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px; background: var(--accent-soft); color: var(--accent); }
 .dispatcher-message.user > span { background: var(--surface-soft); color: var(--text-secondary); }
 .dispatcher-message > div { min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
@@ -366,7 +367,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .dispatcher-generation details { margin-top: 7px; color: var(--muted); font-size: 10px; }
 .dispatcher-generation summary { width: fit-content; cursor: pointer; }
 .dispatcher-generation details p { margin: 6px 0 0; padding: 8px; border-radius: 6px; background: var(--surface-soft); line-height: 1.55; }
-.dispatcher-composer { width: min(920px, calc(100% - 48px)); margin: 0 auto 20px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow); overflow: visible; }
+.notification-target-highlight { animation: notification-target-pulse 2.2s ease-out; }
+.dispatcher-composer { width: min(1060px, calc(100% - 48px)); margin: 0 auto 20px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow); overflow: visible; }
 .dispatcher-composer:focus-within { border-color: var(--accent); }
 .dispatcher-composer textarea { width: 100%; min-height: 90px; display: block; padding: 14px 16px; border: 0; outline: 0; resize: none; background: transparent; color: var(--text); line-height: 1.55; }
 .dispatcher-composer > div:last-child { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-top: 1px solid var(--border); }
@@ -1161,3 +1163,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes notification-target-pulse {
+  0%, 30% { box-shadow: 0 0 0 2px var(--accent), 0 0 0 7px color-mix(in srgb, var(--accent) 22%, transparent); }
+  100% { box-shadow: none; }
+}

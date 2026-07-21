@@ -10,6 +10,13 @@ export default async function Page({ searchParams }: PageProps) {
   const params = await searchParams;
   const taskParam = params.task;
   const initialRunId = Array.isArray(taskParam) ? taskParam[0] : taskParam;
+  const workspaceParam = params.workspace;
+  const initialWorkspaceId = Array.isArray(workspaceParam) ? workspaceParam[0] : workspaceParam;
+  const notificationParam = params.notification;
+  const notificationValue = Array.isArray(notificationParam) ? notificationParam[0] : notificationParam;
+  const initialNotificationId = notificationValue && Number.isInteger(Number(notificationValue))
+    ? Number(notificationValue)
+    : null;
   let initialRuns: Run[] = [];
   let initialWorkspaces: Workspace[] = [];
 
@@ -29,6 +36,8 @@ export default async function Page({ searchParams }: PageProps) {
   return (
     <Studio
       initialRunId={initialRunId || null}
+      initialWorkspaceId={initialWorkspaceId || null}
+      initialNotificationId={initialNotificationId}
       initialRuns={initialRuns}
       initialWorkspaces={initialWorkspaces}
     />

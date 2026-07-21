@@ -489,19 +489,22 @@ function ContextUsage({ context, compact = false }: { context: ConversationConte
 
 type StudioProps = {
   initialRunId: string | null;
+  initialWorkspaceId: string | null;
+  initialNotificationId: number | null;
   initialRuns: Run[];
   initialWorkspaces: Workspace[];
 };
 
-export default function Studio({ initialRunId, initialRuns, initialWorkspaces }: StudioProps) {
+export default function Studio({ initialRunId, initialWorkspaceId: requestedWorkspaceId, initialNotificationId, initialRuns, initialWorkspaces }: StudioProps) {
   const screen: "home" | "task" = initialRunId ? "task" : "home";
   const initialRun = initialRuns.find((item) => item.id === initialRunId);
-  const initialWorkspaceId = initialRun?.workspaceId
+  const startingWorkspaceId = initialRun?.workspaceId
+    || requestedWorkspaceId
     || initialWorkspaces.find((item) => item.id === "default")?.id
     || initialWorkspaces[0]?.id
     || "default";
   const [workspaces, setWorkspaces] = useState<Workspace[]>(initialWorkspaces);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(initialWorkspaceId);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(startingWorkspaceId);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set(["default"]));
   const [runs, setRuns] = useState<Run[]>(initialRuns);
   const [selectedId, setSelectedId] = useState<string | null>(initialRunId);
@@ -565,6 +568,7 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notificationAction, setNotificationAction] = useState<number | "read-all" | "clear" | null>(null);
+  const [notificationFocusId, setNotificationFocusId] = useState<number | null>(initialNotificationId);
   const [toastQueue, setToastQueue] = useState<AppNotification[]>([]);
   const [approvalBusyId, setApprovalBusyId] = useState<number | null>(null);
   const [promptDraft, setPromptDraft] = useState({
@@ -760,7 +764,11 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
         setRuns(runData.runs);
         setWorkspaces(workspaceData.workspaces);
         const requestedRun = initialRunId ? runData.runs.find((item) => item.id === initialRunId) : null;
+        const requestedWorkspace = requestedWorkspaceId
+          ? workspaceData.workspaces.find((item) => item.id === requestedWorkspaceId)
+          : null;
         const nextWorkspaceId = requestedRun?.workspaceId
+          || requestedWorkspace?.id
           || workspaceData.workspaces.find((item) => item.id === "default")?.id
           || workspaceData.workspaces[0]?.id
           || "default";
@@ -785,7 +793,7 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [initialRunId]);
+  }, [initialRunId, requestedWorkspaceId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -892,6 +900,45 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
     return rank(left) - rank(right);
   });
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
+
+  useEffect(() => {
+    if (screen !== "home" || notificationFocusId === null) return;
+    const notification = notifications.find((item) => item.id === notificationFocusId);
+    if (!notification) return;
+    if (notification.workspaceId && notification.workspaceId !== selectedWorkspaceId) {
+      const workspaceId = notification.workspaceId;
+      const workspaceFrame = window.requestAnimationFrame(() => {
+        selectedWorkspaceIdRef.current = workspaceId;
+        setSelectedWorkspaceId(workspaceId);
+        setDispatcherMessages([]);
+        setDispatcherSessionId("");
+        setDispatcherSessions([]);
+        setDispatcherContext(null);
+      });
+      return () => window.cancelAnimationFrame(workspaceFrame);
+    }
+    const frame = window.requestAnimationFrame(() => {
+      let target: HTMLElement | null = notification.approvalId
+        ? document.getElementById(`dispatcher-approval-${notification.approvalId}`)
+        : null;
+      if (!target && (notification.kind === "generation_completed" || notification.kind === "generation_failed" || notification.kind === "approval_executed")) {
+        const notificationTime = Date.parse(notification.createdAt);
+        const matchingGeneration = dispatcherGenerations
+          .filter((generation) => notification.message.includes(generation.title) || Math.abs(Date.parse(generation.createdAt) - notificationTime) < 120_000)
+          .sort((left, right) => Math.abs(Date.parse(left.createdAt) - notificationTime) - Math.abs(Date.parse(right.createdAt) - notificationTime))[0];
+        if (matchingGeneration) target = document.getElementById(`dispatcher-generation-${matchingGeneration.id}`);
+      }
+      target ||= dispatcherEndRef.current;
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.classList.add("notification-target-highlight");
+      window.setTimeout(() => target?.classList.remove("notification-target-highlight"), 2200);
+      setNotificationFocusId(null);
+      window.history.replaceState(null, "", "/");
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [dispatcherGenerations, notificationFocusId, notifications, screen, selectedWorkspaceId]);
+
   const visibleChatMessages = run?.id === selectedId ? chatMessages : [];
   const artDirectorRun = selectedDetail?.agentRoleRuns?.find((item) =>
     (item.reportType === "prompt_plan" || item.agentRole === "art_director")
@@ -1612,8 +1659,16 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
         // Navigation should not be blocked when the read marker fails.
       }
     }
-    if (notification.runId) openTask(notification.runId);
-    else openHome();
+    if (notification.runId) {
+      openTask(notification.runId);
+      return;
+    }
+    if (notification.workspaceId) {
+      const params = new URLSearchParams({ workspace: notification.workspaceId, notification: String(notification.id) });
+      window.location.assign(`/?${params.toString()}`);
+      return;
+    }
+    openHome();
   }
 
   async function markAllNotificationsRead() {
@@ -1971,22 +2026,26 @@ export default function Studio({ initialRunId, initialRuns, initialWorkspaces }:
                   if (entry.kind === "generation") {
                     const generation = entry.item;
                     return (
-                      <section className={`dispatcher-generation ${generation.status}`} key={`generation-${generation.id}`}>
-                        <header><span><ImageIcon size={16} /></span><div><strong>{generation.title}</strong><small>单张合集图 · {generation.characterCount} 个角色</small></div><em>{generation.status === "running" ? <><LoaderCircle className="spinning" size={13} />生成中</> : generation.status === "succeeded" ? "已完成" : "失败"}</em></header>
-                        {generation.previewPath && <Image src={generation.previewPath} alt={generation.title} width={1024} height={1024} unoptimized />}
-                        <p>{generation.message}</p>
-                        <details><summary>查看生成要求</summary><p>{generation.prompt}</p></details>
-                      </section>
+                      <div className="dispatcher-timeline-card-row" key={`generation-${generation.id}`}>
+                        <section className={`dispatcher-generation ${generation.status}`} id={`dispatcher-generation-${generation.id}`}>
+                          <header><span><ImageIcon size={16} /></span><div><strong>{generation.title}</strong><small>单张合集图 · {generation.characterCount} 个角色</small></div><em>{generation.status === "running" ? <><LoaderCircle className="spinning" size={13} />生成中</> : generation.status === "succeeded" ? "已完成" : "失败"}</em></header>
+                          {generation.previewPath && <Image src={generation.previewPath} alt={generation.title} width={1024} height={1024} unoptimized />}
+                          <p>{generation.message}</p>
+                          <details><summary>查看生成要求</summary><p>{generation.prompt}</p></details>
+                        </section>
+                      </div>
                     );
                   }
                   if (entry.kind === "approval") {
                     const approval = entry.item;
                     return (
-                      <section className="approval-card" key={`approval-${approval.id}`}>
-                        <span><ShieldCheck size={18} /></span>
-                        <div><small>总调度 Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
-                        <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={15} /> : <Check size={15} />}批准</button></div>
-                      </section>
+                      <div className="dispatcher-timeline-card-row" key={`approval-${approval.id}`}>
+                        <section className="approval-card" id={`dispatcher-approval-${approval.id}`}>
+                          <span><ShieldCheck size={18} /></span>
+                          <div><small>总调度 Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
+                          <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={15} /> : <Check size={15} />}批准</button></div>
+                        </section>
+                      </div>
                     );
                   }
                   const message = entry.item;
