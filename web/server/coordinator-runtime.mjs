@@ -1,5 +1,7 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
+import { randomUUID } from "node:crypto";
+import { AGENT_CONTEXT_WINDOW, contextStats } from "./conversation-context.mjs";
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const MAX_TURNS = 12;
@@ -23,7 +25,7 @@ function createModel(config) {
     reasoning: false,
     input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 131072,
+    contextWindow: AGENT_CONTEXT_WINDOW,
     maxTokens: 4096,
     compat: {
       supportsStore: false,
@@ -85,36 +87,167 @@ export function createCoordinatorRuntime({
       FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
     )
   `);
+  const dispatcherMessageColumns = db.prepare("PRAGMA table_info(dispatcher_messages)").all();
+  if (!dispatcherMessageColumns.some((column) => column.name === "session_id")) {
+    db.exec("ALTER TABLE dispatcher_messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''");
+  }
   db.exec("CREATE INDEX IF NOT EXISTS dispatcher_messages_workspace_idx ON dispatcher_messages(workspace_id, id DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS dispatcher_messages_session_idx ON dispatcher_messages(workspace_id, session_id, id DESC)");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dispatcher_conversations (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '新会话',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS dispatcher_conversations_workspace_idx ON dispatcher_conversations(workspace_id, updated_at DESC)");
+  db.exec(`
+    INSERT OR IGNORE INTO dispatcher_conversations (id, workspace_id, title, created_at, updated_at)
+    SELECT messages.session_id, messages.workspace_id,
+           COALESCE((SELECT substr(first.content, 1, 48) FROM dispatcher_messages first
+                     WHERE first.workspace_id = messages.workspace_id AND first.session_id = messages.session_id AND first.role = 'user'
+                     ORDER BY first.id ASC LIMIT 1), '新会话'),
+           MIN(messages.created_at), MAX(messages.created_at)
+    FROM dispatcher_messages messages
+    WHERE messages.workspace_id IS NOT NULL AND messages.session_id <> ''
+    GROUP BY messages.workspace_id, messages.session_id
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS dispatcher_conversation_state (
+      workspace_id TEXT PRIMARY KEY,
+      current_session_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+    )
+  `);
 
   let activeAgent = null;
 
-  function getMessages(workspaceId = null, limit = 100) {
+  function ensureSession(workspaceId) {
+    if (!workspaceId) throw new Error("请先选择工作空间");
+    const state = db.prepare("SELECT current_session_id AS sessionId FROM dispatcher_conversation_state WHERE workspace_id = ?").get(workspaceId);
+    if (state?.sessionId) {
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT OR IGNORE INTO dispatcher_conversations (id, workspace_id, title, created_at, updated_at)
+        VALUES (?, ?, '新会话', ?, ?)
+      `).run(state.sessionId, workspaceId, now, now);
+      return state.sessionId;
+    }
+    const sessionId = randomUUID();
+    const now = new Date().toISOString();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("UPDATE dispatcher_messages SET session_id = ? WHERE workspace_id = ? AND session_id = ''").run(sessionId, workspaceId);
+      const firstMessage = db.prepare(`
+        SELECT substr(content, 1, 48) AS title, MIN(created_at) AS createdAt, MAX(created_at) AS updatedAt
+        FROM dispatcher_messages WHERE workspace_id = ? AND session_id = ? AND role = 'user'
+      `).get(workspaceId, sessionId);
+      db.prepare(`
+        INSERT INTO dispatcher_conversations (id, workspace_id, title, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(sessionId, workspaceId, firstMessage?.title || "新会话", firstMessage?.createdAt || now, firstMessage?.updatedAt || now);
+      db.prepare(`
+        INSERT INTO dispatcher_conversation_state (workspace_id, current_session_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET current_session_id = excluded.current_session_id, updated_at = excluded.updated_at
+      `).run(workspaceId, sessionId, now, now);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    return sessionId;
+  }
+
+  function listSessions(workspaceId) {
+    const currentSessionId = ensureSession(workspaceId);
+    const rows = db.prepare(`
+      SELECT conversations.id, conversations.title, conversations.created_at AS createdAt,
+             conversations.updated_at AS updatedAt, COUNT(messages.id) AS messageCount
+      FROM dispatcher_conversations conversations
+      LEFT JOIN dispatcher_messages messages
+        ON messages.workspace_id = conversations.workspace_id AND messages.session_id = conversations.id
+      WHERE conversations.workspace_id = ?
+      GROUP BY conversations.id
+      ORDER BY conversations.id = ? DESC, conversations.updated_at DESC
+    `).all(workspaceId, currentSessionId);
+    return rows.map((item) => ({ ...item, isCurrent: item.id === currentSessionId }));
+  }
+
+  function getMessages(workspaceId, limit = 100, requestedSessionId = null) {
     const safeLimit = Math.max(1, Math.min(100, Number(limit) || 100));
-    const rows = workspaceId
-      ? db.prepare(`
-          SELECT id, role, content, attachment_name AS attachmentName, attachment_mime AS attachmentMime,
-                 created_at AS createdAt FROM dispatcher_messages
-          WHERE workspace_id = ? ORDER BY id DESC LIMIT ?
-        `).all(workspaceId, safeLimit)
-      : db.prepare(`
-          SELECT id, role, content, attachment_name AS attachmentName, attachment_mime AS attachmentMime,
-                 created_at AS createdAt FROM dispatcher_messages
-          WHERE workspace_id IS NULL ORDER BY id DESC LIMIT ?
-        `).all(safeLimit);
+    const sessionId = requestedSessionId || ensureSession(workspaceId);
+    const rows = db.prepare(`
+      SELECT id, role, content, attachment_name AS attachmentName, attachment_mime AS attachmentMime,
+             created_at AS createdAt FROM dispatcher_messages
+      WHERE workspace_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?
+    `).all(workspaceId, sessionId, safeLimit);
     return rows.reverse();
   }
 
   function addMessage(workspaceId, role, content, image = null) {
+    const sessionId = ensureSession(workspaceId);
     const createdAt = new Date().toISOString();
     const result = db.prepare(`
-      INSERT INTO dispatcher_messages (workspace_id, role, content, attachment_name, attachment_mime, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(workspaceId, role, content, image?.name || null, image?.mimeType || null, createdAt);
+      INSERT INTO dispatcher_messages (workspace_id, session_id, role, content, attachment_name, attachment_mime, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(workspaceId, sessionId, role, content, image?.name || null, image?.mimeType || null, createdAt);
+    db.prepare(`
+      UPDATE dispatcher_conversations
+      SET title = CASE WHEN title = '新会话' AND ? = 'user' THEN substr(?, 1, 48) ELSE title END,
+          updated_at = ?
+      WHERE id = ? AND workspace_id = ?
+    `).run(role, content, createdAt, sessionId, workspaceId);
     return {
       id: Number(result.lastInsertRowid), role, content,
       attachmentName: image?.name || null, attachmentMime: image?.mimeType || null, createdAt,
     };
+  }
+
+  function getConversation(workspaceId) {
+    const sessionId = ensureSession(workspaceId);
+    const messages = getMessages(workspaceId, 100, sessionId);
+    const contextMessages = messages.slice(-24);
+    return {
+      sessionId,
+      messages,
+      sessions: listSessions(workspaceId),
+      context: contextStats(systemPrompt(workspaceId, contextMessages, false), contextMessages),
+    };
+  }
+
+  function startSession(workspaceId) {
+    if (activeAgent) throw new Error("总调度 Agent 正在处理消息，暂时不能新建会话");
+    const sessionId = randomUUID();
+    const now = new Date().toISOString();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("INSERT INTO dispatcher_conversations (id, workspace_id, title, created_at, updated_at) VALUES (?, ?, '新会话', ?, ?)").run(sessionId, workspaceId, now, now);
+      db.prepare(`
+        INSERT INTO dispatcher_conversation_state (workspace_id, current_session_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET current_session_id = excluded.current_session_id, updated_at = excluded.updated_at
+      `).run(workspaceId, sessionId, now, now);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    return getConversation(workspaceId);
+  }
+
+  function activateSession(workspaceId, sessionId) {
+    if (activeAgent) throw new Error("总调度 Agent 正在处理消息，暂时不能切换会话");
+    const current = ensureSession(workspaceId);
+    const exists = sessionId === current || db.prepare("SELECT 1 FROM dispatcher_conversations WHERE workspace_id = ? AND id = ? LIMIT 1").get(workspaceId, sessionId);
+    if (!exists) throw new Error("会话不存在");
+    db.prepare("UPDATE dispatcher_conversation_state SET current_session_id = ?, updated_at = ? WHERE workspace_id = ?").run(sessionId, new Date().toISOString(), workspaceId);
+    return getConversation(workspaceId);
   }
 
   function systemPrompt(workspaceId, history, hasImage) {
@@ -292,7 +425,8 @@ ${transcript.slice(-12000)}
     const config = getAgentConfig();
     if (!config.apiKey) throw new Error("总调度 Agent 未配置 API Key");
     if (activeAgent) throw new Error("总调度 Agent 正在处理上一条消息");
-    if (workspaceId && !getWorkspaces().some((item) => item.id === workspaceId)) throw new Error("工作空间不存在");
+    if (!workspaceId) throw new Error("请先选择工作空间");
+    if (!getWorkspaces().some((item) => item.id === workspaceId)) throw new Error("工作空间不存在");
     const attachment = validateImage(image);
     const userText = typeof message === "string" && message.trim()
       ? message.trim().slice(0, 6000)
@@ -331,7 +465,7 @@ ${transcript.slice(-12000)}
       const assistantText = [...agent.state.messages].reverse().filter((item) => item.role === "assistant").map(messageText).find(Boolean);
       if (!assistantText) throw new Error("总调度 Agent 没有返回可显示的回复");
       addMessage(workspaceId, "assistant", assistantText);
-      return { messages: getMessages(workspaceId), actions: execution.actions, workspaces: getWorkspaces() };
+      return { ...getConversation(workspaceId), actions: execution.actions, workspaces: getWorkspaces() };
     } finally {
       activeAgent = null;
     }
@@ -343,5 +477,5 @@ ${transcript.slice(-12000)}
     return true;
   }
 
-  return { run, cancel, getMessages, status: () => ({ running: Boolean(activeAgent) }) };
+  return { run, cancel, getMessages, getConversation, startSession, activateSession, status: () => ({ running: Boolean(activeAgent) }) };
 }

@@ -1420,7 +1420,20 @@ const server = createServer(async (req, res) => {
     }
     if (req.method === "GET" && url.pathname === "/api/dispatcher/messages") {
       const workspaceId = url.searchParams.get("workspaceId");
-      json(res, 200, { messages: coordinatorAgent.getMessages(workspaceId) });
+      json(res, 200, coordinatorAgent.getConversation(workspaceId));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/dispatcher/sessions") {
+      const body = await readBody(req);
+      json(res, 201, coordinatorAgent.startSession(cleanText(body.workspaceId, 80, "工作空间 ID", true)));
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/api/dispatcher/sessions/current") {
+      const body = await readBody(req);
+      json(res, 200, coordinatorAgent.activateSession(
+        cleanText(body.workspaceId, 80, "工作空间 ID", true),
+        cleanText(body.sessionId, 80, "会话 ID", true),
+      ));
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/dispatcher/generations") {
@@ -1477,7 +1490,7 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (req.method === "GET" && parts[3] === "agent" && parts[4] === "messages") {
-        json(res, 200, { messages: assetAgent.getMessages(id) });
+        json(res, 200, assetAgent.getConversation(id));
         return;
       }
       if (req.method === "POST" && parts[3] === "agent" && parts[4] === "messages") {
@@ -1487,6 +1500,15 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[3] === "agent" && parts[4] === "cancel") {
         json(res, 200, { cancelled: assetAgent.cancel(id) });
+        return;
+      }
+      if (req.method === "POST" && parts[3] === "agent" && parts[4] === "sessions" && parts.length === 5) {
+        json(res, 201, assetAgent.startSession(id));
+        return;
+      }
+      if (req.method === "PUT" && parts[3] === "agent" && parts[4] === "sessions" && parts[5] === "current") {
+        const body = await readBody(req);
+        json(res, 200, assetAgent.activateSession(id, cleanText(body.sessionId, 80, "会话 ID", true)));
         return;
       }
       if (req.method === "POST" && parts[3] === "start") {

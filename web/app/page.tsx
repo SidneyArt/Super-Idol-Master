@@ -12,6 +12,7 @@ import {
   Expand,
   FileJson,
   FolderOpen,
+  Home,
   ImageIcon,
   LoaderCircle,
   Maximize2,
@@ -181,6 +182,29 @@ type AppNotification = {
   approvalId: number | null;
   readAt: string | null;
   createdAt: string;
+};
+type ConversationSession = {
+  id: string;
+  title: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+  isCurrent: boolean;
+};
+type ConversationContext = {
+  estimatedTokens: number;
+  contextWindow: number;
+  responseReserve: number;
+  availableTokens: number;
+  usagePercent: number;
+  messageCount: number;
+  estimated: boolean;
+};
+type ConversationPayload = {
+  sessionId: string;
+  messages: ChatMessage[];
+  sessions: ConversationSession[];
+  context: ConversationContext;
 };
 type DispatcherGeneration = {
   id: string;
@@ -358,6 +382,11 @@ function jobName(type: JobType) {
   return { none: "本地流程", "2d": "Qwen Image", qa: "SDPose", "3d": "Pixal3D", rig: "SkinTokens" }[type];
 }
 
+function formatTokenCount(value: number) {
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}K`;
+  return String(value);
+}
+
 function AgentPermissionMenu({ mode, onChange, title }: { mode: ApprovalMode; onChange: (mode: ApprovalMode) => void; title: string }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -386,12 +415,13 @@ function AgentPermissionMenu({ mode, onChange, title }: { mode: ApprovalMode; on
 
 type StyledSelectOption = { value: string; label: string; disabled?: boolean };
 
-function StyledSelect({ value, options, onChange, ariaLabel, placement = "down" }: {
+function StyledSelect({ value, options, onChange, ariaLabel, placement = "down", disabled = false }: {
   value: string;
   options: StyledSelectOption[];
   onChange: (value: string) => void;
   ariaLabel: string;
   placement?: "up" | "down";
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -413,10 +443,10 @@ function StyledSelect({ value, options, onChange, ariaLabel, placement = "down" 
   }, [open]);
   return (
     <div className={`styled-select ${open ? "open" : ""} placement-${placement}`} ref={rootRef}>
-      <button type="button" className="styled-select-trigger" onClick={() => setOpen((current) => !current)} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open}>
+      <button type="button" className="styled-select-trigger" disabled={disabled} onClick={() => setOpen((current) => !current)} aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open}>
         <span>{selected?.label || "请选择"}</span><ChevronDown size={15} />
       </button>
-      {open && (
+      {open && !disabled && (
         <div className="styled-select-options" role="listbox" aria-label={ariaLabel}>
           {options.map((option) => (
             <button key={option.value} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} className={option.value === value ? "selected" : ""} onClick={() => { onChange(option.value); setOpen(false); }}>
@@ -429,10 +459,23 @@ function StyledSelect({ value, options, onChange, ariaLabel, placement = "down" 
   );
 }
 
+function ContextUsage({ context, compact = false }: { context: ConversationContext | null; compact?: boolean }) {
+  const used = context?.estimatedTokens || 0;
+  const limit = context?.contextWindow || 131_072;
+  const percent = context?.usagePercent || 0;
+  return (
+    <span className={`context-usage ${compact ? "compact" : ""}`} title={context ? `估算上下文 ${used.toLocaleString()} tokens；预留回复 ${context.responseReserve.toLocaleString()} tokens；剩余约 ${context.availableTokens.toLocaleString()} tokens` : "正在读取上下文用量"}>
+      <span>上下文 {formatTokenCount(used)} / {formatTokenCount(limit)}</span>
+      <i><b style={{ width: `${percent}%` }} /></i>
+    </span>
+  );
+}
+
 export default function Home() {
   const [screen, setScreen] = useState<"home" | "task">("home");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("default");
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set(["default"]));
   const [runs, setRuns] = useState<Run[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
@@ -464,12 +507,20 @@ export default function Home() {
   const [qaBlend, setQaBlend] = useState(0.5);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatSessionId, setChatSessionId] = useState("");
+  const [chatSessions, setChatSessions] = useState<ConversationSession[]>([]);
+  const [chatContext, setChatContext] = useState<ConversationContext | null>(null);
+  const [chatSessionBusy, setChatSessionBusy] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const [activeAgentRunId, setActiveAgentRunId] = useState<string | null>(null);
   const [agentQueue, setAgentQueue] = useState<AgentQueueItem[]>([]);
   const [agentAttachment, setAgentAttachment] = useState<AgentAttachment | null>(null);
   const [agentImageDragging, setAgentImageDragging] = useState(false);
   const [dispatcherMessages, setDispatcherMessages] = useState<ChatMessage[]>([]);
+  const [dispatcherSessionId, setDispatcherSessionId] = useState("");
+  const [dispatcherSessions, setDispatcherSessions] = useState<ConversationSession[]>([]);
+  const [dispatcherContext, setDispatcherContext] = useState<ConversationContext | null>(null);
+  const [dispatcherSessionBusy, setDispatcherSessionBusy] = useState(false);
   const [dispatcherInput, setDispatcherInput] = useState("");
   const [dispatcherBusy, setDispatcherBusy] = useState(false);
   const [dispatcherAttachment, setDispatcherAttachment] = useState<AgentAttachment | null>(null);
@@ -518,8 +569,53 @@ export default function Home() {
   }, [selectedWorkspaceId]);
 
   function selectRun(runId: string | null) {
+    if (selectedIdRef.current !== runId) clearTaskConversation();
     selectedIdRef.current = runId;
     setSelectedId(runId);
+  }
+
+  function selectWorkspace(workspaceId: string) {
+    if (selectedWorkspaceIdRef.current !== workspaceId) clearDispatcherConversation();
+    selectedWorkspaceIdRef.current = workspaceId;
+    setSelectedWorkspaceId(workspaceId);
+  }
+
+  function toggleWorkspace(workspaceId: string) {
+    selectWorkspace(workspaceId);
+    setExpandedWorkspaceIds((current) => {
+      const next = new Set(current);
+      if (next.has(workspaceId)) next.delete(workspaceId);
+      else next.add(workspaceId);
+      return next;
+    });
+  }
+
+  function applyDispatcherConversation(data: ConversationPayload) {
+    setDispatcherMessages(data.messages);
+    setDispatcherSessionId(data.sessionId);
+    setDispatcherSessions(data.sessions);
+    setDispatcherContext(data.context);
+  }
+
+  function applyTaskConversation(data: ConversationPayload) {
+    setChatMessages(data.messages);
+    setChatSessionId(data.sessionId);
+    setChatSessions(data.sessions);
+    setChatContext(data.context);
+  }
+
+  function clearTaskConversation() {
+    setChatMessages([]);
+    setChatSessionId("");
+    setChatSessions([]);
+    setChatContext(null);
+  }
+
+  function clearDispatcherConversation() {
+    setDispatcherMessages([]);
+    setDispatcherSessionId("");
+    setDispatcherSessions([]);
+    setDispatcherContext(null);
   }
 
   useEffect(() => {
@@ -542,7 +638,7 @@ export default function Home() {
     const data = await api<{ workspaces: Workspace[] }>("/api/workspaces");
     setWorkspaces(data.workspaces);
     const nextId = preferredId || selectedWorkspaceId || data.workspaces[0]?.id || "default";
-    setSelectedWorkspaceId(nextId);
+    selectWorkspace(nextId);
     return data.workspaces;
   }
 
@@ -621,8 +717,12 @@ export default function Home() {
         if (cancelled) return;
         setRuns(runData.runs);
         setWorkspaces(workspaceData.workspaces);
-        setSelectedWorkspaceId(workspaceData.workspaces.find((item) => item.id === "default")?.id || workspaceData.workspaces[0]?.id || "default");
-        selectRun(runData.runs[0]?.id || null);
+        const initialWorkspaceId = workspaceData.workspaces.find((item) => item.id === "default")?.id || workspaceData.workspaces[0]?.id || "default";
+        const initialRunId = runData.runs[0]?.id || null;
+        selectedWorkspaceIdRef.current = initialWorkspaceId;
+        selectedIdRef.current = initialRunId;
+        setSelectedWorkspaceId(initialWorkspaceId);
+        setSelectedId(initialRunId);
         setSystem(systemData);
         setSettings(settingsData);
       } catch (reason) {
@@ -643,8 +743,8 @@ export default function Home() {
 
   useEffect(() => {
     let cancelled = false;
-    void api<{ messages: ChatMessage[] }>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`)
-      .then((data) => { if (!cancelled) setDispatcherMessages(data.messages); })
+    void api<ConversationPayload>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`)
+      .then((data) => { if (!cancelled) applyDispatcherConversation(data); })
       .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "总调度对话读取失败"); });
     return () => { cancelled = true; };
   }, [selectedWorkspaceId]);
@@ -674,12 +774,12 @@ export default function Home() {
     let cancelled = false;
     void Promise.all([
       api<RunDetail>(`/api/runs/${selectedId}`),
-      api<{ messages: ChatMessage[] }>(`/api/runs/${selectedId}/agent/messages`),
+      api<ConversationPayload>(`/api/runs/${selectedId}/agent/messages`),
     ])
       .then(([data, agentData]) => {
         if (cancelled || selectedIdRef.current !== requestedRunId) return;
         setDetail(data);
-        setChatMessages(agentData.messages);
+        applyTaskConversation(agentData);
         setAgentAttachment(null);
         setViewStage(data.run.currentStage);
         setQaBlend(0.5);
@@ -714,13 +814,13 @@ export default function Home() {
         ? api<RunDetail>(`/api/runs/${selectedId}`)
         : Promise.resolve(null);
       const messagesRequest = shouldRefreshSelected
-        ? api<{ messages: ChatMessage[] }>(`/api/runs/${selectedId}/agent/messages`)
+        ? api<ConversationPayload>(`/api/runs/${selectedId}/agent/messages`)
         : Promise.resolve(null);
       void Promise.all([api<{ runs: Run[] }>("/api/runs"), detailRequest, messagesRequest])
         .then(([runData, detailData, messagesData]) => {
           setRuns(runData.runs);
           if (requestedRunId !== selectedIdRef.current) return;
-          if (messagesData) setChatMessages(messagesData.messages);
+          if (messagesData) applyTaskConversation(messagesData);
           if (!detailData) return;
           setDetail(detailData);
           setViewStage(detailData.run.currentStage);
@@ -829,7 +929,7 @@ export default function Home() {
           await api(`/api/runs/${runId}`, { method: "DELETE" });
           selectRun(null);
           setDetail(null);
-          setChatMessages([]);
+          clearTaskConversation();
           await refreshRuns();
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : "删除失败");
@@ -869,7 +969,6 @@ export default function Home() {
         body: JSON.stringify({ stage: stageIndex }),
       });
       setDetail(data);
-      setChatMessages([]);
       setViewStage(stageIndex);
       setPromptDraft({
         positivePrompt: data.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
@@ -932,7 +1031,7 @@ export default function Home() {
       });
       setWorkspaceForm({ name: "", description: "" });
       setShowWorkspaceCreate(false);
-      setSelectedWorkspaceId(workspace.id);
+      selectWorkspace(workspace.id);
       setForm((current) => ({ ...current, workspaceId: workspace.id }));
       await refreshWorkspaces(workspace.id);
     } catch (reason) {
@@ -1333,7 +1432,7 @@ export default function Home() {
     setDispatcherInput("");
     setDispatcherAttachment(null);
     try {
-      const data = await api<{ messages: ChatMessage[]; workspaces: Workspace[] }>("/api/dispatcher/messages", {
+      const data = await api<ConversationPayload & { workspaces: Workspace[] }>("/api/dispatcher/messages", {
         method: "POST",
         body: JSON.stringify({
           workspaceId: selectedWorkspaceId,
@@ -1341,7 +1440,7 @@ export default function Home() {
           image: attachment ? { name: attachment.name, mimeType: attachment.mimeType, data: attachment.data } : undefined,
         }),
       });
-      setDispatcherMessages(data.messages);
+      applyDispatcherConversation(data);
       setWorkspaces(data.workspaces);
       const runData = await api<{ runs: Run[] }>("/api/runs");
       setRuns(runData.runs);
@@ -1349,8 +1448,8 @@ export default function Home() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "总调度 Agent 请求失败");
       try {
-        const history = await api<{ messages: ChatMessage[] }>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`);
-        setDispatcherMessages(history.messages);
+        const history = await api<ConversationPayload>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`);
+        applyDispatcherConversation(history);
       } catch {
         setDispatcherMessages((items) => items.filter((item) => item.id !== optimistic.id));
       }
@@ -1365,6 +1464,42 @@ export default function Home() {
       await api("/api/dispatcher/cancel", { method: "POST" });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "取消总调度 Agent 失败");
+    }
+  }
+
+  async function startDispatcherSession() {
+    if (dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId) return;
+    setDispatcherSessionBusy(true);
+    setError("");
+    try {
+      const data = await api<ConversationPayload>("/api/dispatcher/sessions", {
+        method: "POST",
+        body: JSON.stringify({ workspaceId: selectedWorkspaceId }),
+      });
+      applyDispatcherConversation(data);
+      setDispatcherInput("");
+      setDispatcherAttachment(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "新建总调度会话失败");
+    } finally {
+      setDispatcherSessionBusy(false);
+    }
+  }
+
+  async function activateDispatcherSession(sessionId: string) {
+    if (sessionId === dispatcherSessionId || dispatcherBusy || dispatcherSessionBusy) return;
+    setDispatcherSessionBusy(true);
+    setError("");
+    try {
+      const data = await api<ConversationPayload>("/api/dispatcher/sessions/current", {
+        method: "PUT",
+        body: JSON.stringify({ workspaceId: selectedWorkspaceId, sessionId }),
+      });
+      applyDispatcherConversation(data);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "切换总调度会话失败");
+    } finally {
+      setDispatcherSessionBusy(false);
     }
   }
 
@@ -1413,7 +1548,7 @@ export default function Home() {
   async function viewNotification(notification: AppNotification) {
     setShowNotifications(false);
     setToastQueue((items) => items.filter((item) => item.id !== notification.id));
-    if (notification.workspaceId) setSelectedWorkspaceId(notification.workspaceId);
+    if (notification.workspaceId) selectWorkspace(notification.workspaceId);
     if (notification.runId) {
       selectRun(notification.runId);
       setScreen("task");
@@ -1463,7 +1598,7 @@ export default function Home() {
     }
 
     try {
-      const data = await api<{ messages: ChatMessage[]; detail: RunDetail }>(`/api/runs/${item.runId}/agent/messages`, {
+      const data = await api<ConversationPayload & { detail: RunDetail }>(`/api/runs/${item.runId}/agent/messages`, {
         method: "POST",
         body: JSON.stringify({
           message: item.message,
@@ -1471,7 +1606,7 @@ export default function Home() {
         }),
       });
       if (selectedIdRef.current === item.runId) {
-        setChatMessages(data.messages);
+        applyTaskConversation(data);
         setDetail(data.detail);
         setViewStage(data.detail.run.currentStage);
         setPromptDraft({
@@ -1485,8 +1620,8 @@ export default function Home() {
       setError(`${item.runName}：${reason instanceof Error ? reason.message : "Agent 请求失败"}`);
       if (selectedIdRef.current === item.runId) {
         try {
-          const history = await api<{ messages: ChatMessage[] }>(`/api/runs/${item.runId}/agent/messages`);
-          if (selectedIdRef.current === item.runId) setChatMessages(history.messages);
+          const history = await api<ConversationPayload>(`/api/runs/${item.runId}/agent/messages`);
+          if (selectedIdRef.current === item.runId) applyTaskConversation(history);
         } catch {
           setChatMessages((messages) => messages.filter((message) => message.id !== optimisticMessage.id));
         }
@@ -1508,6 +1643,43 @@ export default function Home() {
       await api(`/api/runs/${activeAgentRunId}/agent/cancel`, { method: "POST" });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "取消 Agent 失败");
+    }
+  }
+
+  async function startTaskSession() {
+    const runId = selectedIdRef.current;
+    if (!runId || agentBusy || agentQueue.length || chatSessionBusy) return;
+    setChatSessionBusy(true);
+    setError("");
+    try {
+      const data = await api<ConversationPayload>(`/api/runs/${runId}/agent/sessions`, { method: "POST" });
+      if (selectedIdRef.current === runId) {
+        applyTaskConversation(data);
+        setChatInput("");
+        setAgentAttachment(null);
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "新建任务 Agent 会话失败");
+    } finally {
+      setChatSessionBusy(false);
+    }
+  }
+
+  async function activateTaskSession(sessionId: string) {
+    const runId = selectedIdRef.current;
+    if (!runId || sessionId === chatSessionId || agentBusy || agentQueue.length || chatSessionBusy) return;
+    setChatSessionBusy(true);
+    setError("");
+    try {
+      const data = await api<ConversationPayload>(`/api/runs/${runId}/agent/sessions/current`, {
+        method: "PUT",
+        body: JSON.stringify({ sessionId }),
+      });
+      if (selectedIdRef.current === runId) applyTaskConversation(data);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "切换任务 Agent 会话失败");
+    } finally {
+      setChatSessionBusy(false);
     }
   }
 
@@ -1547,7 +1719,6 @@ export default function Home() {
   const selectedRunAgentBusy = agentBusy && activeAgentRunId === run?.id;
   const activeAgentRunName = runs.find((item) => item.id === activeAgentRunId)?.name;
   const selectedWorkspace = workspaces.find((item) => item.id === selectedWorkspaceId) || workspaces[0] || null;
-  const workspaceRuns = runs.filter((item) => item.workspaceId === selectedWorkspace?.id);
 
   return (
     <main className={`site-shell ${sidebarCollapsed ? "tasks-collapsed" : ""}`}>
@@ -1619,31 +1790,31 @@ export default function Home() {
             </div>
             <div className="workspace-list">
               {workspaces.map((workspace) => (
-                <div className={`workspace-group ${workspace.id === selectedWorkspaceId ? "selected" : ""}`} key={workspace.id}>
+                <div className={`workspace-group ${workspace.id === selectedWorkspaceId ? "selected" : ""} ${expandedWorkspaceIds.has(workspace.id) ? "expanded" : ""}`} key={workspace.id}>
                   <button type="button" className="workspace-item" onClick={() => {
-                    setSelectedWorkspaceId(workspace.id);
+                    toggleWorkspace(workspace.id);
                     setForm((current) => ({ ...current, workspaceId: workspace.id }));
-                  }}>
+                  }} aria-expanded={expandedWorkspaceIds.has(workspace.id)} aria-controls={`workspace-tasks-${workspace.id}`}>
                     <span className="workspace-icon"><FolderOpen size={17} /></span>
                     <span><strong>{workspace.name}</strong><small>{workspace.taskCount} 个任务 · {workspace.runningCount} 个运行中</small></span>
-                    <ChevronRight size={15} />
+                    <ChevronRight className="workspace-chevron" size={15} />
                   </button>
-                  {workspace.id === selectedWorkspaceId && (
+                  <div className="workspace-task-region" id={`workspace-tasks-${workspace.id}`} aria-hidden={!expandedWorkspaceIds.has(workspace.id)}>
                     <div className="workspace-task-list">
-                      {workspaceRuns.map((item) => (
+                      {runs.filter((item) => item.workspaceId === workspace.id).map((item) => (
                         <button type="button" key={item.id} onClick={() => { selectRun(item.id); setScreen("task"); }}>
                           <span>{item.name.slice(0, 1).toUpperCase()}</span>
                           <div><strong>{item.name}</strong><small>{item.pipelineType === "image_to_model" ? "图生模型" : "文生模型"} · {stages[item.currentStage].title}</small></div>
                           {item.jobStatus === "running" && <LoaderCircle className="spinning" size={14} />}
                         </button>
                       ))}
-                      {!workspaceRuns.length && <p>该工作空间还没有任务。</p>}
+                      {!runs.some((item) => item.workspaceId === workspace.id) && <p>该工作空间还没有任务。</p>}
                       <button type="button" className="workspace-new-task" onClick={() => {
                         setForm({ name: "", workspaceId: workspace.id, pipelineType: "text_to_model" });
                         setShowCreate(true);
                       }}><Plus size={14} />新建任务</button>
                     </div>
-                  )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1659,6 +1830,10 @@ export default function Home() {
             <header className="dispatcher-header">
               <div className="dispatcher-title"><span><Bot size={22} /></span><div><small>总调度中心</small><h1>Workspace Coordinator</h1><p>{selectedWorkspace ? `当前空间：${selectedWorkspace.name}` : "创建工作空间后开始调度"}</p></div></div>
               <div className="dispatcher-actions">
+                <div className="conversation-session-control dispatcher-session-control">
+                  <StyledSelect value={dispatcherSessionId} options={dispatcherSessions.map((session) => ({ value: session.id, label: `${session.title.replace(/\s+/g, " ")} · ${session.messageCount} 条` }))} onChange={(value) => void activateDispatcherSession(value)} ariaLabel="总调度 Agent 会话" disabled={dispatcherBusy || dispatcherSessionBusy} />
+                  <button className="icon-button" type="button" onClick={() => void startDispatcherSession()} disabled={dispatcherBusy || dispatcherSessionBusy} title="新建总调度会话" aria-label="新建总调度会话"><Plus size={17} /></button>
+                </div>
                 <button className="secondary-button" type="button" onClick={() => { setForm({ name: "", workspaceId: selectedWorkspaceId, pipelineType: "text_to_model" }); setShowCreate(true); }}><Plus size={16} />新建任务</button>
                 <button className="secondary-button" type="button" onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Settings size={16} />模型配置</button>
               </div>
@@ -1702,7 +1877,7 @@ export default function Home() {
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
               <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
-              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span>{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false}><Send size={16} />发送调度</button></div>
+              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span><ContextUsage context={dispatcherContext} />{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false}><Send size={16} />发送调度</button></div>
             </form>
             {dispatcherDragging && <div className="dispatcher-drop"><ImageIcon size={34} /><strong>松开以分析合集原画</strong><span>支持最多 12 MB 的 PNG、JPEG 或 WebP</span></div>}
           </section>
@@ -1710,10 +1885,12 @@ export default function Home() {
       ) : (
       <div className="app-frame" style={{ "--agent-width": `${agentCollapsed ? 60 : agentWidth}px` } as CSSProperties}>
         <aside className="task-sidebar">
+          <button className="sidebar-home-button" type="button" onClick={() => setScreen("home")} title="返回工作空间首页">
+            <Home size={17} /><span>返回首页</span>
+          </button>
           <div className="sidebar-header">
             <div className="sidebar-copy"><span>{workspaces.find((item) => item.id === run?.workspaceId)?.name || "工作空间"}</span><strong>{runs.filter((item) => item.workspaceId === run?.workspaceId).length} 个角色任务</strong></div>
             <div className="sidebar-actions">
-              <button className="icon-button" type="button" onClick={() => setScreen("home")} title="返回工作空间首页" aria-label="返回工作空间首页"><FolderOpen size={17} /></button>
               <button className="icon-button accent new-task-button" type="button" onClick={() => { setForm({ name: "", workspaceId: run?.workspaceId || selectedWorkspaceId, pipelineType: "text_to_model" }); setTaskSourceImage(null); setShowCreate(true); }} title="新建任务" aria-label="新建角色任务">
                 <Plus size={18} />
               </button>
@@ -1735,7 +1912,7 @@ export default function Home() {
               <button
                 key={item.id}
                 className={`run-item ${item.id === selectedId ? "selected" : ""}`}
-                onClick={() => { selectRun(item.id); setSelectedWorkspaceId(item.workspaceId); }}
+                onClick={() => { selectRun(item.id); selectWorkspace(item.workspaceId); }}
                 title={sidebarCollapsed ? item.name : undefined}
               >
                 <span className={`run-avatar ${item.jobStatus === "running" ? "running" : ""}`}>
@@ -2044,6 +2221,13 @@ export default function Home() {
             </div>
           </div>
           <div className="agent-summary">
+            <div className="agent-conversation-toolbar">
+              <span>会话</span>
+              <div className="conversation-session-control task-session-control">
+                <StyledSelect value={chatSessionId} options={chatSessions.map((session) => ({ value: session.id, label: `${session.title.replace(/\s+/g, " ")} · ${session.messageCount} 条` }))} onChange={(value) => void activateTaskSession(value)} ariaLabel="Asset Agent 会话" disabled={!run || agentBusy || agentQueue.length > 0 || chatSessionBusy} />
+                <button className="icon-button" type="button" onClick={() => void startTaskSession()} disabled={!run || agentBusy || agentQueue.length > 0 || chatSessionBusy} title="新建 Asset Agent 会话" aria-label="新建 Asset Agent 会话"><Plus size={16} /></button>
+              </div>
+            </div>
             <div className="agent-context">
               <span>任务上下文</span>
               <strong>{run?.name || "未选择任务"}</strong>
@@ -2150,6 +2334,7 @@ export default function Home() {
               <div className="composer-meta">
                 {run && <AgentPermissionMenu mode={taskAgentMode} onChange={(mode) => void changeAgentMode("task", mode)} title="选择当前任务 Agent 的变更审批方式" />}
                 <span><MessageSquare size={15} />{system?.agent.model || "当前会话"}</span>
+                <ContextUsage context={chatContext} compact />
               </div>
               <div className="composer-actions">
                 {agentBusy && <button className="cancel" type="button" onClick={cancelAgent} aria-label="停止当前 Agent 请求" title="停止当前 Agent 请求"><X size={17} /></button>}

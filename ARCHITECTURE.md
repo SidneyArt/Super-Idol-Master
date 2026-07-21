@@ -30,6 +30,7 @@ Super-Idol-Master/
 │   │   ├── agent-runtime.mjs         # Supervisor、多 Agent 与持续执行计划
 │   │   ├── approval-runtime.mjs      # 权限模式、审批队列与全局通知
 │   │   ├── coordinator-runtime.mjs   # 跨工作空间总调度与批量任务委派
+│   │   ├── conversation-context.mjs  # Agent 上下文窗口与 token 用量估算
 │   │   ├── settings.mjs              # 工作流、端点、模型和密钥配置
 │   │   └── pipeline/                 # 后端私有 Python / uv 子项目
 │   │       ├── pyproject.toml         # Python 版本约束与直接依赖
@@ -146,6 +147,8 @@ Super-Idol-Master/
 - `request`：所有变更型工具先写入审批队列；批准前不修改任务、不启动 Job；
 - `auto`：在既有状态机、单 GPU Job 和质量门禁范围内自动批准工具调用。
 
+两个层级的 Agent 也分别维护持久化会话。新建会话不会删除旧消息，用户可以从会话选择器恢复历史；总调度会话限定在所属工作空间，任务会话限定在所属 Run。前端显示按实际系统提示词和最近 24 条消息估算的上下文用量，以及模型的 131,072 token 上限。
+
 持续流水线目标只在登记目标时审批一次。批准代表允许系统自动执行到指定终点，但 SDPose、Visual QA、产物结构检查和失败暂停机制仍然生效。
 
 角色边界：
@@ -222,10 +225,14 @@ Super-Idol-Master/
 | `runs` | 所属工作空间、工作流类型、角色任务、当前阶段、Job、QA 和产物路径 |
 | `run_events` | 创建、推进、回退、Job 和质量检查事件 |
 | `app_settings` | ComfyUI 端点、工作流版本、模型和本地密钥配置 |
+| `dispatcher_conversations` | 总调度 Agent 的会话元数据和标题 |
+| `dispatcher_conversation_state` | 每个工作空间当前选中的总调度会话 |
 | `dispatcher_messages` | 总调度 Agent 按工作空间保存的对话历史 |
 | `agent_permission_modes` | 总调度和各任务 Agent 的 `request` / `auto` 权限模式 |
 | `approval_requests` | 待审批操作、序列化参数、状态、结果和失败信息 |
 | `app_notifications` | 待审批、阶段完成、失败和流程完成通知 |
+| `agent_conversations` | 每个 Run 的 Asset Agent 会话元数据和标题 |
+| `agent_conversation_state` | 每个 Run 当前选中的 Asset Agent 会话 |
 | `agent_messages` | 每个 Run 的 Agent 对话历史 |
 | `agent_role_runs` | Art Director 与 Visual QA 的执行状态和输入输出 |
 | `agent_reports` | 结构化 `PromptPlan` 与视觉质量报告 |
