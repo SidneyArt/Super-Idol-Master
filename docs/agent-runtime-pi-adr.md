@@ -82,7 +82,7 @@ Pi 只负责项目不值得重复实现的通用 Agent 能力：
 - Stepfun 云模型。
 - OpenAI、Anthropic 或其他云模型。
 - DGX 上通过 vLLM、SGLang、Ollama 或兼容网关提供的本地模型。
-- Supervisor、Art Director、Visual QA 使用不同模型的路由。
+- Supervisor 与各阶段专业 Agent 可以使用不同模型的路由。
 
 但“协议兼容”不等于“行为已经验证”。正式采用前必须验证 Stepfun 的工具调用、流式增量、图片输入、错误格式和 reasoning 参数兼容性。
 
@@ -160,7 +160,7 @@ ApprovalService          3D、绑骨、导出等一次性授权
 
 **产品事件与 Runtime 解耦。** 通过 Adapter 归一化事件后，前端、数据库和评测只依赖项目协议，Pi 可升级或替换。
 
-**适合角色化调用。** Supervisor、Art Director 和 Visual QA 可以共享同一 Runtime 和模型层，以不同提示词、工具集和输出 Schema 运行，不需要部署多个 Agent 服务。
+**适合角色化调用。** Supervisor 与各阶段专业 Agent 可以共享同一 Runtime 和模型层，以不同提示词、工具集和输出 Schema 运行，不需要部署多个 Agent 服务。
 
 **支持渐进式复杂度。** MVP 先做单 Agent 和少量工具；后续再增加上下文压缩、模型路由、续跑和视觉输入，不必一开始引入完整多 Agent 平台。
 

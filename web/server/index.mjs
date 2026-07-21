@@ -190,6 +190,18 @@ if (!dispatcherGenerationColumns.some((column) => column.name === "request_json"
 db.exec("CREATE INDEX IF NOT EXISTS dispatcher_generations_workspace_idx ON dispatcher_generations(workspace_id, created_at DESC)");
 db.exec("CREATE INDEX IF NOT EXISTS dispatcher_generations_session_idx ON dispatcher_generations(workspace_id, session_id, updated_at DESC)");
 db.prepare("UPDATE dispatcher_generations SET status = 'failed', message = '本地服务重启，合集图生成已中断', updated_at = ? WHERE status = 'running'").run(new Date().toISOString());
+db.exec(`
+  CREATE TABLE IF NOT EXISTS dispatcher_task_batches (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    session_id TEXT NOT NULL DEFAULT '',
+    target TEXT NOT NULL,
+    run_ids TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+  )
+`);
+db.exec("CREATE INDEX IF NOT EXISTS dispatcher_task_batches_session_idx ON dispatcher_task_batches(workspace_id, session_id, created_at DESC)");
 
 db.prepare(`
   UPDATE runs SET generation_status = 'failed', generation_message = '本地服务重启，原 DGX 任务已中断'
@@ -672,9 +684,28 @@ function inspectGlb(filePath, requireRig = false) {
     const meshCount = document.meshes?.length || 0;
     const skinCount = document.skins?.length || 0;
     const jointCount = (document.skins || []).reduce((total, skin) => total + (skin.joints?.length || 0), 0);
+    const primitiveCount = (document.meshes || []).reduce((total, mesh) => total + (mesh.primitives?.length || 0), 0);
+    const morphTargetCount = (document.meshes || []).reduce(
+      (total, mesh) => total + (mesh.primitives || []).reduce((sum, primitive) => sum + (primitive.targets?.length || 0), 0),
+      0,
+    );
     if (meshCount < 1) throw new Error("GLB 中没有可用 mesh");
     if (requireRig && (skinCount < 1 || jointCount < 1)) throw new Error("SkinTokens 产物没有 skin/joints，拒绝标记为绑骨完成");
-    return { meshCount, skinCount, jointCount, nodeCount: document.nodes?.length || 0 };
+    return {
+      fileSizeBytes: declaredLength,
+      meshCount,
+      primitiveCount,
+      morphTargetCount,
+      materialCount: document.materials?.length || 0,
+      textureCount: document.textures?.length || 0,
+      imageCount: document.images?.length || 0,
+      animationCount: document.animations?.length || 0,
+      skinCount,
+      jointCount,
+      nodeCount: document.nodes?.length || 0,
+      sceneCount: document.scenes?.length || 0,
+      defaultScenePresent: Number.isInteger(document.scene) && Boolean(document.scenes?.[document.scene]),
+    };
   } finally {
     closeSync(descriptor);
   }
@@ -755,7 +786,8 @@ function completeJob(runId, jobType, stdout) {
   const now = new Date().toISOString();
   const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const lastLine = lines.at(-1) || "";
-  let sourceKey = `${jobType}:${now}`;
+  const jobPromptId = getRunRow(runId)?.jobPromptId;
+  let sourceKey = `${jobType}:${jobPromptId || now}`;
   db.exec("BEGIN IMMEDIATE");
   try {
     if (jobType === "2d") {
@@ -851,6 +883,7 @@ function launchJob(run, jobType, processConfig = settingsStore.processConfig(job
         "--base-url", processConfig.api.baseUrl,
         "--model", processConfig.api.model,
         ...(sourceImage && existsSync(sourceImage) ? ["--source-image", sourceImage] : []),
+        ...(run.pipelineType === "image_to_model" ? ["--tpose-output"] : []),
       ]
     : [
         scripts[jobType],
@@ -922,12 +955,16 @@ function launchJob(run, jobType, processConfig = settingsStore.processConfig(job
       } else {
         const message = errorMessage || stderr || `Python 退出代码非零`;
         failJob(run.id, jobType, message);
-        assetAgent.handleJobFailed({ runId: run.id, jobType, message: message.trim().slice(-1200) });
+        void assetAgent.handleJobFailed({ runId: run.id, jobType, message: message.trim().slice(-1200) }).catch((error) => {
+          console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, error);
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "任务结果处理失败";
       failJob(run.id, jobType, message);
-      assetAgent.handleJobFailed({ runId: run.id, jobType, message });
+      void assetAgent.handleJobFailed({ runId: run.id, jobType, message }).catch((diagnosisError) => {
+        console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, diagnosisError);
+      });
     }
   };
 
@@ -1112,12 +1149,19 @@ const assetAgent = createAssetAgentRuntime({
   runStageJob,
   getAgentConfig: settingsStore.agentConfig,
   getRunImagePath: (runId) => getRunRow(runId)?.imagePathInternal || null,
+  getRunReferenceImagePath: (runId) => getRunRow(runId)?.sourceImagePathInternal || null,
+  getAssetInspection: (runId, assetKind) => {
+    const run = getRunRow(runId);
+    const filePath = assetKind === "rigged_model" ? run?.riggedModelPathInternal : run?.modelPathInternal;
+    if (!filePath || !existsSync(filePath)) throw new Error(`${assetKind === "rigged_model" ? "绑骨" : "静态"} GLB 不存在`);
+    return inspectGlb(filePath, assetKind === "rigged_model");
+  },
   addRunEvent: addEvent,
   getPermissionMode: (runId) => approvalRuntime.permission("task", runId),
   requestApproval: approvalRuntime.requestApproval,
 });
 
-async function createCoordinatorTasks({ workspaceId, tasks, image }) {
+async function createCoordinatorTasks({ workspaceId, tasks, image, sessionId = "", target = "model" }) {
   if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
   const usesImage = tasks.some((task) => pipelineType(task.pipelineType) === "image_to_model");
   let cropPaths = [];
@@ -1173,7 +1217,46 @@ async function createCoordinatorTasks({ workspaceId, tasks, image }) {
       requireSourceImage: task.pipelineType === "image_to_model",
     }));
   }
+  if (sessionId && created.length) {
+    db.prepare(`
+      INSERT INTO dispatcher_task_batches (id, workspace_id, session_id, target, run_ids, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      randomUUID(),
+      workspaceId,
+      String(sessionId).trim().slice(0, 80),
+      String(target || "model").trim().slice(0, 40),
+      JSON.stringify(created.map((item) => item.run.id)),
+      new Date().toISOString(),
+    );
+  }
   return created;
+}
+
+function listDispatcherTaskBatches(workspaceId, sessionId) {
+  return db.prepare(`
+    SELECT id, workspace_id AS workspaceId, session_id AS sessionId, target,
+           run_ids AS runIds, created_at AS createdAt
+    FROM dispatcher_task_batches
+    WHERE workspace_id = ? AND session_id = ?
+    ORDER BY created_at DESC LIMIT 30
+  `).all(workspaceId, sessionId).map((batch) => {
+    let runIds = [];
+    try {
+      const parsed = JSON.parse(batch.runIds || "[]");
+      if (Array.isArray(parsed)) runIds = parsed.filter((item) => typeof item === "string");
+    } catch {
+      runIds = [];
+    }
+    return {
+      id: batch.id,
+      workspaceId: batch.workspaceId,
+      sessionId: batch.sessionId,
+      target: batch.target,
+      createdAt: batch.createdAt,
+      tasks: runIds.map((runId) => serializeRun(getRunRow(runId))).filter(Boolean),
+    };
+  });
 }
 
 function getDispatcherGeneration(id) {
@@ -1397,7 +1480,8 @@ const coordinatorAgent = createCoordinatorRuntime({
   generateCharacterSheet: startCharacterSheetGeneration,
   getLatestGeneratedImage: getLatestDispatcherGenerationImage,
   getLatestCharacterSheetRequest,
-  delegateTask: (runId, target) => assetAgent.requestWorkflowPlan(runId, target),
+  getLatestTaskBatch: (workspaceId, sessionId) => listDispatcherTaskBatches(workspaceId, sessionId)[0] || null,
+  delegateTask: (runId, target) => delegateCoordinatorTask(runId, target),
   getImageModelStatus: () => {
     const settings = settingsStore.publicSettings();
     return settings.coordinator.imageModels;
@@ -1406,12 +1490,49 @@ const coordinatorAgent = createCoordinatorRuntime({
   requestApproval: approvalRuntime.requestApproval,
 });
 
+const COORDINATOR_DELEGATION_REASONS = new Set([
+  "总调度 Agent 委派持续执行目标",
+  "已批准的总调度任务委派",
+]);
+
+async function delegateCoordinatorTask(runId, target, reason = "总调度 Agent 委派持续执行目标") {
+  approvalRuntime.setPermission("task", runId, "auto");
+  return assetAgent.requestWorkflowPlan(runId, target, reason);
+}
+
+function isCoordinatorDelegationApproval(approval) {
+  return approval?.scopeType === "task"
+    && approval?.operation === "execute_pipeline_goal"
+    && Boolean(approval?.runId)
+    && COORDINATOR_DELEGATION_REASONS.has(approval?.payload?.reason);
+}
+
 approvalRuntime.setExecutor(async (approval) => {
   if (approval.scopeType === "task") {
     return assetAgent.executeApprovedOperation(approval.runId, approval.operation, approval.payload);
   }
   if (approval.operation === "create_workspace") return createWorkspaceRecord(approval.payload);
   if (approval.operation === "generate_character_sheet") return startCharacterSheetGeneration(approval.payload);
+  if (approval.operation === "continue_character_tasks") {
+    const workspaceId = String(approval.payload?.workspaceId || approval.workspaceId || "");
+    const target = approval.payload?.target;
+    const runIds = Array.isArray(approval.payload?.runIds) ? approval.payload.runIds : [];
+    const delegated = [];
+    for (const runId of runIds) {
+      const run = getRunRow(runId);
+      if (!run || run.workspaceId !== workspaceId) {
+        delegated.push({ runId, status: "failed", error: "任务不存在或不属于目标工作空间" });
+        continue;
+      }
+      try {
+        const result = await delegateCoordinatorTask(runId, target, "已批准继续推进现有任务");
+        delegated.push({ runId, status: result?.status || "submitted" });
+      } catch (error) {
+        delegated.push({ runId, status: "failed", error: error instanceof Error ? error.message : "委派失败" });
+      }
+    }
+    return { target, delegated };
+  }
   if (approval.operation === "create_character_tasks") {
     const { image, ...params } = approval.payload;
     const tasks = await createCoordinatorTasks({ ...params, image });
@@ -1419,7 +1540,7 @@ approvalRuntime.setExecutor(async (approval) => {
     if (params.delegateToAgents) {
       for (const task of tasks) {
         try {
-          const result = await assetAgent.requestWorkflowPlan(task.run.id, params.target, "已批准的总调度任务委派");
+          const result = await delegateCoordinatorTask(task.run.id, params.target, "已批准的总调度任务委派");
           delegated.push({ runId: task.run.id, status: result?.status || "submitted" });
         } catch (error) {
           delegated.push({ runId: task.run.id, status: "failed", error: error instanceof Error ? error.message : "委派失败" });
@@ -1430,6 +1551,17 @@ approvalRuntime.setExecutor(async (approval) => {
   }
   throw new Error("未知的总调度 Agent 审批操作");
 });
+
+for (const pending of approvalRuntime.listApprovals("pending")) {
+  const approval = approvalRuntime.getApproval(pending.id);
+  if (!isCoordinatorDelegationApproval(approval)) continue;
+  approvalRuntime.setPermission("task", approval.runId, "auto");
+  try {
+    await approvalRuntime.approve(approval.id);
+  } catch (error) {
+    console.error(`[coordinator] 恢复任务委派审批 ${approval.id} 失败`, error);
+  }
+}
 
 const server = createServer(async (req, res) => {
   setCors(req, res);
@@ -1580,6 +1712,13 @@ const server = createServer(async (req, res) => {
       const sessionId = url.searchParams.get("sessionId") || "";
       if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
       json(res, 200, { generations: listDispatcherGenerations(workspaceId, sessionId) });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/dispatcher/task-batches") {
+      const workspaceId = url.searchParams.get("workspaceId") || "default";
+      const sessionId = url.searchParams.get("sessionId") || "";
+      if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
+      json(res, 200, { batches: listDispatcherTaskBatches(workspaceId, sessionId) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/dispatcher/messages") {

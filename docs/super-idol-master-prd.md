@@ -694,6 +694,30 @@ character-name/
 - 对 3D 六视图截图进行可选 VLM 检查。
 - Agent 只解释结构化指标和截图问题。
 
+#### 5. Character Consistency Agent（角色一致性检查）
+
+- 有单体原画时比较原画与 T-Pose 的发型、脸部、服装、配色和关键配饰。
+- 没有参考图时只检查生成结果与角色提示词是否明显冲突。
+- 不重复 Visual QA 的姿态与背景职责，不直接推进流程。
+
+#### 6. Rigging QA Agent（绑骨质检）
+
+- 解释 GLB 解析器提供的 Skin、Joint、Node、Animation 和层级指标。
+- Skin 或 Joint 缺失时不能覆盖确定性硬门禁。
+- 没有标准动作渲染证据时不得声称已经验证蒙皮变形。
+
+#### 7. Export Specialist Agent（导出专员）
+
+- 默认检查通用 glTF 2.0 GLB 的结构、材质打包和绑定就绪度。
+- Unity、Unreal、VRM 或 Web 专属规范必须由用户明确指定，不能自行假设。
+- 只提交导出就绪报告，不写入或转换资产文件。
+
+#### 8. Workflow Doctor Agent（工作流诊断）
+
+- 在 Job 失败后根据阶段、错误消息和任务上下文分类可能原因。
+- 输出有界 `RepairPlan` 建议，不直接修改 ComfyUI 工作流、启动重试或改变 Run。
+- 诊断证据不足时明确要求人工检查，不能编造日志。
+
 ### 9.3 协作方式
 
 Agent 不通过自由文本互相聊天，而是共享受版本控制的黑板状态：
@@ -1005,7 +1029,7 @@ approval.required
 - 原生图片理解。
 - 结构化工具调用。
 - 概念图/T-Pose 对比和问题解释。
-- Supervisor、Art Director、Visual QA 三个受控角色。
+- Supervisor、Art Director、Visual QA、Character Consistency、Asset Inspector、Rigging QA、Export Specialist 与 Workflow Doctor 受控角色。
 
 调用要求：
 

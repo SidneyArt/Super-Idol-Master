@@ -21,7 +21,12 @@ Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生�
 - Pi 驱动的多 Agent 协作：
   - `Supervisor` 负责理解目标、修改状态和编排 Job；
   - `Art Director` 负责检查并修订生成提示词；
-  - `Visual QA` 负责复核单主体、全身、朝向、遮挡和背景。
+  - `Visual QA` 负责复核单主体、全身、朝向、遮挡和背景；
+  - `Character Consistency` 负责检查原画、T-Pose 与角色设定的身份连续性；
+  - `Asset Inspector` 负责解释静态 GLB 的 mesh、材质和场景结构指标；
+  - `Rigging QA` 负责解释 skin、joints、层级和动画结构指标；
+  - `Export Specialist` 负责最终 GLB 的通用交付就绪检查；
+  - `Workflow Doctor` 在 Job 失败后提交有界诊断与安全修复建议。
 - 目标驱动的持续执行。用户说“帮我一路生成到模型”后，系统会自动执行后续阶段，不再逐步等待人工确认；只有质量门禁失败或外部任务异常时才暂停。
 
 ## 工作流程
@@ -37,14 +42,18 @@ Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生�
   │
   ├─ SDPose：确定性关键点与姿态硬门禁
   ├─ Visual QA：视觉语义复核
+  ├─ Character Consistency：角色身份连续性复核
   ▼
 静态 3D 模型
   │
   ├─ GLB mesh 结构检查
+  ├─ Asset Inspector：静态资产结构解释
   ▼
 自动绑骨
   │
   ├─ GLB skin / joints 结构检查
+  ├─ Rigging QA：绑骨结构复核
+  ├─ Export Specialist：导出就绪检查
   ▼
 资产导出
 ```
@@ -69,7 +78,7 @@ Asset Agent 支持把以下自然语言目标登记为持久化执行计划：
 生成并检查 T-Pose
 ```
 
-异步 GPU Job 完成后，后端会自动恢复编排并启动下一阶段。SDPose 不通过、Visual QA 未放行、Job 失败或本地服务重启时，计划会明确标记为暂停或失败，不会静默越过质量门禁。
+异步 GPU Job 完成后，后端会自动恢复编排并启动下一阶段。任一确定性硬门禁或专业 Agent 未放行、Job 失败或本地服务重启时，计划会明确标记为暂停或失败，不会静默越过质量门禁。Job 失败时 Workflow Doctor 只生成诊断报告，不会自行修改工作流或重试。
 
 ## 快速开始
 

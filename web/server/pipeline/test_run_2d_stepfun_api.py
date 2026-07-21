@@ -2,8 +2,17 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+from PIL import Image
+
 from run_2d_stepfun_api import (
+    MAX_PROMPT_CHARS,
+    MIN_EDIT_ASPECT_RATIO,
+    TPOSE_CANVAS_SIZE,
+    TPOSE_POSITIVE_CONSTRAINTS,
     endpoint_for,
+    prepare_edit_source,
+    prepare_tpose_source,
+    prompt_with_required_constraints,
     request_with_content_retry,
     safe_semantic_rewrite,
     submit_request,
@@ -33,6 +42,47 @@ class FakeSession:
 
 
 class StepFunImageApiTests(unittest.TestCase):
+    def test_tall_edit_source_is_padded_into_supported_aspect_ratio(self):
+        with TemporaryDirectory() as directory:
+            source_path = Path(directory) / "too-tall.png"
+            destination = Path(directory) / "accepted.png"
+            Image.new("RGB", (310, 936), (255, 0, 0)).save(source_path)
+
+            prepare_edit_source(source_path, destination)
+
+            with Image.open(destination) as image:
+                self.assertGreaterEqual(image.width / image.height, MIN_EDIT_ASPECT_RATIO)
+                self.assertGreater(image.width, 310)
+                self.assertEqual(image.getpixel((0, image.height // 2)), (255, 255, 255))
+                self.assertEqual(image.getpixel((image.width // 2, image.height // 2)), (255, 0, 0))
+
+    def test_tpose_source_is_square_with_safe_white_margin(self):
+        with TemporaryDirectory() as directory:
+            source_path = Path(directory) / "portrait.png"
+            destination = Path(directory) / "square.png"
+            Image.new("RGB", (240, 800), (255, 0, 0)).save(source_path)
+
+            prepare_tpose_source(source_path, destination)
+
+            with Image.open(destination) as image:
+                self.assertEqual(image.size, (TPOSE_CANVAS_SIZE, TPOSE_CANVAS_SIZE))
+                self.assertEqual(image.getpixel((0, 0)), (255, 255, 255))
+                self.assertEqual(image.getpixel((TPOSE_CANVAS_SIZE // 2, TPOSE_CANVAS_SIZE // 2)), (255, 0, 0))
+                self.assertEqual(
+                    image.getpixel((TPOSE_CANVAS_SIZE // 2, round(TPOSE_CANVAS_SIZE * 0.08))),
+                    (255, 255, 255),
+                )
+
+    def test_tpose_constraints_survive_long_prompt_truncation(self):
+        prompt = prompt_with_required_constraints("角色设定" * 300, TPOSE_POSITIVE_CONSTRAINTS, "正向提示词")
+
+        self.assertLessEqual(len(prompt), MAX_PROMPT_CHARS)
+        self.assertTrue(prompt.endswith(TPOSE_POSITIVE_CONSTRAINTS))
+        self.assertIn("左右手", prompt)
+        self.assertIn("完全空置", prompt)
+        self.assertIn("所有手持物", prompt)
+        self.assertIn("12%纯白安全边距", prompt)
+
     def test_text_generation_uses_generation_endpoint_and_json(self):
         session = FakeSession()
         endpoint = endpoint_for("https://api.stepfun.com/step_plan/v1", "generation")

@@ -125,18 +125,20 @@ type RunEvent = { id: number; eventType: string; stage: number; message: string;
 type AgentRoleReport = {
   summary?: string;
   decision?: "approve" | "revise" | "manual_review" | "pass" | "repairable" | "reject";
+  recommendation?: "retry_same" | "retry_with_changes" | "manual_intervention" | "abort";
   issues?: string[];
+  warnings?: string[];
   positivePrompt?: string;
   negativePrompt?: string;
 };
 type AgentRoleRun = {
   id: string;
-  agentRole: "art_director" | "visual_qa";
+  agentRole: "art_director" | "visual_qa" | "character_consistency" | "asset_inspector" | "rigging_qa" | "export_specialist" | "workflow_doctor";
   triggerType: string;
   sourceKey: string;
   status: "running" | "succeeded" | "failed";
   errorMessage: string;
-  reportType: "prompt_plan" | "image_quality_report" | null;
+  reportType: "prompt_plan" | "image_quality_report" | "character_consistency_report" | "asset_quality_report" | "rigging_quality_report" | "export_readiness_report" | "workflow_diagnosis_report" | null;
   report: AgentRoleReport | null;
   createdAt: string;
   completedAt: string | null;
@@ -220,9 +222,18 @@ type DispatcherGeneration = {
   createdAt: string;
   updatedAt: string;
 };
+type DispatcherTaskBatch = {
+  id: string;
+  workspaceId: string;
+  sessionId: string;
+  target: "concept_image" | "validated_tpose" | "model" | "rigged_model" | "export";
+  tasks: Run[];
+  createdAt: string;
+};
 type DispatcherTimelineItem =
   | { kind: "message"; createdAt: string; item: ChatMessage }
   | { kind: "generation"; createdAt: string; item: DispatcherGeneration }
+  | { kind: "taskBatch"; createdAt: string; item: DispatcherTaskBatch }
   | { kind: "approval"; createdAt: string; item: ApprovalRequest };
 
 function dispatcherTimelineTime(createdAt: string) {
@@ -236,7 +247,7 @@ function compareDispatcherTimelineItems(left: DispatcherTimelineItem, right: Dis
 
   const rank = (entry: DispatcherTimelineItem) => entry.kind === "message"
     ? entry.item.role === "user" ? 0 : 3
-    : entry.kind === "generation" ? 1 : 2;
+    : entry.kind === "generation" ? 1 : entry.kind === "taskBatch" ? 2 : 3;
   const rankDifference = rank(left) - rank(right);
   if (rankDifference) return rankDifference;
 
@@ -247,6 +258,7 @@ function buildDispatcherTimeline(
   messages: ChatMessage[],
   generations: DispatcherGeneration[],
   approvalRequests: ApprovalRequest[],
+  taskBatches: DispatcherTaskBatch[],
 ) {
   const sortedMessages = [...messages].sort((left, right) => {
     const timeDifference = dispatcherTimelineTime(left.createdAt) - dispatcherTimelineTime(right.createdAt);
@@ -255,19 +267,25 @@ function buildDispatcherTimeline(
     return left.id - right.id;
   });
   const approvalsByAssistant = new Map<number, ApprovalRequest[]>();
+  const batchesByAssistant = new Map<number, DispatcherTaskBatch[]>();
   const unanchoredApprovals: ApprovalRequest[] = [];
+  const unanchoredBatches: DispatcherTaskBatch[] = [];
+
+  const followingAssistant = (createdAt: string) => {
+    const itemTime = dispatcherTimelineTime(createdAt);
+    return sortedMessages.find((message) => {
+      if (message.role !== "assistant" || dispatcherTimelineTime(message.createdAt) < itemTime) return false;
+      const assistantTime = dispatcherTimelineTime(message.createdAt);
+      return !sortedMessages.some((candidate) => candidate.role === "user"
+        && dispatcherTimelineTime(candidate.createdAt) > itemTime
+        && dispatcherTimelineTime(candidate.createdAt) <= assistantTime);
+    });
+  };
 
   [...approvalRequests]
     .sort((left, right) => dispatcherTimelineTime(left.createdAt) - dispatcherTimelineTime(right.createdAt) || left.id - right.id)
     .forEach((approval) => {
-      const approvalTime = dispatcherTimelineTime(approval.createdAt);
-      const assistant = sortedMessages.find((message) => {
-        if (message.role !== "assistant" || dispatcherTimelineTime(message.createdAt) < approvalTime) return false;
-        const assistantTime = dispatcherTimelineTime(message.createdAt);
-        return !sortedMessages.some((candidate) => candidate.role === "user"
-          && dispatcherTimelineTime(candidate.createdAt) > approvalTime
-          && dispatcherTimelineTime(candidate.createdAt) <= assistantTime);
-      });
+      const assistant = followingAssistant(approval.createdAt);
 
       if (!assistant) {
         unanchoredApprovals.push(approval);
@@ -278,18 +296,34 @@ function buildDispatcherTimeline(
       approvalsByAssistant.set(assistant.id, anchored);
     });
 
+  [...taskBatches]
+    .sort((left, right) => dispatcherTimelineTime(left.createdAt) - dispatcherTimelineTime(right.createdAt))
+    .forEach((batch) => {
+      const assistant = followingAssistant(batch.createdAt);
+      if (!assistant) {
+        unanchoredBatches.push(batch);
+        return;
+      }
+      const anchored = batchesByAssistant.get(assistant.id) || [];
+      anchored.push(batch);
+      batchesByAssistant.set(assistant.id, anchored);
+    });
+
   const baseTimeline: DispatcherTimelineItem[] = [
     ...messages.map((item) => ({ kind: "message" as const, createdAt: item.createdAt, item })),
     ...generations.map((item) => ({ kind: "generation" as const, createdAt: item.createdAt, item })),
+    ...unanchoredBatches.map((item) => ({ kind: "taskBatch" as const, createdAt: item.createdAt, item })),
     ...unanchoredApprovals.map((item) => ({ kind: "approval" as const, createdAt: item.createdAt, item })),
   ].sort(compareDispatcherTimelineItems);
 
   return baseTimeline.flatMap((entry) => {
     if (entry.kind !== "message" || entry.item.role !== "assistant") return [entry];
     const anchored = approvalsByAssistant.get(entry.item.id) || [];
+    const anchoredBatches = batchesByAssistant.get(entry.item.id) || [];
     return [
       entry,
       ...anchored.map((item) => ({ kind: "approval" as const, createdAt: item.createdAt, item })),
+      ...anchoredBatches.map((item) => ({ kind: "taskBatch" as const, createdAt: item.createdAt, item })),
     ];
   });
 }
@@ -632,6 +666,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [dispatcherAttachment, setDispatcherAttachment] = useState<AgentAttachment | null>(null);
   const [dispatcherDragging, setDispatcherDragging] = useState(false);
   const [dispatcherGenerations, setDispatcherGenerations] = useState<DispatcherGeneration[]>([]);
+  const [dispatcherTaskBatches, setDispatcherTaskBatches] = useState<DispatcherTaskBatch[]>([]);
   const dispatcherGenerationScrollKey = dispatcherGenerations.map((item) => `${item.id}:${item.updatedAt}`).join("|");
   const [showWorkspaceCreate, setShowWorkspaceCreate] = useState(false);
   const [workspaceForm, setWorkspaceForm] = useState({ name: "", description: "" });
@@ -743,6 +778,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     setDispatcherSessions([]);
     setDispatcherContext(null);
     setDispatcherGenerations([]);
+    setDispatcherTaskBatches([]);
   }
 
   useEffect(() => {
@@ -776,10 +812,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     const controlParams = new URLSearchParams({ workspaceId });
     if (runId) controlParams.set("runId", runId);
     if (sessionId) controlParams.set("sessionId", sessionId);
-    const [controls, notificationData, generationData] = await Promise.all([
+    const [controls, notificationData, generationData, batchData] = await Promise.all([
       api<{ coordinatorMode: ApprovalMode; taskMode: ApprovalMode | null; approvals: ApprovalRequest[] }>(`/api/agent-controls?${controlParams.toString()}`),
       api<{ notifications: AppNotification[] }>("/api/notifications?limit=50"),
       api<{ generations: DispatcherGeneration[] }>(`/api/dispatcher/generations?workspaceId=${encodeURIComponent(workspaceId)}&sessionId=${encodeURIComponent(sessionId)}`),
+      api<{ batches: DispatcherTaskBatch[] }>(`/api/dispatcher/task-batches?workspaceId=${encodeURIComponent(workspaceId)}&sessionId=${encodeURIComponent(sessionId)}`),
     ]);
     setCoordinatorMode(controls.coordinatorMode);
     if (controls.taskMode) setTaskAgentMode(controls.taskMode);
@@ -787,6 +824,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     setNotifications(notificationData.notifications);
     if (workspaceId === selectedWorkspaceIdRef.current && sessionId === dispatcherSessionIdRef.current) {
       setDispatcherGenerations(generationData.generations);
+      setDispatcherTaskBatches(batchData.batches);
     }
     const newest = notificationData.notifications[0];
     if (newest) {
@@ -986,7 +1024,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     && item.sessionId === dispatcherSessionId
   ));
   const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
-  const dispatcherTimeline = buildDispatcherTimeline(dispatcherMessages, dispatcherGenerations, coordinatorApprovals);
+  const dispatcherTimeline = buildDispatcherTimeline(dispatcherMessages, dispatcherGenerations, coordinatorApprovals, dispatcherTaskBatches);
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
 
   useEffect(() => {
@@ -1036,6 +1074,23 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     (item.reportType === "image_quality_report" || item.agentRole === "visual_qa")
       && item.sourceKey === `qa:${run?.jobPromptId}`,
   );
+  const characterConsistencyRun = selectedDetail?.agentRoleRuns?.find((item) =>
+    (item.reportType === "character_consistency_report" || item.agentRole === "character_consistency")
+      && item.sourceKey === `qa:${run?.jobPromptId}`,
+  );
+  const assetInspectorRun = selectedDetail?.agentRoleRuns?.find((item) => item.agentRole === "asset_inspector");
+  const riggingQaRun = selectedDetail?.agentRoleRuns?.find((item) => item.agentRole === "rigging_qa");
+  const exportSpecialistRun = selectedDetail?.agentRoleRuns?.find((item) => item.agentRole === "export_specialist");
+  const workflowDoctorRun = selectedDetail?.agentRoleRuns?.find((item) => item.agentRole === "workflow_doctor");
+  const specialistRoleRuns = [
+    { run: artDirectorRun, name: "Art Director", running: "正在检查提示词", fallback: "提示词检查完成", icon: "art" },
+    { run: visualQaRun, name: "Visual QA", running: "正在复核姿态、遮挡和背景", fallback: "视觉质检完成", icon: "qa" },
+    { run: characterConsistencyRun, name: "Character Consistency", running: "正在检查角色身份连续性", fallback: "角色一致性检查完成", icon: "qa" },
+    { run: assetInspectorRun, name: "Asset Inspector", running: "正在检查静态 GLB", fallback: "3D 资产检查完成", icon: "qa" },
+    { run: riggingQaRun, name: "Rigging QA", running: "正在检查 skin、joints 与层级", fallback: "绑骨检查完成", icon: "qa" },
+    { run: exportSpecialistRun, name: "Export Specialist", running: "正在检查导出就绪度", fallback: "导出检查完成", icon: "qa" },
+    { run: workflowDoctorRun, name: "Workflow Doctor", running: "正在诊断工作流失败", fallback: "失败诊断完成", icon: "qa" },
+  ].filter((item): item is typeof item & { run: AgentRoleRun } => Boolean(item.run));
   const current = run?.currentStage ?? 0;
   const activeStages = run?.pipelineType === "image_to_model"
     ? stages.map((item, index) => index === 0
@@ -1661,6 +1716,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     setError("");
     setDispatcherMessages([]);
     setDispatcherGenerations([]);
+    setDispatcherTaskBatches([]);
     setDispatcherContext(null);
     dispatcherSessionIdRef.current = "";
     setDispatcherSessionId("");
@@ -1691,6 +1747,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     setError("");
     setDispatcherMessages([]);
     setDispatcherGenerations([]);
+    setDispatcherTaskBatches([]);
     setDispatcherContext(null);
     dispatcherSessionIdRef.current = "";
     setDispatcherSessionId("");
@@ -2155,6 +2212,28 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                       </div>
                     );
                   }
+                  if (entry.kind === "taskBatch") {
+                    const batch = entry.item;
+                    const targetLabel = batch.target === "concept_image" ? "概念图" : batch.target === "validated_tpose" ? "T-Pose 检查" : batch.target === "model" ? "静态 3D 模型" : batch.target === "rigged_model" ? "自动绑骨" : "资产导出";
+                    return (
+                      <div className="dispatcher-timeline-card-row" key={`task-batch-${batch.id}`}>
+                        <section className="dispatcher-task-batch">
+                          <header><span><Box size={16} /></span><div><strong>角色拆分结果</strong><small>{batch.tasks.length} 个独立任务 · 目标：{targetLabel}</small></div></header>
+                          <div className="dispatcher-task-grid">
+                            {batch.tasks.map((task) => {
+                              const preview = task.sourcePreviewPath || task.previewPath;
+                              const status = task.jobStatus === "running" ? `${task.jobProgress}%` : task.status === "completed" ? "已完成" : stages[Math.min(task.currentStage, stages.length - 1)].title;
+                              return <button type="button" key={task.id} onClick={() => selectTask(task)}>
+                                {preview ? <Image src={preview} alt={task.name} width={240} height={240} unoptimized /> : <span className="dispatcher-task-placeholder"><Box size={22} /></span>}
+                                <span><strong>{task.name}</strong><small>{task.pipelineType === "image_to_model" ? "图生模型" : "文生模型"} · {status}</small></span>
+                                {task.jobStatus === "running" && <i style={{ "--task-progress": `${task.jobProgress}%` } as CSSProperties} />}
+                              </button>;
+                            })}
+                          </div>
+                        </section>
+                      </div>
+                    );
+                  }
                   const message = entry.item;
                   return (
                     <div className={`dispatcher-message ${message.role}`} key={`message-${message.id}`}>
@@ -2534,11 +2613,14 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 <small>{selectedDetail.agentWorkflowPlan.message}</small>
               </section>
             )}
-            {(artDirectorRun || visualQaRun) && (
+            {specialistRoleRuns.length > 0 && (
               <section className="agent-role-activity" aria-label="多 Agent 协作记录">
                 <span>多 Agent 协作</span>
-                {artDirectorRun && <div className={`agent-role-row ${artDirectorRun.status}`}><Sparkles size={14} /><div><strong>Art Director</strong><small>{artDirectorRun.status === "running" ? "正在检查提示词" : artDirectorRun.status === "succeeded" ? artDirectorRun.report?.summary || "提示词检查完成" : artDirectorRun.errorMessage}</small></div><em>{artDirectorRun.status === "running" ? "运行中" : artDirectorRun.status === "succeeded" ? "已完成" : "失败"}</em></div>}
-                {visualQaRun && <div className={`agent-role-row ${visualQaRun.status}`}><Bot size={14} /><div><strong>Visual QA</strong><small>{visualQaRun.status === "running" ? "正在复核朝向、遮挡和背景" : visualQaRun.status === "succeeded" ? visualQaRun.report?.summary || "视觉质检完成" : visualQaRun.errorMessage}</small></div><em>{visualQaRun.status === "running" ? "运行中" : visualQaRun.status === "succeeded" ? "已完成" : "失败"}</em></div>}
+                {specialistRoleRuns.map((item) => <div className={`agent-role-row ${item.run.status}`} key={item.run.id}>
+                  {item.icon === "art" ? <Sparkles size={14} /> : <Bot size={14} />}
+                  <div><strong>{item.name}</strong><small>{item.run.status === "running" ? item.running : item.run.status === "succeeded" ? item.run.report?.summary || item.fallback : item.run.errorMessage}</small></div>
+                  <em>{item.run.status === "running" ? "运行中" : item.run.status === "succeeded" ? "已完成" : "失败"}</em>
+                </div>)}
               </section>
             )}
           </div>

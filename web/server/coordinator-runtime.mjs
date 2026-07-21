@@ -61,6 +61,21 @@ export function classifyCoordinatorIntent(message, hasAttachment) {
   );
   const asksForTasks = /(拆分|拆成|分成).{0,12}(任务|角色)|创建.{0,8}(多个|数个|\d+\s*个).{0,8}任务|分别.{0,20}(模型|绑骨)|每个角色.{0,20}(任务|模型|绑骨)/i.test(text);
   const asksForSplit = /(拆分|拆开|分拆)(?:吧|一下|角色|任务|这张|上(?:一张|图)|合集|原画)?/i.test(text);
+  const asksToAdvanceExistingTasks = (
+    /(?:继续|接着|推进|往下).{0,24}(?:这些|这几个|上述|刚才|已有|现有)?(?:角色)?任务/i.test(text)
+    || /(?:这些|这几个|上述|刚才|已有|现有).{0,12}(?:角色)?任务.{0,24}(?:继续|推进|做到|生成到|进入)/i.test(text)
+  );
+  const requestedTarget = /t[- ]?pose|t姿势|姿态检查|姿态质检/i.test(text)
+    ? "validated_tpose"
+    : /绑骨|骨骼|rig/i.test(text)
+      ? "rigged_model"
+      : /导出|交付|export/i.test(text)
+        ? "export"
+        : /3d|模型|model/i.test(text)
+          ? "model"
+          : /概念图|2d/i.test(text)
+            ? "concept_image"
+            : null;
   const asksForRegeneration = (
     /(?:再|重新)(?:生成|做|画|跑)|重做|重画|再来一张|再跑一次/i.test(text)
     || /(?:效果|结果|图片|图|画面).{0,12}(?:不好|不太好|不对|不满意|有问题|错误|失败)/i.test(text)
@@ -76,9 +91,11 @@ export function classifyCoordinatorIntent(message, hasAttachment) {
   );
   return {
     asksForSplit,
+    asksToAdvanceExistingTasks,
+    requestedTarget,
     asksAboutImage,
     asksForRegeneration,
-    singleSheetOnly: asksForSingleSheet && !asksForTasks && !asksForSplit && !asksAboutImage && !asksForRegeneration,
+    singleSheetOnly: asksForSingleSheet && !asksForTasks && !asksForSplit && !asksToAdvanceExistingTasks && !asksAboutImage && !asksForRegeneration,
   };
 }
 
@@ -92,6 +109,7 @@ export function createCoordinatorRuntime({
   generateCharacterSheet,
   getLatestGeneratedImage,
   getLatestCharacterSheetRequest,
+  getLatestTaskBatch,
   getImageModelStatus,
   getPermissionMode,
   requestApproval,
@@ -289,6 +307,7 @@ export function createCoordinatorRuntime({
 9. 最终用 Markdown 简洁说明实际启动的是单张合集图生成，还是多个任务及其委派目标。
 10. 若本轮附带或自动继承了图片，必须依据实际视觉内容回答人数、角色和画面问题；不得声称当前没有图片，也不得要求用户重新上传。只有无法从画面确认的细节才说明不确定。
 11. 用户对已生成图片提出风格修改、效果不满意、人物缺失/多余或要求再次生成时，必须创建新的 generate_character_sheet 审批或生成 Job。没有真实工具结果时，禁止声称“已重新提交”“已启动”或“等待审批”。
+12. 用户要求继续、推进或把“这些/这几个/已有任务”做到某阶段时，必须使用 continue_latest_tasks；绝对不得再次调用 create_character_tasks。
 
 当前工作空间：${JSON.stringify(current)}
 全部工作空间：${JSON.stringify(workspaces)}
@@ -298,6 +317,50 @@ export function createCoordinatorRuntime({
 ${transcript.slice(-12000)}
 
 当前权限模式：${getPermissionMode() === "auto" ? "Auto（变更工具自动批准）" : "请求批准（变更工具只创建审批，批准前不得声称已执行）"}`;
+  }
+
+  async function continueLatestTasks(workspaceId, sessionId, target, reason) {
+    const batch = getLatestTaskBatch?.(workspaceId, sessionId) || null;
+    const tasks = Array.isArray(batch?.tasks) ? batch.tasks.filter((task) => task?.id) : [];
+    if (!tasks.length) {
+      return {
+        actions: [],
+        assistantText: "当前会话没有可继续推进的最近一批角色任务；未创建任何新任务。",
+      };
+    }
+    const runIds = tasks.map((task) => task.id);
+    if (getPermissionMode() !== "auto") {
+      const approval = requestApproval({
+        scopeType: "coordinator",
+        scopeId: "global",
+        workspaceId,
+        operation: "continue_character_tasks",
+        title: `继续推进现有 ${runIds.length} 个任务`,
+        description: `不会创建新任务；仅把最近一批现有任务推进到 ${target}。`,
+        payload: { workspaceId, sessionId, runIds, target, reason: String(reason || "继续现有任务").slice(0, 500) },
+      });
+      return {
+        actions: [{ tool: "approval_required", operation: "continue_character_tasks", approvalId: approval.id }],
+        assistantText: `已为最近一批 ${runIds.length} 个现有任务提交继续执行审批；不会创建新的角色任务。`,
+      };
+    }
+
+    const delegated = [];
+    for (const task of tasks) {
+      try {
+        const result = await delegateTask(task.id, target);
+        delegated.push({ runId: task.id, status: result?.status || "submitted" });
+      } catch (error) {
+        delegated.push({ runId: task.id, status: "failed", error: error instanceof Error ? error.message : "委派失败" });
+      }
+    }
+    const failed = delegated.filter((item) => item.status === "failed");
+    return {
+      actions: [{ tool: "continue_character_tasks", count: tasks.length, target, delegated }],
+      assistantText: failed.length
+        ? `已继续推进最近一批 ${tasks.length} 个现有任务到 ${target}，其中 ${failed.length} 个启动失败；没有创建新任务。`
+        : `已继续推进最近一批 ${tasks.length} 个现有任务到 ${target}；没有创建新任务。`,
+    };
   }
 
   function tools(workspaceId, attachment, execution, intent) {
@@ -384,6 +447,24 @@ ${transcript.slice(-12000)}
         },
       },
       {
+        name: "continue_latest_tasks",
+        label: "继续最近一批任务",
+        description: "继续推进当前会话最近一次拆分创建的现有任务，不创建任何新任务。",
+        parameters: Type.Object({
+          target: Type.Union([
+            Type.Literal("concept_image"), Type.Literal("validated_tpose"), Type.Literal("model"),
+            Type.Literal("rigged_model"), Type.Literal("export"),
+          ]),
+          reason: Type.String({ minLength: 1, maxLength: 500 }),
+        }),
+        executionMode: "sequential",
+        execute: async (_id, params) => {
+          const result = await continueLatestTasks(workspaceId, execution.sessionId, params.target, params.reason);
+          execution.actions.push(...result.actions);
+          return textResult(result.assistantText, result);
+        },
+      },
+      {
         name: "create_character_tasks",
         label: "拆分并创建角色任务",
         description: "批量创建角色任务；有合集图片时会按归一化裁切框生成单体原画，并可委派每个任务的专属 Agent 自动执行。",
@@ -411,6 +492,7 @@ ${transcript.slice(-12000)}
         executionMode: "sequential",
         execute: async (_id, params) => {
           if (intent.singleSheetOnly) throw new Error("用户要求的是单张角色合集图，禁止创建多个任务；请改用 generate_character_sheet");
+          if (intent.asksToAdvanceExistingTasks) throw new Error("用户要求继续现有任务，禁止重复创建；请改用 continue_latest_tasks");
           if (getPermissionMode() !== "auto") {
             const approval = requestApproval({
               scopeType: "coordinator",
@@ -426,7 +508,7 @@ ${transcript.slice(-12000)}
             execution.actions.push({ tool: "approval_required", approvalId: approval.id });
             return textResult(`批量创建与调度需要批准，已提交审批：“${approval.title}”。`, { approval });
           }
-          const tasks = await createCharacterTasks({ ...params, image: attachment });
+          const tasks = await createCharacterTasks({ ...params, image: attachment, sessionId: execution.sessionId });
           const delegated = [];
           if (params.delegateToAgents) {
             for (const task of tasks) {
@@ -445,8 +527,8 @@ ${transcript.slice(-12000)}
     ];
   }
 
-  function regenerateLatestCharacterSheet(workspaceId, sessionId, feedback) {
-    const previous = getLatestCharacterSheetRequest?.(workspaceId, sessionId) || null;
+  function regenerateLatestCharacterSheet(workspaceId, sessionId, feedback, previousRequest = null) {
+    const previous = previousRequest || getLatestCharacterSheetRequest?.(workspaceId, sessionId) || null;
     if (!previous) return null;
     const feedbackText = String(feedback || "重新生成一版").trim().slice(0, 900);
     const countRequirement = `画面必须准确包含 ${previous.characterCount} 个不同角色，角色必须全部出现、彼此分离且不得重复或融合`;
@@ -502,12 +584,24 @@ ${transcript.slice(-12000)}
     const sessionId = ensureSession(workspaceId);
     const preliminaryIntent = classifyCoordinatorIntent(userText, Boolean(explicitAttachment));
     if (preliminaryIntent.asksForRegeneration) {
-      const regeneration = regenerateLatestCharacterSheet(workspaceId, sessionId, userText);
-      if (regeneration) {
+      const previousRequest = getLatestCharacterSheetRequest?.(workspaceId, sessionId) || null;
+      if (previousRequest) {
         addMessage(workspaceId, "user", userText, explicitAttachment);
+        const regeneration = regenerateLatestCharacterSheet(workspaceId, sessionId, userText, previousRequest);
         addMessage(workspaceId, "assistant", regeneration.assistantText);
         return { ...getConversation(workspaceId), actions: regeneration.actions, workspaces: getWorkspaces() };
       }
+    }
+    if (preliminaryIntent.asksToAdvanceExistingTasks && preliminaryIntent.requestedTarget) {
+      addMessage(workspaceId, "user", userText, explicitAttachment);
+      const continuation = await continueLatestTasks(
+        workspaceId,
+        sessionId,
+        preliminaryIntent.requestedTarget,
+        userText,
+      );
+      addMessage(workspaceId, "assistant", continuation.assistantText);
+      return { ...getConversation(workspaceId), actions: continuation.actions, workspaces: getWorkspaces() };
     }
     const inherited = !explicitAttachment && (preliminaryIntent.asksForSplit || preliminaryIntent.asksAboutImage)
       ? getLatestGeneratedImage?.(workspaceId, sessionId) || null

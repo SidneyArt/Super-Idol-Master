@@ -15,13 +15,28 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 OUTPUT_ROOT = REPO_ROOT / "output" / "2d-api"
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_PROMPT_CHARS = 512
+MAX_EDIT_IMAGE_DIMENSION = 4096
+MIN_EDIT_ASPECT_RATIO = 0.34
+MAX_EDIT_ASPECT_RATIO = 2.94
+TPOSE_CANVAS_SIZE = 1024
+TPOSE_SAFE_MARGIN_RATIO = 0.12
+TPOSE_POSITIVE_CONSTRAINTS = (
+    "输出必须为1:1正方形画布。镜头拉远，角色居中并完整全身出镜；标准T-Pose，双臂水平伸直；"
+    "左右手、全部手指、头顶和双脚都必须完整可见，任何身体部位不得越出画面；"
+    "双手张开且完全空置，移除原画中的武器、法杖、工具、球、滑板及所有手持物；人物四周至少保留12%纯白安全边距。"
+)
+TPOSE_NEGATIVE_CONSTRAINTS = (
+    "竖幅，横幅，非1:1，特写，放大构图，出画，越界，贴边，裁切，截断手臂，截断手掌，"
+    "缺失手指，缺失四肢，头顶裁切，脚部裁切，手持物，道具，武器，法杖，锤子，刀剑，枪械，"
+    "球，滑板，工具，灰色背景，彩色背景，渐变背景，场景地面，地平线"
+)
 STEPFUN_GENERATION_MODELS = {"step-image-edit-2", "step-2x-large", "step-1x-medium"}
 STEPFUN_EDIT_MODELS = {"step-image-edit-2"}
 CONTENT_BLOCK_MARKERS = (
@@ -48,7 +63,64 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--source-image")
+    parser.add_argument("--tpose-output", action="store_true")
     return parser.parse_args()
+
+
+def prompt_with_required_constraints(value: str, constraints: str, label: str) -> str:
+    prompt = " ".join(value.split()).strip()
+    if not prompt:
+        raise RuntimeError(f"{label}不能为空")
+    separator = "，"
+    available = MAX_PROMPT_CHARS - len(separator) - len(constraints)
+    if available <= 0:
+        raise RuntimeError(f"{label}的必要约束超过接口字符限制")
+    if len(prompt) > available:
+        print(
+            f"[2d-api] {label}已为 T-Pose 构图硬约束预留字符，原始内容已安全截断",
+            file=sys.stderr,
+            flush=True,
+        )
+        prompt = prompt[:available].rstrip(" ，,。")
+    return f"{prompt}{separator}{constraints}"
+
+
+def prepare_tpose_source(input_path: Path, destination: Path) -> None:
+    with Image.open(input_path) as source:
+        source.load()
+        image = ImageOps.exif_transpose(source).convert("RGBA")
+        usable_size = round(TPOSE_CANVAS_SIZE * (1 - 2 * TPOSE_SAFE_MARGIN_RATIO))
+        image.thumbnail((usable_size, usable_size), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGBA", (TPOSE_CANVAS_SIZE, TPOSE_CANVAS_SIZE), (255, 255, 255, 255))
+        offset = (
+            (TPOSE_CANVAS_SIZE - image.width) // 2,
+            (TPOSE_CANVAS_SIZE - image.height) // 2,
+        )
+        canvas.alpha_composite(image, offset)
+        canvas.convert("RGB").save(destination, format="PNG")
+
+
+def prepare_edit_source(input_path: Path, destination: Path) -> None:
+    with Image.open(input_path) as source:
+        source.load()
+        image = ImageOps.exif_transpose(source).convert("RGBA")
+        image.thumbnail(
+            (MAX_EDIT_IMAGE_DIMENSION, MAX_EDIT_IMAGE_DIMENSION),
+            Image.Resampling.LANCZOS,
+        )
+        aspect_ratio = image.width / image.height
+        if MIN_EDIT_ASPECT_RATIO <= aspect_ratio <= MAX_EDIT_ASPECT_RATIO:
+            image.convert("RGB").save(destination, format="PNG")
+            return
+
+        if aspect_ratio < MIN_EDIT_ASPECT_RATIO:
+            canvas_size = (round(image.height * MIN_EDIT_ASPECT_RATIO + 0.5), image.height)
+        else:
+            canvas_size = (image.width, round(image.width / MAX_EDIT_ASPECT_RATIO + 0.5))
+        canvas = Image.new("RGBA", canvas_size, (255, 255, 255, 255))
+        offset = ((canvas.width - image.width) // 2, (canvas.height - image.height) // 2)
+        canvas.alpha_composite(image, offset)
+        canvas.convert("RGB").save(destination, format="PNG")
 
 
 def response_error(response: requests.Response) -> str:
@@ -270,10 +342,19 @@ def main() -> int:
 
     operation = operation_for(args.source_image)
     validate_model_usage(args.base_url, args.model, operation)
-    prompt = normalize_prompt(args.positive, "正向提示词")
-    negative_prompt = " ".join(args.negative.split()).strip()
-    if len(negative_prompt) > MAX_PROMPT_CHARS:
-        negative_prompt = negative_prompt[: MAX_PROMPT_CHARS - 1].rstrip() + "…"
+    if args.tpose_output:
+        prompt = prompt_with_required_constraints(args.positive, TPOSE_POSITIVE_CONSTRAINTS, "正向提示词")
+        negative_source = args.negative.strip() or "低画质，肢体畸形，手指畸形"
+        negative_prompt = prompt_with_required_constraints(
+            negative_source,
+            TPOSE_NEGATIVE_CONSTRAINTS,
+            "负向提示词",
+        )
+    else:
+        prompt = normalize_prompt(args.positive, "正向提示词")
+        negative_prompt = " ".join(args.negative.split()).strip()
+        if len(negative_prompt) > MAX_PROMPT_CHARS:
+            negative_prompt = negative_prompt[: MAX_PROMPT_CHARS - 1].rstrip() + "…"
 
     run_dir = OUTPUT_ROOT / f"{datetime.now():%Y%m%d-%H%M%S}_{uuid.uuid4().hex}"
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -283,9 +364,10 @@ def main() -> int:
         if not input_path.is_file():
             raise RuntimeError("2D API 输入图片不存在")
         try:
-            with Image.open(input_path) as source_image:
-                source_image.load()
-                source_image.convert("RGB").save(source_path, format="PNG")
+            if args.tpose_output:
+                prepare_tpose_source(input_path, source_path)
+            else:
+                prepare_edit_source(input_path, source_path)
         except (OSError, ValueError) as error:
             raise RuntimeError("2D API 输入图片不是有效图片") from error
 
@@ -305,6 +387,13 @@ def main() -> int:
 
     destination = run_dir / "concept.png"
     save_validated_png(decode_image(payload, session), destination)
+    if args.tpose_output:
+        with Image.open(destination) as image:
+            if image.size != (TPOSE_CANVAS_SIZE, TPOSE_CANVAS_SIZE):
+                raise RuntimeError(
+                    f"T-Pose 输出尺寸异常：期望 {TPOSE_CANVAS_SIZE}x{TPOSE_CANVAS_SIZE}，"
+                    f"实际 {image.width}x{image.height}"
+                )
     print(destination.resolve())
     return 0
 

@@ -149,7 +149,7 @@ Super-Idol-Master/
 
 两个层级的 Agent 也分别维护持久化会话。新建会话不会删除旧消息，用户可以从会话选择器恢复历史；总调度会话限定在所属工作空间，任务会话限定在所属 Run。前端显示按实际系统提示词和最近 24 条消息估算的上下文用量，以及模型的 131,072 token 上限。
 
-持续流水线目标只在登记目标时审批一次。批准代表允许系统自动执行到指定终点，但 SDPose、Visual QA、产物结构检查和失败暂停机制仍然生效。
+持续流水线目标只在登记目标时审批一次。批准代表允许系统自动执行到指定终点，但 SDPose、各专业 Agent、产物结构检查和失败暂停机制仍然生效。
 
 角色边界：
 
@@ -158,6 +158,11 @@ Super-Idol-Master/
 | `Supervisor` | 读取状态、更新提示词、推进或回退、启动阶段 Job、登记持续执行目标 | 绕过状态机、伪造产物、执行任意 Shell |
 | `Art Director` | 提交结构化 `PromptPlan`，检查身份、风格、姿态约束与提示词冲突 | 修改 Run、启动 Job |
 | `Visual QA` | 提交结构化视觉质检报告，检查主体、全身、朝向、遮挡和背景 | 覆盖 SDPose 硬门禁、推进流程 |
+| `Character Consistency` | 比较参考原画、角色提示词和 T-Pose 的身份锚点 | 重复姿态质检、修改角色设定、推进流程 |
+| `Asset Inspector` | 解释静态 GLB 的 mesh、primitive、材质、纹理和场景指标 | 覆盖 GLB 解析硬门禁、声称看到了未提供的渲染证据 |
+| `Rigging QA` | 解释 skin、joints、层级和动画指标 | 覆盖 skin/joints 硬门禁、声称验证了未提供的动作形变 |
+| `Export Specialist` | 检查最终 GLB 的通用交付就绪度并提交告警 | 写入或转换文件、假定未指定的引擎规范已经满足 |
+| `Workflow Doctor` | 在 Job 失败后分类原因并提交安全修复建议 | 修改工作流、启动重试、声称建议已经执行 |
 
 持续执行计划保存在 `agent_workflow_plans`。例如目标为“静态 3D 模型”时，完成事件按顺序驱动：
 
@@ -166,9 +171,11 @@ Super-Idol-Master/
   → 自动确认合格 2D
   → 运行 SDPose
   → 调用 Visual QA
-  → 双重质检通过
+  → 调用 Character Consistency
+  → 图片与身份门禁通过
   → 生成 3D
   → 检查 GLB mesh
+  → 调用 Asset Inspector
   → 完成计划
 ```
 
@@ -234,8 +241,8 @@ Super-Idol-Master/
 | `agent_conversations` | 每个 Run 的 Asset Agent 会话元数据和标题 |
 | `agent_conversation_state` | 每个 Run 当前选中的 Asset Agent 会话 |
 | `agent_messages` | 每个 Run 的 Agent 对话历史 |
-| `agent_role_runs` | Art Director 与 Visual QA 的执行状态和输入输出 |
-| `agent_reports` | 结构化 `PromptPlan` 与视觉质量报告 |
+| `agent_role_runs` | Art Director、各阶段 QA、资产检查、导出检查与失败诊断的执行状态和输入输出 |
+| `agent_reports` | 各专业 Agent 提交的结构化报告 |
 | `agent_workflow_plans` | 跨异步 Job 的目标、状态和恢复信息 |
 
 数据库启用 WAL 和外键约束。服务启动时会把无法恢复的运行中 Job、角色调用和流水线计划标记为中断，避免产生虚假的活动状态。
@@ -337,7 +344,7 @@ npm run agent:verify
 - 为状态机、自动流水线恢复、质量门禁和 API 增加确定性自动测试。
 - 增加 Job 取消、超时、重试策略和服务重启后的安全续跑协议。
 - 将前端轮询升级为 SSE 或 WebSocket 事件推送，减少重复请求。
-- 为 3D 几何、材质和骨骼结果增加独立的 Model QA 角色与可量化指标。
+- 为 Asset Inspector 与 Rigging QA 增加服务端多视图和标准动作变形渲染，扩展现有结构指标。
 - 将二进制资产从 Run 单路径演进为带版本和谱系的资产实体。
 - 增加集中式 GPU 指标、阶段耗时、错误率和 Agent 质量评估。
 - 如果开放多用户或远程控制台，补充认证、RBAC、审计和密钥管理。
@@ -364,7 +371,17 @@ npm run agent:verify
 
 **Art Director：** 只负责提示词质检与修订的专业 Agent。
 
-**Visual QA：** 只负责图片语义质量复核的专业 Agent。
+**Visual QA：** 只负责图片姿态和构图语义质量复核的专业 Agent。
+
+**Character Consistency：** 只负责角色身份锚点连续性复核的专业 Agent。
+
+**Asset Inspector：** 只负责静态 GLB 结构指标解释的专业 Agent。
+
+**Rigging QA：** 只负责绑骨结构指标解释的专业 Agent。
+
+**Export Specialist：** 只负责最终资产交付就绪判断的专业 Agent。
+
+**Workflow Doctor：** 只负责失败诊断和修复建议、不执行修复的专业 Agent。
 
 **持续执行计划：** 用户指定终点后，跨越多个异步 Job 自动恢复和推进的持久化编排记录。
 

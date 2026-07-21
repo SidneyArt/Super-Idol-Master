@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
+from PIL import Image, ImageOps
 
 from comfy_client import (
     SCRIPT_DIR,
@@ -28,6 +29,43 @@ from comfy_client import (
 
 WORKFLOW_FILE = SCRIPT_DIR / "TPose_QA_SDPose.json"
 MIN_CONFIDENCE = 0.25
+BACKGROUND_BORDER_RATIO = 0.08
+MIN_WHITE_BORDER_RATIO = 0.96
+WHITE_CHANNEL_MIN = 245
+WHITE_CHANNEL_SPREAD_MAX = 12
+
+
+def evaluate_background(image_path: Path) -> dict[str, Any]:
+    with Image.open(image_path) as source:
+        source.load()
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        width, height = image.size
+        border = max(2, round(min(width, height) * BACKGROUND_BORDER_RATIO))
+        pixels = image.load()
+        white_count = 0
+        sample_count = 0
+        channel_totals = [0, 0, 0]
+        for y in range(height):
+            for x in range(width):
+                if border <= x < width - border and border <= y < height - border:
+                    continue
+                red, green, blue = pixels[x, y]
+                sample_count += 1
+                channel_totals[0] += red
+                channel_totals[1] += green
+                channel_totals[2] += blue
+                if min(red, green, blue) >= WHITE_CHANNEL_MIN and max(red, green, blue) - min(red, green, blue) <= WHITE_CHANNEL_SPREAD_MAX:
+                    white_count += 1
+        white_ratio = white_count / max(sample_count, 1)
+        mean_rgb = [round(total / max(sample_count, 1), 2) for total in channel_totals]
+        return {
+            "passed": white_ratio >= MIN_WHITE_BORDER_RATIO,
+            "whiteBorderRatio": round(white_ratio, 4),
+            "borderMeanRgb": mean_rgb,
+            "borderRatio": BACKGROUND_BORDER_RATIO,
+            "imageWidth": width,
+            "imageHeight": height,
+        }
 
 
 def _points(value: list[float]) -> list[tuple[float, float, float]]:
@@ -161,6 +199,7 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE) -> dict[str, Any]:
+    background = evaluate_background(image_path)
     uploaded = client.upload_file(image_path)
     token = uuid.uuid4().hex
     prefix = f"sim_tpose_qa/{token}"
@@ -174,6 +213,20 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
         keypoint_file,
     )
     evaluation = evaluate_pose(json.loads(keypoint_file.read_text(encoding="utf-8")))
+    evaluation.setdefault("metrics", {}).update({
+        "backgroundPassed": background["passed"],
+        "whiteBorderRatio": background["whiteBorderRatio"],
+        "borderMeanRgb": background["borderMeanRgb"],
+        "borderRatio": background["borderRatio"],
+        "imageWidth": background["imageWidth"],
+        "imageHeight": background["imageHeight"],
+    })
+    if not background["passed"]:
+        evaluation["passed"] = False
+        evaluation["score"] = min(int(evaluation.get("score") or 0), 79)
+        background_reason = f"背景不是纯白（边缘纯白占比 {background['whiteBorderRatio']:.1%}）"
+        current_summary = str(evaluation.get("summary") or "").rstrip("。")
+        evaluation["summary"] = f"{current_summary}；{background_reason}" if current_summary else background_reason
     evaluation.update({
         "promptId": result.prompt_id,
         "keypointsPath": str(keypoint_file),

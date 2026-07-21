@@ -331,7 +331,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .dispatcher-welcome > div { display: flex; justify-content: center; gap: 8px; margin-top: 18px; }
 .dispatcher-welcome button { padding: 8px 11px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text-secondary); cursor: pointer; }
 .dispatcher-message, .dispatcher-timeline-card-row { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; max-width: 960px; margin: 0 auto 14px; }
-.dispatcher-timeline-card-row > .dispatcher-generation, .dispatcher-timeline-card-row > .approval-card { grid-column: 2; width: 100%; max-width: none; margin: 0; }
+.dispatcher-timeline-card-row > .dispatcher-generation, .dispatcher-timeline-card-row > .approval-card, .dispatcher-timeline-card-row > .dispatcher-task-batch { grid-column: 2; width: 100%; min-width: 0; max-width: none; margin: 0; }
 .dispatcher-message > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px; background: var(--accent-soft); color: var(--accent); }
 .dispatcher-message.user > span { background: var(--surface-soft); color: var(--text-secondary); }
 .dispatcher-message > div { min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
@@ -367,6 +367,22 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .dispatcher-generation details { margin-top: 7px; color: var(--muted); font-size: 10px; }
 .dispatcher-generation summary { width: fit-content; cursor: pointer; }
 .dispatcher-generation details p { margin: 6px 0 0; padding: 8px; border-radius: 6px; background: var(--surface-soft); line-height: 1.55; }
+.dispatcher-task-batch { width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.dispatcher-task-batch > header { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 9px; }
+.dispatcher-task-batch > header > span { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 7px; background: var(--accent-soft); color: var(--accent); }
+.dispatcher-task-batch > header strong, .dispatcher-task-batch > header small { display: block; }
+.dispatcher-task-batch > header strong { font-size: 12px; }
+.dispatcher-task-batch > header small { margin-top: 2px; color: var(--muted); font-size: 10px; }
+.dispatcher-task-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 9px; margin-top: 11px; }
+.dispatcher-task-grid > button { position: relative; min-width: 0; padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); color: var(--text); text-align: left; cursor: pointer; }
+.dispatcher-task-grid > button:hover { border-color: var(--accent); background: var(--surface-raised); }
+.dispatcher-task-grid img, .dispatcher-task-placeholder { width: 100%; aspect-ratio: 1; display: grid; place-items: center; object-fit: contain; background: var(--preview-bg); }
+.dispatcher-task-placeholder { color: var(--muted); }
+.dispatcher-task-grid > button > span:not(.dispatcher-task-placeholder) { display: block; padding: 9px 10px 10px; }
+.dispatcher-task-grid strong, .dispatcher-task-grid small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dispatcher-task-grid strong { font-size: 12px; }
+.dispatcher-task-grid small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.dispatcher-task-grid i { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; background: linear-gradient(90deg, var(--accent) var(--task-progress), var(--border) var(--task-progress)); }
 .notification-target-highlight { animation: notification-target-pulse 2.2s ease-out; }
 .dispatcher-composer { width: min(1060px, calc(100% - 48px)); margin: 0 auto 20px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface-raised); box-shadow: var(--shadow); overflow: visible; }
 .dispatcher-composer:focus-within { border-color: var(--accent); }
