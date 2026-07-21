@@ -589,10 +589,37 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .chat-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 9px; padding: 10px 0; }
 .chat-avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
 .chat-message.user .chat-avatar { background: var(--surface-soft); color: var(--text-secondary); }
-.chat-message strong { display: block; font-size: 12px; }
+.chat-message .chat-author { display: block; font-size: 12px; }
 .chat-message p { margin: 3px 0 0; color: var(--text-secondary); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
 .chat-message.pending p { display: flex; align-items: center; gap: 7px; }
 .chat-message.pending p svg { animation: spin 1s linear infinite; }
+.markdown-body { min-width: 0; margin-top: 3px; color: var(--text-secondary); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: 0 0 8px; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 { margin: 13px 0 6px; color: var(--text); line-height: 1.35; }
+.markdown-body h1 { font-size: 18px; }
+.markdown-body h2 { font-size: 16px; }
+.markdown-body h3 { font-size: 14px; }
+.markdown-body h4 { font-size: 13px; }
+.markdown-body strong { color: var(--text); font-weight: 650; }
+.markdown-body em { color: var(--text-secondary); }
+.markdown-body ul, .markdown-body ol { margin: 5px 0 9px; padding-left: 22px; }
+.markdown-body li { margin: 2px 0; }
+.markdown-body li > p { margin: 0; }
+.markdown-body blockquote { margin: 8px 0; padding: 4px 10px; border-left: 3px solid var(--accent); background: var(--surface-soft); color: var(--muted); }
+.markdown-body blockquote p { color: inherit; }
+.markdown-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.markdown-body a:hover { filter: brightness(1.18); }
+.markdown-body code { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-soft); color: var(--text); font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace; font-size: .9em; }
+.markdown-body pre { max-width: 100%; margin: 8px 0; padding: 10px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); overflow-x: auto; }
+.markdown-body pre code { padding: 0; border: 0; background: transparent; color: var(--text-secondary); font-size: 12px; white-space: pre; }
+.markdown-body table { display: block; max-width: 100%; margin: 8px 0; border-collapse: collapse; overflow-x: auto; font-size: 12px; }
+.markdown-body th, .markdown-body td { padding: 6px 8px; border: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.markdown-body th { background: var(--surface-soft); color: var(--text); }
+.markdown-body hr { height: 1px; margin: 12px 0; border: 0; background: var(--border); }
+.markdown-body img { display: block; max-width: 100%; max-height: 320px; margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; object-fit: contain; }
+.markdown-body input[type="checkbox"] { margin-right: 6px; accent-color: var(--accent); }
 .agent-background-status { display: flex; align-items: center; gap: 7px; margin: 4px 0 10px 39px; color: var(--muted); font-size: 11px; }
 .agent-background-status svg { flex: 0 0 auto; animation: spin 1s linear infinite; }
 .agent-message-queue { margin: 6px 0 4px 39px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); overflow: hidden; }

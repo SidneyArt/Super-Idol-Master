@@ -38,6 +38,8 @@ import {
   X,
 } from "lucide-react";
 import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import ModelViewer from "./components/ModelViewer";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8787";
@@ -1385,16 +1387,40 @@ export default function Home() {
               <div className={`chat-message ${message.role}`} key={message.id}>
                 <span className="chat-avatar">{message.role === "assistant" ? <Bot size={16} /> : <User size={16} />}</span>
                 <div>
-                  <strong>{message.role === "assistant" ? "Asset Agent" : "你"}</strong>
+                  <strong className="chat-author">{message.role === "assistant" ? "Asset Agent" : "你"}</strong>
                   {message.attachmentName && <span className="chat-attachment"><ImageIcon size={14} />{message.attachmentName}</span>}
-                  <p>{message.content}</p>
+                  <div className="markdown-body">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      skipHtml
+                      components={{
+                        a: ({ href, children, ...props }) => (
+                          <a
+                            {...props}
+                            href={href}
+                            target={href?.startsWith("http://") || href?.startsWith("https://") ? "_blank" : undefined}
+                            rel="noreferrer noopener"
+                          >
+                            {children}
+                          </a>
+                        ),
+                        img: ({ alt, ...props }) => (
+                          // Markdown 图片的来源和尺寸在运行时才能确定，不能使用 Next.js 静态图片优化。
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img {...props} alt={alt || "Markdown 图片"} loading="lazy" />
+                        ),
+                      }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  </div>
                 </div>
               </div>
             ))}
             {selectedRunAgentBusy && (
               <div className="chat-message assistant pending">
                 <span className="chat-avatar"><Bot size={16} /></span>
-                <div><strong>Asset Agent</strong><p><LoaderCircle size={15} />正在处理任务</p></div>
+                <div><strong className="chat-author">Asset Agent</strong><p><LoaderCircle size={15} />正在处理任务</p></div>
               </div>
             )}
             {agentBusy && !selectedRunAgentBusy && activeAgentRunName && (
