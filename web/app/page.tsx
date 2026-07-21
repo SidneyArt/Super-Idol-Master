@@ -307,6 +307,11 @@ export default function Home() {
     selectedIdRef.current = selectedId;
   }, [selectedId]);
 
+  function selectRun(runId: string | null) {
+    selectedIdRef.current = runId;
+    setSelectedId(runId);
+  }
+
   useEffect(() => {
     const saved = window.localStorage.getItem("sim-theme");
     if (saved !== "light" && saved !== "dark") return;
@@ -319,7 +324,7 @@ export default function Home() {
     const data = await api<{ runs: Run[] }>("/api/runs");
     setRuns(data.runs);
     const nextId = preferredId || selectedId || data.runs[0]?.id || null;
-    setSelectedId(nextId);
+    selectRun(nextId);
     if (!nextId) setDetail(null);
   }
 
@@ -369,7 +374,7 @@ export default function Home() {
         ]);
         if (cancelled) return;
         setRuns(runData.runs);
-        setSelectedId(runData.runs[0]?.id || null);
+        selectRun(runData.runs[0]?.id || null);
         setSystem(systemData);
       } catch (reason) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "无法连接本地后端");
@@ -389,13 +394,14 @@ export default function Home() {
 
   useEffect(() => {
     if (!selectedId) return;
+    const requestedRunId = selectedId;
     let cancelled = false;
     void Promise.all([
       api<RunDetail>(`/api/runs/${selectedId}`),
       api<{ messages: ChatMessage[] }>(`/api/runs/${selectedId}/agent/messages`),
     ])
       .then(([data, agentData]) => {
-        if (cancelled) return;
+        if (cancelled || selectedIdRef.current !== requestedRunId) return;
         setDetail(data);
         setChatMessages(agentData.messages);
         setAgentAttachment(null);
@@ -407,7 +413,7 @@ export default function Home() {
         });
       })
       .catch((reason) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : "任务读取失败");
+        if (!cancelled && selectedIdRef.current === requestedRunId) setError(reason instanceof Error ? reason.message : "任务读取失败");
       });
     return () => { cancelled = true; };
   }, [selectedId]);
@@ -416,15 +422,17 @@ export default function Home() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [chatMessages, agentBusy, agentQueue.length]);
 
+  const selectedDetail = detail?.run.id === selectedId ? detail : null;
   const hasRunningTask = runs.some((item) => item.jobStatus === "running");
   const selectedTaskIsRunning = runs.some((item) => item.id === selectedId && item.jobStatus === "running");
-  const selectedRoleIsRunning = detail?.agentRoleRuns?.some((item) => item.status === "running") === true;
-  const selectedPlanIsRunning = detail?.agentWorkflowPlan?.status === "running";
+  const selectedRoleIsRunning = selectedDetail?.agentRoleRuns?.some((item) => item.status === "running") === true;
+  const selectedPlanIsRunning = selectedDetail?.agentWorkflowPlan?.status === "running";
   const agentOperationalBusy = agentBusy || selectedRoleIsRunning || selectedPlanIsRunning;
 
   useEffect(() => {
     if (!hasRunningTask && !selectedRoleIsRunning && !selectedPlanIsRunning) return;
     const timer = window.setInterval(() => {
+      const requestedRunId = selectedId;
       const shouldRefreshSelected = selectedId && (selectedTaskIsRunning || selectedRoleIsRunning || selectedPlanIsRunning);
       const detailRequest = shouldRefreshSelected
         ? api<RunDetail>(`/api/runs/${selectedId}`)
@@ -435,6 +443,7 @@ export default function Home() {
       void Promise.all([api<{ runs: Run[] }>("/api/runs"), detailRequest, messagesRequest])
         .then(([runData, detailData, messagesData]) => {
           setRuns(runData.runs);
+          if (requestedRunId !== selectedIdRef.current) return;
           if (messagesData) setChatMessages(messagesData.messages);
           if (!detailData) return;
           setDetail(detailData);
@@ -445,15 +454,16 @@ export default function Home() {
     return () => window.clearInterval(timer);
   }, [hasRunningTask, selectedId, selectedPlanIsRunning, selectedRoleIsRunning, selectedTaskIsRunning]);
 
-  const run = detail?.run;
-  const artDirectorRun = detail?.agentRoleRuns?.find((item) =>
+  const run = selectedDetail?.run;
+  const visibleChatMessages = run?.id === selectedId ? chatMessages : [];
+  const artDirectorRun = selectedDetail?.agentRoleRuns?.find((item) =>
     (item.reportType === "prompt_plan" || item.agentRole === "art_director")
       && (item.status !== "succeeded" || (
         item.report?.positivePrompt === run?.positivePrompt
         && item.report?.negativePrompt === run?.negativePrompt
       )),
   );
-  const visualQaRun = detail?.agentRoleRuns?.find((item) =>
+  const visualQaRun = selectedDetail?.agentRoleRuns?.find((item) =>
     (item.reportType === "image_quality_report" || item.agentRole === "visual_qa")
       && item.sourceKey === `qa:${run?.jobPromptId}`,
   );
@@ -517,7 +527,7 @@ export default function Home() {
     setBusy(true);
     try {
       await api(`/api/runs/${run.id}`, { method: "DELETE" });
-      setSelectedId(null);
+      selectRun(null);
       setDetail(null);
       setChatMessages([]);
       await refreshRuns();
@@ -1061,7 +1071,7 @@ export default function Home() {
               <button
                 key={item.id}
                 className={`run-item ${item.id === selectedId ? "selected" : ""}`}
-                onClick={() => setSelectedId(item.id)}
+                onClick={() => selectRun(item.id)}
                 title={sidebarCollapsed ? item.name : undefined}
               >
                 <span className={`run-avatar ${item.jobStatus === "running" ? "running" : ""}`}>
@@ -1363,27 +1373,29 @@ export default function Home() {
               </button>
             </div>
           </div>
-          <div className="agent-context">
-            <span>任务上下文</span>
-            <strong>{run?.name || "未选择任务"}</strong>
-            <p>{run ? `${stages[current].title} · ${progress}% 完成` : "选择或创建任务后开始"}</p>
+          <div className="agent-summary">
+            <div className="agent-context">
+              <span>任务上下文</span>
+              <strong>{run?.name || "未选择任务"}</strong>
+              <p>{run ? `${stages[current].title} · ${progress}% 完成` : "选择或创建任务后开始"}</p>
+            </div>
+            {selectedDetail?.agentWorkflowPlan && (
+              <section className={`agent-orchestration ${selectedDetail.agentWorkflowPlan.status}`}>
+                <div><Bot size={15} /><strong>Supervisor 自动编排</strong><span>{selectedDetail.agentWorkflowPlan.status === "running" ? "执行中" : selectedDetail.agentWorkflowPlan.status === "completed" ? "已完成" : selectedDetail.agentWorkflowPlan.status === "blocked" ? "已暂停" : "失败"}</span></div>
+                <p>目标：{stages[selectedDetail.agentWorkflowPlan.targetStage].title}</p>
+                <small>{selectedDetail.agentWorkflowPlan.message}</small>
+              </section>
+            )}
+            {(artDirectorRun || visualQaRun) && (
+              <section className="agent-role-activity" aria-label="多 Agent 协作记录">
+                <span>多 Agent 协作</span>
+                {artDirectorRun && <div className={`agent-role-row ${artDirectorRun.status}`}><Sparkles size={14} /><div><strong>Art Director</strong><small>{artDirectorRun.status === "running" ? "正在检查提示词" : artDirectorRun.status === "succeeded" ? artDirectorRun.report?.summary || "提示词检查完成" : artDirectorRun.errorMessage}</small></div><em>{artDirectorRun.status === "running" ? "运行中" : artDirectorRun.status === "succeeded" ? "已完成" : "失败"}</em></div>}
+                {visualQaRun && <div className={`agent-role-row ${visualQaRun.status}`}><Bot size={14} /><div><strong>Visual QA</strong><small>{visualQaRun.status === "running" ? "正在复核朝向、遮挡和背景" : visualQaRun.status === "succeeded" ? visualQaRun.report?.summary || "视觉质检完成" : visualQaRun.errorMessage}</small></div><em>{visualQaRun.status === "running" ? "运行中" : visualQaRun.status === "succeeded" ? "已完成" : "失败"}</em></div>}
+              </section>
+            )}
           </div>
-          {detail?.agentWorkflowPlan && (
-            <section className={`agent-orchestration ${detail.agentWorkflowPlan.status}`}>
-              <div><Bot size={15} /><strong>Supervisor 自动编排</strong><span>{detail.agentWorkflowPlan.status === "running" ? "执行中" : detail.agentWorkflowPlan.status === "completed" ? "已完成" : detail.agentWorkflowPlan.status === "blocked" ? "已暂停" : "失败"}</span></div>
-              <p>目标：{stages[detail.agentWorkflowPlan.targetStage].title}</p>
-              <small>{detail.agentWorkflowPlan.message}</small>
-            </section>
-          )}
-          {(artDirectorRun || visualQaRun) && (
-            <section className="agent-role-activity" aria-label="多 Agent 协作记录">
-              <span>多 Agent 协作</span>
-              {artDirectorRun && <div className={`agent-role-row ${artDirectorRun.status}`}><Sparkles size={14} /><div><strong>Art Director</strong><small>{artDirectorRun.status === "running" ? "正在检查提示词" : artDirectorRun.status === "succeeded" ? artDirectorRun.report?.summary || "提示词检查完成" : artDirectorRun.errorMessage}</small></div><em>{artDirectorRun.status === "running" ? "运行中" : artDirectorRun.status === "succeeded" ? "已完成" : "失败"}</em></div>}
-              {visualQaRun && <div className={`agent-role-row ${visualQaRun.status}`}><Bot size={14} /><div><strong>Visual QA</strong><small>{visualQaRun.status === "running" ? "正在复核朝向、遮挡和背景" : visualQaRun.status === "succeeded" ? visualQaRun.report?.summary || "视觉质检完成" : visualQaRun.errorMessage}</small></div><em>{visualQaRun.status === "running" ? "运行中" : visualQaRun.status === "succeeded" ? "已完成" : "失败"}</em></div>}
-            </section>
-          )}
-          <div className="chat-thread">
-            {chatMessages.map((message) => (
+          <div className="chat-thread" key={selectedId || "no-run"}>
+            {visibleChatMessages.map((message) => (
               <div className={`chat-message ${message.role}`} key={message.id}>
                 <span className="chat-avatar">{message.role === "assistant" ? <Bot size={16} /> : <User size={16} />}</span>
                 <div>

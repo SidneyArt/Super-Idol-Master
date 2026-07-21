@@ -564,6 +564,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .agent-panel.agent-collapsed .agent-resizer { display: none; }
 .agent-panel.agent-collapsed .agent-header { justify-content: center; padding-inline: 0; }
 .agent-panel.agent-collapsed .agent-title, .agent-panel.agent-collapsed .agent-state, .agent-panel.agent-collapsed > :not(.agent-header):not(.agent-resizer) { display: none; }
+.agent-summary { min-height: 0; max-height: min(42vh, 420px); overflow-y: auto; overscroll-behavior: contain; }
 .agent-context { margin: 12px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); }
 .agent-context strong { display: block; margin-top: 3px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-context p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
