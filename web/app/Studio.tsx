@@ -94,7 +94,7 @@ type Assets = {
   riggedDownloadUrl: string | null;
 };
 
-type Run = {
+export type Run = {
   id: string;
   workspaceId: string;
   pipelineType: "text_to_model" | "image_to_model";
@@ -148,7 +148,7 @@ type UiConfirmation = {
   tone: "warning" | "danger";
   action: () => Promise<void>;
 };
-type Workspace = {
+export type Workspace = {
   id: string;
   name: string;
   description: string;
@@ -471,18 +471,29 @@ function ContextUsage({ context, compact = false }: { context: ConversationConte
   );
 }
 
-export default function Studio({ initialRunId }: { initialRunId: string | null }) {
+type StudioProps = {
+  initialRunId: string | null;
+  initialRuns: Run[];
+  initialWorkspaces: Workspace[];
+};
+
+export default function Studio({ initialRunId, initialRuns, initialWorkspaces }: StudioProps) {
   const screen: "home" | "task" = initialRunId ? "task" : "home";
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("default");
+  const initialRun = initialRuns.find((item) => item.id === initialRunId);
+  const initialWorkspaceId = initialRun?.workspaceId
+    || initialWorkspaces.find((item) => item.id === "default")?.id
+    || initialWorkspaces[0]?.id
+    || "default";
+  const [workspaces, setWorkspaces] = useState<Workspace[]>(initialWorkspaces);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(initialWorkspaceId);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set(["default"]));
-  const [runs, setRuns] = useState<Run[]>([]);
+  const [runs, setRuns] = useState<Run[]>(initialRuns);
   const [selectedId, setSelectedId] = useState<string | null>(initialRunId);
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [viewStage, setViewStage] = useState(0);
   const [system, setSystem] = useState<SystemState | null>(null);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(initialRuns.length === 0);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [revertStage, setRevertStage] = useState<number | null>(null);
@@ -566,6 +577,12 @@ export default function Studio({ initialRunId }: { initialRunId: string | null }
 
   function openTask(runId: string) {
     window.location.assign(`/?task=${encodeURIComponent(runId)}`);
+  }
+
+  function selectTask(run: Run) {
+    window.history.replaceState(null, "", `/?task=${encodeURIComponent(run.id)}`);
+    selectWorkspace(run.workspaceId);
+    selectRun(run.id);
   }
 
   useEffect(() => {
@@ -841,7 +858,7 @@ export default function Studio({ initialRunId }: { initialRunId: string | null }
     return () => window.clearInterval(timer);
   }, [hasRunningTask, selectedId, selectedPlanIsRunning, selectedRoleIsRunning, selectedTaskIsRunning]);
 
-  const run = selectedDetail?.run;
+  const run = selectedDetail?.run || runs.find((item) => item.id === selectedId) || null;
   const coordinatorApprovals = approvals.filter((item) => item.scopeType === "coordinator" && item.workspaceId === selectedWorkspaceId);
   const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
@@ -1847,7 +1864,7 @@ export default function Studio({ initialRunId }: { initialRunId: string | null }
             onDrop={handleDispatcherDrop}
           >
             <header className="dispatcher-header">
-              <div className="dispatcher-title"><span><Bot size={22} /></span><div><small>总调度中心</small><h1>Workspace Coordinator</h1><p>{selectedWorkspace ? `当前空间：${selectedWorkspace.name}` : "创建工作空间后开始调度"}</p></div></div>
+              <div className="dispatcher-title"><span><Bot size={22} /></span><div><small>总调度中心</small><h1>{selectedWorkspace?.name || "创建工作空间后开始调度"}</h1></div></div>
               <div className="dispatcher-actions">
                 <div className="conversation-session-control dispatcher-session-control">
                   <StyledSelect value={dispatcherSessionId} options={dispatcherSessions.map((session) => ({ value: session.id, label: `${session.title.replace(/\s+/g, " ")} · ${session.messageCount} 条` }))} onChange={(value) => void activateDispatcherSession(value)} ariaLabel="总调度 Agent 会话" disabled={dispatcherBusy || dispatcherSessionBusy} />
@@ -1896,7 +1913,7 @@ export default function Studio({ initialRunId }: { initialRunId: string | null }
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
               <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
-              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span><ContextUsage context={dispatcherContext} />{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false}><Send size={16} />发送调度</button></div>
+              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><ContextUsage context={dispatcherContext} />{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false}><Send size={16} />发送调度</button></div>
             </form>
             {dispatcherDragging && <div className="dispatcher-drop"><ImageIcon size={34} /><strong>松开以分析合集原画</strong><span>支持最多 12 MB 的 PNG、JPEG 或 WebP</span></div>}
           </section>
@@ -1925,13 +1942,13 @@ export default function Studio({ initialRunId }: { initialRunId: string | null }
             </div>
           </div>
           <div className="run-list">
-            {loading && <p className="empty-note">正在读取任务…</p>}
+            {loading && runs.length === 0 && <p className="empty-note">正在读取任务…</p>}
             {!loading && runs.filter((item) => item.workspaceId === run?.workspaceId).length === 0 && <p className="empty-note">还没有角色任务。</p>}
             {runs.filter((item) => item.workspaceId === run?.workspaceId).map((item) => (
               <button
                 key={item.id}
                 className={`run-item ${item.id === selectedId ? "selected" : ""}`}
-                onClick={() => openTask(item.id)}
+                onClick={() => selectTask(item)}
                 title={sidebarCollapsed ? item.name : undefined}
               >
                 <span className={`run-avatar ${item.jobStatus === "running" ? "running" : ""}`}>
@@ -2197,7 +2214,7 @@ export default function Studio({ initialRunId }: { initialRunId: string | null }
                   <section className="event-panel event-panel-full">
                     <div className="section-heading"><div><span>活动</span><strong>任务记录</strong></div><MoreHorizontal size={18} /></div>
                     <div className="event-list">
-                      {detail.events.slice(0, 8).map((item) => (
+                      {(selectedDetail?.events || []).slice(0, 8).map((item) => (
                         <div className="event-item" key={item.id}>
                           <span className="event-dot" />
                           <div><strong>{item.message}</strong><span>{activeStages[item.stage]?.title || "流程"} · {formatTime(item.createdAt)}</span></div>
