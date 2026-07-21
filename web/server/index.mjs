@@ -174,6 +174,7 @@ db.exec(`
     message TEXT NOT NULL DEFAULT '',
     preview_path TEXT,
     output_path TEXT,
+    request_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
@@ -182,6 +183,9 @@ db.exec(`
 const dispatcherGenerationColumns = db.prepare("PRAGMA table_info(dispatcher_generations)").all();
 if (!dispatcherGenerationColumns.some((column) => column.name === "session_id")) {
   db.exec("ALTER TABLE dispatcher_generations ADD COLUMN session_id TEXT NOT NULL DEFAULT ''");
+}
+if (!dispatcherGenerationColumns.some((column) => column.name === "request_json")) {
+  db.exec("ALTER TABLE dispatcher_generations ADD COLUMN request_json TEXT NOT NULL DEFAULT '{}'");
 }
 db.exec("CREATE INDEX IF NOT EXISTS dispatcher_generations_workspace_idx ON dispatcher_generations(workspace_id, created_at DESC)");
 db.exec("CREATE INDEX IF NOT EXISTS dispatcher_generations_session_idx ON dispatcher_generations(workspace_id, session_id, updated_at DESC)");
@@ -1227,6 +1231,69 @@ function getLatestDispatcherGenerationImage(workspaceId, sessionId = "") {
   return null;
 }
 
+function normalizeCharacterSheetRequest(value) {
+  if (!value || typeof value !== "object") return null;
+  const characterCount = Number(value.characterCount);
+  const characterDescriptions = Array.isArray(value.characterDescriptions)
+    ? value.characterDescriptions.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (!Number.isInteger(characterCount) || characterCount < 1 || characterCount > 12 || characterDescriptions.length !== characterCount) return null;
+  return {
+    title: String(value.title || "角色合集图").trim().slice(0, 80) || "角色合集图",
+    characterCount,
+    styleDescription: String(value.styleDescription || "统一角色美术风格").trim().slice(0, 1000),
+    characterDescriptions: characterDescriptions.map((item) => item.slice(0, 500)),
+    additionalPrompt: String(value.additionalPrompt || "").trim().slice(0, 2000),
+    negativePrompt: String(value.negativePrompt || "").trim().slice(0, 2000),
+  };
+}
+
+function getLatestCharacterSheetRequest(workspaceId, sessionId) {
+  const generations = db.prepare(`
+    SELECT title, character_count AS characterCount, prompt, request_json AS requestJson
+    FROM dispatcher_generations
+    WHERE workspace_id = ? AND session_id = ? AND status = 'succeeded'
+    ORDER BY updated_at DESC LIMIT 30
+  `).all(workspaceId, sessionId);
+
+  for (const generation of generations) {
+    try {
+      const normalized = normalizeCharacterSheetRequest(JSON.parse(generation.requestJson || "{}"));
+      if (normalized) return normalized;
+    } catch {
+      // Older rows may not have structured request data.
+    }
+  }
+
+  const approvals = db.prepare(`
+    SELECT payload FROM approval_requests
+    WHERE scope_type = 'coordinator' AND workspace_id = ? AND operation = 'generate_character_sheet'
+    ORDER BY id DESC LIMIT 30
+  `).all(workspaceId);
+  for (const approval of approvals) {
+    try {
+      const payload = JSON.parse(approval.payload || "{}");
+      if (payload.sessionId !== sessionId) continue;
+      const normalized = normalizeCharacterSheetRequest(payload);
+      if (normalized) return normalized;
+    } catch {
+      // Ignore malformed historical approval payloads.
+    }
+  }
+
+  const latest = generations[0];
+  if (!latest) return null;
+  const characterCount = Math.max(1, Math.min(12, Number(latest.characterCount) || 1));
+  return {
+    title: String(latest.title || "角色合集图").slice(0, 80),
+    characterCount,
+    styleDescription: "保持上一版的角色身份、统一美术风格与整体设计语言",
+    characterDescriptions: Array.from({ length: characterCount }, (_, index) => `保持上一版第 ${index + 1} 个角色的身份、服装、配色和职业特征`),
+    additionalPrompt: `上一版完整生成要求：${String(latest.prompt || "").slice(0, 1900)}`,
+    negativePrompt: "缺少角色，多余角色，角色重复，角色融合，人物重叠，裁切身体，风格不一致，低质量，模糊，文字，水印",
+  };
+}
+
 function startCharacterSheetGeneration(input = {}) {
   const workspaceId = cleanText(input.workspaceId, 80, "工作空间 ID", true);
   if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
@@ -1254,11 +1321,21 @@ function startCharacterSheetGeneration(input = {}) {
 
   const id = randomUUID();
   const now = new Date().toISOString();
+  const requestJson = JSON.stringify({
+    workspaceId,
+    sessionId,
+    title,
+    characterCount,
+    styleDescription: style,
+    characterDescriptions: descriptions,
+    additionalPrompt: additional,
+    negativePrompt: negative,
+  });
   db.prepare(`
     INSERT INTO dispatcher_generations (
-      id, workspace_id, session_id, title, character_count, prompt, status, message, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'running', '正在调用文生图模型生成单张角色合集图', ?, ?)
-  `).run(id, workspaceId, sessionId, title, characterCount, positive, now, now);
+      id, workspace_id, session_id, title, character_count, prompt, status, message, request_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'running', '正在调用文生图模型生成单张角色合集图', ?, ?, ?)
+  `).run(id, workspaceId, sessionId, title, characterCount, positive, requestJson, now, now);
   db.prepare("UPDATE workspaces SET updated_at = ? WHERE id = ?").run(now, workspaceId);
 
   const args = [
@@ -1319,6 +1396,7 @@ const coordinatorAgent = createCoordinatorRuntime({
   createCharacterTasks: createCoordinatorTasks,
   generateCharacterSheet: startCharacterSheetGeneration,
   getLatestGeneratedImage: getLatestDispatcherGenerationImage,
+  getLatestCharacterSheetRequest,
   delegateTask: (runId, target) => assetAgent.requestWorkflowPlan(runId, target),
   getImageModelStatus: () => {
     const settings = settingsStore.publicSettings();

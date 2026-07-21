@@ -22,6 +22,7 @@ const MAX_WORKFLOW_BYTES = 500_000;
 const MAX_CUSTOM_WORKFLOWS = 20;
 const DEFAULT_IMAGE_API_BASE_URL = "https://api.stepfun.com/step_plan/v1";
 const DEFAULT_IMAGE_API_MODEL = "step-image-edit-2";
+const REASONING_EFFORTS = new Set(["off", "low", "high"]);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -39,6 +40,17 @@ function normalizeUrl(value, field) {
   if (!["http:", "https:"].includes(parsed.protocol)) throw new Error(`${field}只支持 HTTP 或 HTTPS`);
   if (parsed.username || parsed.password) throw new Error(`${field}不能包含用户名或密码`);
   return text;
+}
+
+function normalizeReasoningEffort(value, fallback = "high") {
+  const effort = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return REASONING_EFFORTS.has(effort) ? effort : fallback;
+}
+
+function validateReasoningEffort(value, field) {
+  const effort = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!REASONING_EFFORTS.has(effort)) throw new Error(`${field}必须为 off、low 或 high`);
+  return effort;
 }
 
 function normalizeWorkflow(value, kind) {
@@ -91,11 +103,13 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     baseUrl: normalizeUrl(process.env.STEPFUN_BASE_URL || "https://api.stepfun.com/step_plan/v1", "Agent Base URL"),
     model: process.env.STEPFUN_MODEL?.trim() || "step-3.7-flash",
     apiKey: process.env.STEPFUN_API_KEY?.trim() || "",
+    reasoningEffort: normalizeReasoningEffort(process.env.STEPFUN_REASONING_EFFORT, "high"),
   };
   const coordinatorAgentDefaults = {
     baseUrl: normalizeUrl(process.env.COORDINATOR_BASE_URL || agentDefaults.baseUrl, "总调度 Agent Base URL"),
     model: process.env.COORDINATOR_MODEL?.trim() || agentDefaults.model,
     apiKey: process.env.COORDINATOR_API_KEY?.trim() || agentDefaults.apiKey,
+    reasoningEffort: normalizeReasoningEffort(process.env.COORDINATOR_REASONING_EFFORT, agentDefaults.reasoningEffort),
   };
   const imageApiDefaults = {
     textToImage: {
@@ -225,6 +239,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       baseUrl: normalizeUrl(read("agent.base_url", agentDefaults.baseUrl), "Agent Base URL"),
       model: read("agent.model", agentDefaults.model).trim() || agentDefaults.model,
       apiKey: read("agent.api_key", agentDefaults.apiKey).trim(),
+      reasoningEffort: normalizeReasoningEffort(read("agent.reasoning_effort", agentDefaults.reasoningEffort), agentDefaults.reasoningEffort),
     };
   }
 
@@ -233,6 +248,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       baseUrl: normalizeUrl(read("coordinator.agent.base_url", coordinatorAgentDefaults.baseUrl), "总调度 Agent Base URL"),
       model: read("coordinator.agent.model", coordinatorAgentDefaults.model).trim() || coordinatorAgentDefaults.model,
       apiKey: read("coordinator.agent.api_key", coordinatorAgentDefaults.apiKey).trim(),
+      reasoningEffort: normalizeReasoningEffort(read("coordinator.agent.reasoning_effort", coordinatorAgentDefaults.reasoningEffort), coordinatorAgentDefaults.reasoningEffort),
     };
   }
 
@@ -257,6 +273,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       ["coordinator.agent.base_url", currentAgent.baseUrl],
       ["coordinator.agent.model", currentAgent.model],
       ["coordinator.agent.api_key", currentAgent.apiKey],
+      ["coordinator.agent.reasoning_effort", currentAgent.reasoningEffort],
       ["coordinator.image.text_to_image.base_url", currentTextImage.baseUrl],
       ["coordinator.image.text_to_image.model", currentTextImage.model],
       ["coordinator.image.text_to_image.api_key", currentTextImage.apiKey],
@@ -354,9 +371,11 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       agent: {
         baseUrl: agentConfig().baseUrl,
         model: agentConfig().model,
+        reasoningEffort: agentConfig().reasoningEffort,
         apiKeyConfigured: Boolean(agentConfig().apiKey),
         defaultBaseUrl: agentDefaults.baseUrl,
         defaultModel: agentDefaults.model,
+        defaultReasoningEffort: agentDefaults.reasoningEffort,
       },
       imageModels: {
         textToImage: {
@@ -378,9 +397,11 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
         agent: {
           baseUrl: coordinatorAgentConfig().baseUrl,
           model: coordinatorAgentConfig().model,
+          reasoningEffort: coordinatorAgentConfig().reasoningEffort,
           apiKeyConfigured: Boolean(coordinatorAgentConfig().apiKey),
           defaultBaseUrl: coordinatorAgentDefaults.baseUrl,
           defaultModel: coordinatorAgentDefaults.model,
+          defaultReasoningEffort: coordinatorAgentDefaults.reasoningEffort,
         },
         imageModels: {
           textToImage: {
@@ -440,6 +461,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       baseUrl: normalizeUrl(agentInput.baseUrl ?? currentAgent.baseUrl, "Agent Base URL"),
       model: typeof agentInput.model === "string" ? agentInput.model.trim() : currentAgent.model,
       apiKey: currentAgent.apiKey,
+      reasoningEffort: validateReasoningEffort(agentInput.reasoningEffort ?? currentAgent.reasoningEffort, "Agent 推理强度"),
     };
     if (!nextAgent.model) throw new Error("Agent 模型不能为空");
     if (nextAgent.model.length > 160) throw new Error("Agent 模型不能超过 160 个字符");
@@ -474,6 +496,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       baseUrl: normalizeUrl(coordinatorAgentInput.baseUrl ?? currentCoordinatorAgent.baseUrl, "总调度 Agent Base URL"),
       model: typeof coordinatorAgentInput.model === "string" ? coordinatorAgentInput.model.trim() : currentCoordinatorAgent.model,
       apiKey: currentCoordinatorAgent.apiKey,
+      reasoningEffort: validateReasoningEffort(coordinatorAgentInput.reasoningEffort ?? currentCoordinatorAgent.reasoningEffort, "总调度 Agent 推理强度"),
     };
     if (!nextCoordinatorAgent.model) throw new Error("总调度 Agent 模型不能为空");
     if (nextCoordinatorAgent.model.length > 160) throw new Error("总调度 Agent 模型不能超过 160 个字符");
@@ -516,6 +539,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       saveSetting.run("agent.base_url", nextAgent.baseUrl, now);
       saveSetting.run("agent.model", nextAgent.model, now);
       saveSetting.run("agent.api_key", nextAgent.apiKey, now);
+      saveSetting.run("agent.reasoning_effort", nextAgent.reasoningEffort, now);
       for (const [key, value] of Object.entries(nextImageModels)) {
         const prefix = key === "textToImage" ? "image.text_to_image" : "image.image_to_image";
         saveSetting.run(`${prefix}.base_url`, value.baseUrl, now);
@@ -525,6 +549,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       saveSetting.run("coordinator.agent.base_url", nextCoordinatorAgent.baseUrl, now);
       saveSetting.run("coordinator.agent.model", nextCoordinatorAgent.model, now);
       saveSetting.run("coordinator.agent.api_key", nextCoordinatorAgent.apiKey, now);
+      saveSetting.run("coordinator.agent.reasoning_effort", nextCoordinatorAgent.reasoningEffort, now);
       for (const [key, value] of Object.entries(nextCoordinatorImageModels)) {
         const prefix = key === "textToImage" ? "coordinator.image.text_to_image" : "coordinator.image.image_to_image";
         saveSetting.run(`${prefix}.base_url`, value.baseUrl, now);

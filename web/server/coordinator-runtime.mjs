@@ -22,7 +22,7 @@ function createModel(config) {
     api: "openai-completions",
     provider: "stepfun",
     baseUrl: config.baseUrl,
-    reasoning: false,
+    reasoning: config.reasoningEffort !== "off",
     input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: AGENT_CONTEXT_WINDOW,
@@ -30,7 +30,7 @@ function createModel(config) {
     compat: {
       supportsStore: false,
       supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
+      supportsReasoningEffort: true,
       supportsStrictMode: false,
       supportsUsageInStreaming: false,
       maxTokensField: "max_tokens",
@@ -61,6 +61,13 @@ export function classifyCoordinatorIntent(message, hasAttachment) {
   );
   const asksForTasks = /(拆分|拆成|分成).{0,12}(任务|角色)|创建.{0,8}(多个|数个|\d+\s*个).{0,8}任务|分别.{0,20}(模型|绑骨)|每个角色.{0,20}(任务|模型|绑骨)/i.test(text);
   const asksForSplit = /(拆分|拆开|分拆)(?:吧|一下|角色|任务|这张|上(?:一张|图)|合集|原画)?/i.test(text);
+  const asksForRegeneration = (
+    /(?:再|重新)(?:生成|做|画|跑)|重做|重画|再来一张|再跑一次/i.test(text)
+    || /(?:效果|结果|图片|图|画面).{0,12}(?:不好|不太好|不对|不满意|有问题|错误|失败)/i.test(text)
+    || /(?:风格|画风|效果).{0,16}(?:改成|改为|调整|换成|要|保持)/i.test(text)
+    || /(?:图片|图|画面|生成结果).{0,16}(?:只有|少了|缺少|缺了|不全|多了|人数不对|角色不对)/i.test(text)
+    || /(?:只有|少了|缺少|缺了).{0,12}(?:人|人物|角色)/i.test(text)
+  );
   const asksAboutImage = (
     /(?:能|可以|是否|有没有).{0,8}(?:看见|看到|看清|识别)(?:.{0,8}(?:图|图片|原画|画面|生成结果))?/i.test(text)
     || /(?:这张|上一张|最后一张|刚才|刚刚|前面|最近|已生成|生成的).{0,16}(?:图|图片|原画|画面|生成结果)/i.test(text)
@@ -70,7 +77,8 @@ export function classifyCoordinatorIntent(message, hasAttachment) {
   return {
     asksForSplit,
     asksAboutImage,
-    singleSheetOnly: asksForSingleSheet && !asksForTasks && !asksForSplit && !asksAboutImage,
+    asksForRegeneration,
+    singleSheetOnly: asksForSingleSheet && !asksForTasks && !asksForSplit && !asksAboutImage && !asksForRegeneration,
   };
 }
 
@@ -83,6 +91,7 @@ export function createCoordinatorRuntime({
   delegateTask,
   generateCharacterSheet,
   getLatestGeneratedImage,
+  getLatestCharacterSheetRequest,
   getImageModelStatus,
   getPermissionMode,
   requestApproval,
@@ -279,6 +288,7 @@ export function createCoordinatorRuntime({
 8. API Key 不通过聊天收集；需要配置时提醒用户使用首页的模型配置区域。
 9. 最终用 Markdown 简洁说明实际启动的是单张合集图生成，还是多个任务及其委派目标。
 10. 若本轮附带或自动继承了图片，必须依据实际视觉内容回答人数、角色和画面问题；不得声称当前没有图片，也不得要求用户重新上传。只有无法从画面确认的细节才说明不确定。
+11. 用户对已生成图片提出风格修改、效果不满意、人物缺失/多余或要求再次生成时，必须创建新的 generate_character_sheet 审批或生成 Job。没有真实工具结果时，禁止声称“已重新提交”“已启动”或“等待审批”。
 
 当前工作空间：${JSON.stringify(current)}
 全部工作空间：${JSON.stringify(workspaces)}
@@ -342,7 +352,7 @@ ${transcript.slice(-12000)}
       {
         name: "generate_character_sheet",
         label: "生成单张角色合集图",
-        description: "仅生成一张包含多个不同角色的统一风格合集原画，不创建任何角色任务。用户要求一张合集图时必须使用此工具。",
+        description: "仅生成一张包含多个不同角色的统一风格合集原画，不创建任何角色任务。用户要求一张合集图，或对上一张合集图提出风格修改、人数纠错、效果重做时必须使用此工具。",
         parameters: Type.Object({
           workspaceId: Type.String({ minLength: 1, maxLength: 80 }),
           title: Type.String({ minLength: 1, maxLength: 80 }),
@@ -435,6 +445,49 @@ ${transcript.slice(-12000)}
     ];
   }
 
+  function regenerateLatestCharacterSheet(workspaceId, sessionId, feedback) {
+    const previous = getLatestCharacterSheetRequest?.(workspaceId, sessionId) || null;
+    if (!previous) return null;
+    const feedbackText = String(feedback || "重新生成一版").trim().slice(0, 900);
+    const countRequirement = `画面必须准确包含 ${previous.characterCount} 个不同角色，角色必须全部出现、彼此分离且不得重复或融合`;
+    const correction = `本轮重新生成要求：${feedbackText}。${countRequirement}`;
+    const originalStyle = String(previous.styleDescription || "统一角色美术风格").trim();
+    const originalAdditional = String(previous.additionalPrompt || "").trim();
+    const baseTitle = String(previous.title || "角色合集图").replace(/（重新生成）$/u, "");
+    const params = {
+      workspaceId,
+      sessionId,
+      title: `${baseTitle}（重新生成）`.slice(0, 80),
+      characterCount: previous.characterCount,
+      styleDescription: `${originalStyle.slice(0, 650)}。${correction}`.slice(0, 1000),
+      characterDescriptions: previous.characterDescriptions,
+      additionalPrompt: `${correction}。延续上一版补充要求：${originalAdditional}`.slice(0, 2000),
+      negativePrompt: String(previous.negativePrompt || "").slice(0, 2000),
+    };
+
+    if (getPermissionMode() !== "auto") {
+      const approval = requestApproval({
+        scopeType: "coordinator",
+        scopeId: "global",
+        workspaceId,
+        operation: "generate_character_sheet",
+        title: `重新生成一张包含 ${params.characterCount} 个角色的合集图`,
+        description: `根据用户反馈重新生成“${baseTitle}”，并严格修正上一版结果。`,
+        payload: params,
+      });
+      return {
+        actions: [{ tool: "approval_required", operation: "generate_character_sheet", approvalId: approval.id }],
+        assistantText: `已根据你的反馈创建新的合集图生成审批请求（#${approval.id}）。\n\n- 保留上一版的 ${params.characterCount} 个角色设定\n- 本轮修正：${feedbackText}\n- 批准后会启动一个全新的生成 Job，而不是只修改文字记录。`,
+      };
+    }
+
+    const job = generateCharacterSheet(params);
+    return {
+      actions: [{ tool: "generate_character_sheet", jobId: job.id }],
+      assistantText: `已根据你的反馈启动新的合集图生成 Job（${job.id}）。\n\n- 保留上一版的 ${params.characterCount} 个角色设定\n- 本轮修正：${feedbackText}`,
+    };
+  }
+
   async function run({ workspaceId = null, message, image }) {
     const config = getAgentConfig();
     if (!config.apiKey) throw new Error("总调度 Agent 未配置 API Key");
@@ -448,6 +501,14 @@ ${transcript.slice(-12000)}
     if (!userText) throw new Error("消息不能为空");
     const sessionId = ensureSession(workspaceId);
     const preliminaryIntent = classifyCoordinatorIntent(userText, Boolean(explicitAttachment));
+    if (preliminaryIntent.asksForRegeneration) {
+      const regeneration = regenerateLatestCharacterSheet(workspaceId, sessionId, userText);
+      if (regeneration) {
+        addMessage(workspaceId, "user", userText, explicitAttachment);
+        addMessage(workspaceId, "assistant", regeneration.assistantText);
+        return { ...getConversation(workspaceId), actions: regeneration.actions, workspaces: getWorkspaces() };
+      }
+    }
     const inherited = !explicitAttachment && (preliminaryIntent.asksForSplit || preliminaryIntent.asksAboutImage)
       ? getLatestGeneratedImage?.(workspaceId, sessionId) || null
       : null;
@@ -464,7 +525,7 @@ ${transcript.slice(-12000)}
       initialState: {
         systemPrompt: systemPrompt(workspaceId, history, imageContext),
         model: createModel(config),
-        thinkingLevel: "off",
+        thinkingLevel: config.reasoningEffort,
         tools: tools(workspaceId, attachment, execution, intent),
       },
       getApiKey: () => config.apiKey,

@@ -331,12 +331,15 @@ type ProcessSettings = {
 };
 type WorkflowMetadata = { id: string; name: string; source: "default" | "uploaded"; createdAt: string | null; nodeCount: number };
 type AgentModelOption = { id: string; name: string };
+type ReasoningEffort = "off" | "low" | "high";
 type AgentApiSettings = {
   baseUrl: string;
   model: string;
+  reasoningEffort: ReasoningEffort;
   apiKeyConfigured: boolean;
   defaultBaseUrl: string;
   defaultModel: string;
+  defaultReasoningEffort: ReasoningEffort;
 };
 type AppSettings = {
   processes: Record<ProcessKind, ProcessSettings>;
@@ -361,7 +364,7 @@ type ImageModelSettings = {
   defaultModel: string;
 };
 type ImageModelDraft = { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
-type AgentApiDraft = { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
+type AgentApiDraft = { baseUrl: string; model: string; reasoningEffort: ReasoningEffort; apiKey: string; clearApiKey: boolean };
 type SettingsDraft = {
   processes: Record<ProcessKind, {
     mode: "comfyui" | "api";
@@ -412,6 +415,7 @@ function settingsDraft(settings: AppSettings): SettingsDraft {
     agent: {
       baseUrl: settings.agent.baseUrl,
       model: settings.agent.model,
+      reasoningEffort: settings.agent.reasoningEffort,
       apiKey: "",
       clearApiKey: false,
     },
@@ -423,6 +427,7 @@ function settingsDraft(settings: AppSettings): SettingsDraft {
       agent: {
         baseUrl: settings.coordinator.agent.baseUrl,
         model: settings.coordinator.agent.model,
+        reasoningEffort: settings.coordinator.agent.reasoningEffort,
         apiKey: "",
         clearApiKey: false,
       },
@@ -2793,6 +2798,20 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                             <RefreshCw className={agentModelsLoading ? "spinning" : ""} size={15} />{agentModelsLoading ? "获取中" : "获取模型"}
                           </button>
                         </div>
+                      </div>
+                      <div className="settings-field">
+                        <span>推理强度</span>
+                        <StyledSelect
+                          value={draftAgent.reasoningEffort}
+                          options={[
+                            { value: "high", label: "High（默认，深度推理）" },
+                            { value: "low", label: "Low（更快、更省 Token）" },
+                            { value: "off", label: "关闭（不发送推理强度）" },
+                          ]}
+                          onChange={(value) => updateAgentApiSettings(scope, { reasoningEffort: value as ReasoningEffort })}
+                          ariaLabel={`${isCoordinator ? "总调度" : "任务"} Agent 推理强度`}
+                        />
+                        <small className="settings-field-note">仅在所选模型支持 reasoning_effort 时生效。</small>
                       </div>
                       <label className="settings-field"><span>API Key</span><input type="password" autoComplete="off" maxLength={1000} value={draftAgent.apiKey} disabled={draftAgent.clearApiKey} placeholder={currentAgent.apiKeyConfigured ? "留空以保留当前密钥" : "输入 API Key"} onChange={(event) => { updateAgentApiSettings(scope, { apiKey: event.target.value }); resetModels(); }} /></label>
                       {currentAgent.apiKeyConfigured && <label className="clear-key-control"><input type="checkbox" checked={draftAgent.clearApiKey} onChange={(event) => { updateAgentApiSettings(scope, { clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draftAgent.apiKey }); resetModels(); }} /><span>清除已保存的 API Key</span></label>}

@@ -80,7 +80,7 @@ function createModel(agentConfig) {
     api: "openai-completions",
     provider: "stepfun",
     baseUrl: agentConfig.baseUrl,
-    reasoning: false,
+    reasoning: agentConfig.reasoningEffort !== "off",
     input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: AGENT_CONTEXT_WINDOW,
@@ -88,7 +88,7 @@ function createModel(agentConfig) {
     compat: {
       supportsStore: false,
       supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
+      supportsReasoningEffort: true,
       supportsStrictMode: false,
       supportsUsageInStreaming: false,
       maxTokensField: "max_tokens",
@@ -450,7 +450,7 @@ export function createAssetAgentRuntime({
       initialState: {
         systemPrompt,
         model: createModel(agentConfig),
-        thinkingLevel: "off",
+        thinkingLevel: agentConfig.reasoningEffort,
         tools: [outputTool],
       },
       getApiKey: () => agentConfig.apiKey,
@@ -1088,7 +1088,7 @@ export function createAssetAgentRuntime({
       initialState: {
         systemPrompt: buildSystemPrompt(detail, history, getPermissionMode(runId)),
         model,
-        thinkingLevel: "off",
+        thinkingLevel: agentConfig.reasoningEffort,
         tools: createTools(runId, execution),
       },
       getApiKey: () => agentConfig.apiKey,

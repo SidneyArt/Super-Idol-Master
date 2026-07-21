@@ -988,6 +988,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .settings-field { display: block; margin-top: 15px; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
 .settings-field > span { display: block; margin-bottom: 6px; }
+.settings-field-note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; font-weight: 500; line-height: 1.45; }
 .settings-field input, .settings-field textarea {
   width: 100%;
   display: block;
