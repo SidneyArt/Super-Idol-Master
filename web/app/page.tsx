@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import {
+  Bell,
   Bot,
   Box,
   Check,
@@ -29,6 +30,7 @@ import {
   Save,
   Send,
   Settings,
+  ShieldCheck,
   Sparkles,
   Sun,
   Trash2,
@@ -62,6 +64,7 @@ const stages = [
 type JobType = "none" | "2d" | "qa" | "3d" | "rig";
 type JobStatus = "idle" | "running" | "succeeded" | "failed";
 type Theme = "light" | "dark";
+type ApprovalMode = "request" | "auto";
 type ChatMessage = {
   id: number;
   role: "assistant" | "user";
@@ -146,6 +149,31 @@ type Workspace = {
   runningCount: number;
   createdAt: string;
   updatedAt: string;
+};
+type ApprovalRequest = {
+  id: number;
+  scopeType: "coordinator" | "task";
+  scopeId: string;
+  workspaceId: string | null;
+  runId: string | null;
+  operation: string;
+  title: string;
+  description: string;
+  status: "pending" | "executing" | "approved" | "rejected" | "failed";
+  errorMessage: string;
+  createdAt: string;
+  resolvedAt: string | null;
+};
+type AppNotification = {
+  id: number;
+  kind: string;
+  title: string;
+  message: string;
+  workspaceId: string | null;
+  runId: string | null;
+  approvalId: number | null;
+  readAt: string | null;
+  createdAt: string;
 };
 type AgentWorkflowPlan = {
   runId: string;
@@ -332,6 +360,13 @@ export default function Home() {
   const [workspaceForm, setWorkspaceForm] = useState({ name: "", description: "" });
   const [form, setForm] = useState({ name: "", workspaceId: "default", pipelineType: "text_to_model" as "text_to_model" | "image_to_model" });
   const [taskSourceImage, setTaskSourceImage] = useState<AgentAttachment | null>(null);
+  const [coordinatorMode, setCoordinatorMode] = useState<ApprovalMode>("request");
+  const [taskAgentMode, setTaskAgentMode] = useState<ApprovalMode>("request");
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [toastQueue, setToastQueue] = useState<AppNotification[]>([]);
+  const [approvalBusyId, setApprovalBusyId] = useState<number | null>(null);
   const [promptDraft, setPromptDraft] = useState({
     positivePrompt: DEFAULT_POSITIVE_PROMPT,
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
@@ -349,6 +384,9 @@ export default function Home() {
   const taskSourceFileRef = useRef<HTMLInputElement | null>(null);
   const workflowFileRef = useRef<HTMLInputElement | null>(null);
   const workflowDirectoryRef = useRef<HTMLInputElement | null>(null);
+  const latestNotificationIdRef = useRef(0);
+  const notificationsInitializedRef = useRef(false);
+  const toastNotification = toastQueue[0] || null;
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -381,6 +419,27 @@ export default function Home() {
     const nextId = preferredId || selectedWorkspaceId || data.workspaces[0]?.id || "default";
     setSelectedWorkspaceId(nextId);
     return data.workspaces;
+  }
+
+  async function refreshActivity(showToast = false) {
+    const runId = selectedIdRef.current;
+    const [controls, notificationData] = await Promise.all([
+      api<{ coordinatorMode: ApprovalMode; taskMode: ApprovalMode | null; approvals: ApprovalRequest[] }>(`/api/agent-controls${runId ? `?runId=${encodeURIComponent(runId)}` : ""}`),
+      api<{ notifications: AppNotification[] }>("/api/notifications?limit=50"),
+    ]);
+    setCoordinatorMode(controls.coordinatorMode);
+    if (controls.taskMode) setTaskAgentMode(controls.taskMode);
+    setApprovals(controls.approvals);
+    setNotifications(notificationData.notifications);
+    const newest = notificationData.notifications[0];
+    if (newest) {
+      if (showToast && notificationsInitializedRef.current && newest.id > latestNotificationIdRef.current) {
+        const incoming = notificationData.notifications.filter((item) => item.id > latestNotificationIdRef.current).sort((a, b) => a.id - b.id);
+        setToastQueue((items) => [...items, ...incoming.filter((item) => !items.some((queued) => queued.id === item.id))]);
+      }
+      latestNotificationIdRef.current = Math.max(latestNotificationIdRef.current, newest.id);
+    }
+    notificationsInitializedRef.current = true;
   }
 
   useEffect(() => {
@@ -461,6 +520,21 @@ export default function Home() {
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
+    void refreshActivity(false).catch(() => undefined);
+  }, [selectedId]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => void refreshActivity(true).catch(() => undefined), 3000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!toastNotification) return;
+    const timer = window.setTimeout(() => setToastQueue((items) => items.slice(1)), 8000);
+    return () => window.clearTimeout(timer);
+  }, [toastNotification]);
+
+  useEffect(() => {
     dispatcherEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [dispatcherMessages, dispatcherBusy]);
 
@@ -527,6 +601,9 @@ export default function Home() {
   }, [hasRunningTask, selectedId, selectedPlanIsRunning, selectedRoleIsRunning, selectedTaskIsRunning]);
 
   const run = selectedDetail?.run;
+  const coordinatorApprovals = approvals.filter((item) => item.scopeType === "coordinator");
+  const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
+  const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
   const visibleChatMessages = run?.id === selectedId ? chatMessages : [];
   const artDirectorRun = selectedDetail?.agentRoleRuns?.find((item) =>
     (item.reportType === "prompt_plan" || item.agentRole === "art_director")
@@ -1073,6 +1150,7 @@ export default function Home() {
       setWorkspaces(data.workspaces);
       const runData = await api<{ runs: Run[] }>("/api/runs");
       setRuns(runData.runs);
+      await refreshActivity(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "总调度 Agent 请求失败");
       try {
@@ -1092,6 +1170,68 @@ export default function Home() {
       await api("/api/dispatcher/cancel", { method: "POST" });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "取消总调度 Agent 失败");
+    }
+  }
+
+  async function changeAgentMode(scopeType: "coordinator" | "task", mode: ApprovalMode) {
+    if (scopeType === "task" && !selectedIdRef.current) return;
+    setError("");
+    try {
+      await api("/api/agent-controls", {
+        method: "PUT",
+        body: JSON.stringify({ scopeType, runId: scopeType === "task" ? selectedIdRef.current : undefined, mode }),
+      });
+      if (scopeType === "coordinator") setCoordinatorMode(mode);
+      else setTaskAgentMode(mode);
+      await refreshActivity(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Agent 权限模式更新失败");
+    }
+  }
+
+  async function resolveApproval(id: number, decision: "approve" | "reject") {
+    if (approvalBusyId !== null) return;
+    setApprovalBusyId(id);
+    setError("");
+    try {
+      await api(`/api/approvals/${id}/${decision}`, { method: "POST" });
+      const [runData, workspaceData] = await Promise.all([
+        api<{ runs: Run[] }>("/api/runs"),
+        api<{ workspaces: Workspace[] }>("/api/workspaces"),
+      ]);
+      setRuns(runData.runs);
+      setWorkspaces(workspaceData.workspaces);
+      const currentRunId = selectedIdRef.current;
+      if (currentRunId && runData.runs.some((item) => item.id === currentRunId)) {
+        const detailData = await api<RunDetail>(`/api/runs/${currentRunId}`);
+        if (selectedIdRef.current === currentRunId) setDetail(detailData);
+      }
+      await refreshActivity(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : decision === "approve" ? "审批执行失败" : "拒绝审批失败");
+      await refreshActivity(false).catch(() => undefined);
+    } finally {
+      setApprovalBusyId(null);
+    }
+  }
+
+  async function viewNotification(notification: AppNotification) {
+    setShowNotifications(false);
+    setToastQueue((items) => items.filter((item) => item.id !== notification.id));
+    if (notification.workspaceId) setSelectedWorkspaceId(notification.workspaceId);
+    if (notification.runId) {
+      selectRun(notification.runId);
+      setScreen("task");
+    } else {
+      setScreen("home");
+    }
+    if (!notification.readAt) {
+      try {
+        await api(`/api/notifications/${notification.id}/read`, { method: "POST" });
+        setNotifications((items) => items.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item));
+      } catch {
+        // Navigation should not be blocked when the read marker fails.
+      }
     }
   }
 
@@ -1145,6 +1285,7 @@ export default function Home() {
         });
       }
       void api<{ runs: Run[] }>("/api/runs").then((runData) => setRuns(runData.runs)).catch(() => undefined);
+      await refreshActivity(true);
     } catch (reason) {
       setError(`${item.runName}：${reason instanceof Error ? reason.message : "Agent 请求失败"}`);
       if (selectedIdRef.current === item.runId) {
@@ -1229,6 +1370,26 @@ export default function Home() {
               <i />DGX {system?.comfyui.online ? `${system.comfyui.latencyMs} ms` : "离线"}
             </span>
           </div>
+          <div className="notification-center">
+            <button className="icon-button notification-button" type="button" onClick={() => setShowNotifications((value) => !value)} title="通知" aria-label={`通知，${unreadNotificationCount} 条未读`}>
+              <Bell size={18} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
+            </button>
+            {showNotifications && (
+              <div className="notification-menu">
+                <div className="notification-menu-header"><strong>通知</strong><span>{unreadNotificationCount} 条未读</span></div>
+                <div className="notification-list">
+                  {notifications.map((notification) => (
+                    <article className={notification.readAt ? "read" : "unread"} key={notification.id}>
+                      <span><Bell size={15} /></span>
+                      <div><strong>{notification.title}</strong><p>{notification.message}</p><small>{formatTime(notification.createdAt)}</small></div>
+                      <button type="button" onClick={() => void viewNotification(notification)}>View</button>
+                    </article>
+                  ))}
+                  {!notifications.length && <p className="notification-empty">暂时没有通知。</p>}
+                </div>
+              </div>
+            )}
+          </div>
           <button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
             {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
           </button>
@@ -1237,6 +1398,15 @@ export default function Home() {
           </button>
         </div>
       </header>
+
+      {toastNotification && (
+        <aside className={`notification-toast ${toastNotification.kind}`} role="status">
+          <span><Bell size={18} /></span>
+          <div><strong>{toastNotification.title}</strong><p>{toastNotification.message}</p></div>
+          <button type="button" onClick={() => void viewNotification(toastNotification)}>View</button>
+          <button type="button" className="toast-close" onClick={() => setToastQueue((items) => items.slice(1))} aria-label="关闭提醒"><X size={14} /></button>
+        </aside>
+      )}
 
       {error && (
         <div className="error-banner" role="alert">
@@ -1294,6 +1464,7 @@ export default function Home() {
             <header className="dispatcher-header">
               <div className="dispatcher-title"><span><Bot size={22} /></span><div><small>总调度中心</small><h1>Workspace Coordinator</h1><p>{selectedWorkspace ? `当前空间：${selectedWorkspace.name}` : "创建工作空间后开始调度"}</p></div></div>
               <div className="dispatcher-actions">
+                <label className="agent-permission-control" title="选择总调度 Agent 的变更审批方式"><ShieldCheck size={15} /><select value={coordinatorMode} onChange={(event) => void changeAgentMode("coordinator", event.target.value as ApprovalMode)}><option value="request">请求批准</option><option value="auto">Auto</option></select></label>
                 <button className="secondary-button" type="button" onClick={() => { setForm({ name: "", workspaceId: selectedWorkspaceId, pipelineType: "text_to_model" }); setShowCreate(true); }}><Plus size={16} />新建任务</button>
                 <button className="secondary-button" type="button" onClick={() => { setSettingsTab("agent"); void openSettings(); }}><Settings size={16} />模型配置</button>
               </div>
@@ -1309,6 +1480,13 @@ export default function Home() {
               {!dispatcherMessages.length && (
                 <div className="dispatcher-welcome"><span><ImageIcon size={28} /></span><h2>从一个目标开始整个角色项目</h2><p>描述角色清单，或者直接拖入包含多个角色的合集原画。总调度 Agent 会创建工作空间、拆分单体原画、建立任务，并把生成目标委派给每个任务的专属 Agent。</p><div><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传合集原画</button></div></div>
               )}
+              {coordinatorApprovals.map((approval) => (
+                <section className="approval-card" key={approval.id}>
+                  <span><ShieldCheck size={18} /></span>
+                  <div><small>总调度 Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
+                  <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={15} /> : <Check size={15} />}批准</button></div>
+                </section>
+              ))}
               {dispatcherMessages.map((message) => (
                 <div className={`dispatcher-message ${message.role}`} key={message.id}>
                   <span>{message.role === "assistant" ? <Bot size={17} /> : <User size={17} />}</span>
@@ -1655,6 +1833,7 @@ export default function Home() {
           <div className="agent-header">
             <div className="agent-title"><span><Bot size={19} /></span><div><strong>Asset Agent</strong><small>工作对话</small></div></div>
             <div className="agent-header-actions">
+              {run && <label className="agent-permission-control compact" title="选择当前任务 Agent 的变更审批方式"><ShieldCheck size={14} /><select value={taskAgentMode} onChange={(event) => void changeAgentMode("task", event.target.value as ApprovalMode)}><option value="request">请求批准</option><option value="auto">Auto</option></select></label>}
               <span className={`agent-state ${agentOperationalBusy ? "busy" : system?.agent.configured ? "" : "unavailable"}`}>
                 <i />{agentBusy ? agentQueue.length ? `处理中 · ${agentQueue.length} 排队` : "处理中" : selectedRoleIsRunning ? "子 Agent 质检中" : selectedPlanIsRunning ? "自动执行中" : system?.agent.configured ? "待命" : "未配置"}
               </span>
@@ -1685,6 +1864,13 @@ export default function Home() {
             )}
           </div>
           <div className="chat-thread" key={selectedId || "no-run"}>
+            {taskApprovals.map((approval) => (
+              <section className="approval-card compact-card" key={approval.id}>
+                <span><ShieldCheck size={17} /></span>
+                <div><small>Asset Agent 请求批准</small><strong>{approval.title}</strong><p>{approval.description}</p></div>
+                <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={14} /> : <Check size={14} />}批准</button></div>
+              </section>
+            ))}
             {visibleChatMessages.map((message) => (
               <div className={`chat-message ${message.role}`} key={message.id}>
                 <span className="chat-avatar">{message.role === "assistant" ? <Bot size={16} /> : <User size={16} />}</span>

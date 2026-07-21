@@ -38,6 +38,7 @@ Super-Idol-Master/
 │   ├── server/
 │   │   ├── index.mjs                 # HTTP API、状态机、Job 与产物校验
 │   │   ├── agent-runtime.mjs         # Supervisor、多 Agent 与持续执行计划
+│   │   ├── approval-runtime.mjs      # 权限模式、审批队列与全局通知
 │   │   ├── coordinator-runtime.mjs   # 跨工作空间总调度与批量任务委派
 │   │   └── settings.mjs              # 工作流、端点、模型和密钥配置
 │   ├── scripts/
@@ -142,6 +143,13 @@ Super-Idol-Master/
 
 总调度层的 `Coordinator` 可以列出或创建工作空间、读取图片模型状态、分析合集原画、创建多个角色任务，并分别调用这些任务的 Asset Agent。它不能执行任意 Shell 或绕过 Run 状态机。任务层仍由 `Supervisor`、`Art Director` 和 `Visual QA` 负责。
 
+总调度 Agent 与每个任务的 Asset Agent 都有独立权限模式：
+
+- `request`：所有变更型工具先写入审批队列；批准前不修改任务、不启动 Job；
+- `auto`：在既有状态机、单 GPU Job 和质量门禁范围内自动批准工具调用。
+
+持续流水线目标只在登记目标时审批一次。批准代表允许系统自动执行到指定终点，但 SDPose、Visual QA、产物结构检查和失败暂停机制仍然生效。
+
 角色边界：
 
 | 角色 | 可执行操作 | 禁止操作 |
@@ -215,6 +223,9 @@ Super-Idol-Master/
 | `run_events` | 创建、推进、回退、Job 和质量检查事件 |
 | `app_settings` | ComfyUI 端点、工作流版本、模型和本地密钥配置 |
 | `dispatcher_messages` | 总调度 Agent 按工作空间保存的对话历史 |
+| `agent_permission_modes` | 总调度和各任务 Agent 的 `request` / `auto` 权限模式 |
+| `approval_requests` | 待审批操作、序列化参数、状态、结果和失败信息 |
+| `app_notifications` | 待审批、阶段完成、失败和流程完成通知 |
 | `agent_messages` | 每个 Run 的 Agent 对话历史 |
 | `agent_role_runs` | Art Director 与 Visual QA 的执行状态和输入输出 |
 | `agent_reports` | 结构化 `PromptPlan` 与视觉质量报告 |

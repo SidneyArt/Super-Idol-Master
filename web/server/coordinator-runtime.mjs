@@ -59,6 +59,8 @@ export function createCoordinatorRuntime({
   createCharacterTasks,
   delegateTask,
   getImageModelStatus,
+  getPermissionMode,
+  requestApproval,
 }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS dispatcher_messages (
@@ -123,7 +125,9 @@ export function createCoordinatorRuntime({
 全部工作空间：${JSON.stringify(workspaces)}
 本轮是否附带合集原画：${hasImage ? "是" : "否"}
 最近会话：
-${transcript.slice(-12000)}`;
+${transcript.slice(-12000)}
+
+当前权限模式：${getPermissionMode() === "auto" ? "Auto（变更工具自动批准）" : "请求批准（变更工具只创建审批，批准前不得声称已执行）"}`;
   }
 
   function tools(workspaceId, attachment, execution) {
@@ -157,6 +161,19 @@ ${transcript.slice(-12000)}`;
         }),
         executionMode: "sequential",
         execute: async (_id, params) => {
+          if (getPermissionMode() !== "auto") {
+            const approval = requestApproval({
+              scopeType: "coordinator",
+              scopeId: "global",
+              workspaceId,
+              operation: "create_workspace",
+              title: `创建工作空间“${params.name}”`,
+              description: params.description || "总调度 Agent 请求创建工作空间。",
+              payload: params,
+            });
+            execution.actions.push({ tool: "approval_required", approvalId: approval.id });
+            return textResult(`创建工作空间需要批准，已提交审批：“${approval.title}”。`, { approval });
+          }
           const workspace = createWorkspace(params);
           execution.actions.push({ tool: "create_workspace", workspace });
           return textResult(`已创建工作空间“${workspace.name}”。`, workspace);
@@ -189,13 +206,28 @@ ${transcript.slice(-12000)}`;
         }),
         executionMode: "sequential",
         execute: async (_id, params) => {
+          if (getPermissionMode() !== "auto") {
+            const approval = requestApproval({
+              scopeType: "coordinator",
+              scopeId: "global",
+              workspaceId: params.workspaceId || workspaceId,
+              operation: "create_character_tasks",
+              title: `创建并调度 ${params.tasks.length} 个角色任务`,
+              description: params.delegateToAgents
+                ? `将创建任务并委派各任务的专属 Asset Agent，目标为 ${params.target}。`
+                : "将按分析结果创建角色任务。",
+              payload: { ...params, image: attachment },
+            });
+            execution.actions.push({ tool: "approval_required", approvalId: approval.id });
+            return textResult(`批量创建与调度需要批准，已提交审批：“${approval.title}”。`, { approval });
+          }
           const tasks = await createCharacterTasks({ ...params, image: attachment });
           const delegated = [];
           if (params.delegateToAgents) {
             for (const task of tasks) {
               try {
-                await delegateTask(task.run.id, params.target);
-                delegated.push({ runId: task.run.id, status: "running" });
+                const result = await delegateTask(task.run.id, params.target);
+                delegated.push({ runId: task.run.id, status: result?.status === "pending" ? "awaiting_approval" : result?.status || "submitted" });
               } catch (error) {
                 delegated.push({ runId: task.run.id, status: "failed", error: error instanceof Error ? error.message : "委派失败" });
               }

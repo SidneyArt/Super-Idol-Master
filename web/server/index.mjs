@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { loadEnvFile } from "node:process";
 import { createAssetAgentRuntime } from "./agent-runtime.mjs";
+import { createApprovalRuntime } from "./approval-runtime.mjs";
 import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
 import { createSettingsStore, PROCESS_KINDS } from "./settings.mjs";
 
@@ -152,6 +153,7 @@ addColumn("source_preview_path", "TEXT");
 db.prepare("UPDATE runs SET workspace_id = 'default' WHERE workspace_id IS NULL OR workspace_id = ''").run();
 db.prepare("UPDATE runs SET pipeline_type = 'text_to_model' WHERE pipeline_type IS NULL OR pipeline_type = ''").run();
 db.exec("CREATE INDEX IF NOT EXISTS runs_workspace_id_idx ON runs(workspace_id, updated_at DESC)");
+const approvalRuntime = createApprovalRuntime({ db });
 
 db.prepare(`
   UPDATE runs SET generation_status = 'failed', generation_message = '本地服务重启，原 DGX 任务已中断'
@@ -221,6 +223,28 @@ function addEvent(runId, eventType, stage, message, createdAt = new Date().toISO
     INSERT INTO run_events (run_id, event_type, stage, message, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(runId, eventType, stage, message, createdAt);
+  const notificationKinds = {
+    generation_succeeded: ["generation_completed", "图片生成完成"],
+    qa_passed: ["stage_completed", "T-Pose 质检完成"],
+    qa_failed: ["generation_failed", "T-Pose 质检未通过"],
+    model_succeeded: ["generation_completed", "3D 模型生成完成"],
+    rig_succeeded: ["generation_completed", "自动绑骨完成"],
+    pipeline_completed: ["pipeline_completed", "角色资产流程已完成"],
+    "2d_failed": ["generation_failed", "图片生成失败"],
+    "3d_failed": ["generation_failed", "3D 模型生成失败"],
+    rig_failed: ["generation_failed", "自动绑骨失败"],
+  };
+  const notification = notificationKinds[eventType];
+  if (notification) {
+    const run = getRunRow(runId);
+    approvalRuntime.addNotification({
+      kind: notification[0],
+      title: notification[1],
+      message: run ? `${run.name}：${message}` : message,
+      workspaceId: run?.workspaceId || null,
+      runId,
+    });
+  }
 }
 
 function getRunRow(id) {
@@ -1052,6 +1076,8 @@ const assetAgent = createAssetAgentRuntime({
   getAgentConfig: settingsStore.agentConfig,
   getRunImagePath: (runId) => getRunRow(runId)?.imagePathInternal || null,
   addRunEvent: addEvent,
+  getPermissionMode: (runId) => approvalRuntime.permission("task", runId),
+  requestApproval: approvalRuntime.requestApproval,
 });
 
 async function createCoordinatorTasks({ workspaceId, tasks, image }) {
@@ -1119,11 +1145,37 @@ const coordinatorAgent = createCoordinatorRuntime({
   getWorkspaces: getWorkspacesSummary,
   createWorkspace: createWorkspaceRecord,
   createCharacterTasks: createCoordinatorTasks,
-  delegateTask: (runId, target) => assetAgent.scheduleWorkflowPlan(runId, target),
+  delegateTask: (runId, target) => assetAgent.requestWorkflowPlan(runId, target),
   getImageModelStatus: () => {
     const settings = settingsStore.publicSettings();
     return settings.imageModels;
   },
+  getPermissionMode: () => approvalRuntime.permission("coordinator", "global"),
+  requestApproval: approvalRuntime.requestApproval,
+});
+
+approvalRuntime.setExecutor(async (approval) => {
+  if (approval.scopeType === "task") {
+    return assetAgent.executeApprovedOperation(approval.runId, approval.operation, approval.payload);
+  }
+  if (approval.operation === "create_workspace") return createWorkspaceRecord(approval.payload);
+  if (approval.operation === "create_character_tasks") {
+    const { image, ...params } = approval.payload;
+    const tasks = await createCoordinatorTasks({ ...params, image });
+    const delegated = [];
+    if (params.delegateToAgents) {
+      for (const task of tasks) {
+        try {
+          const result = await assetAgent.requestWorkflowPlan(task.run.id, params.target, "已批准的总调度任务委派");
+          delegated.push({ runId: task.run.id, status: result?.status || "submitted" });
+        } catch (error) {
+          delegated.push({ runId: task.run.id, status: "failed", error: error instanceof Error ? error.message : "委派失败" });
+        }
+      }
+    }
+    return { tasks, delegated };
+  }
+  throw new Error("未知的总调度 Agent 审批操作");
 });
 
 const server = createServer(async (req, res) => {
@@ -1188,6 +1240,44 @@ const server = createServer(async (req, res) => {
       systemCacheAt = 0;
       json(res, 200, result);
       return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/agent-controls") {
+      const runId = url.searchParams.get("runId");
+      json(res, 200, {
+        coordinatorMode: approvalRuntime.permission("coordinator", "global"),
+        taskMode: runId ? approvalRuntime.permission("task", runId) : null,
+        approvals: approvalRuntime.listApprovals("pending"),
+      });
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/api/agent-controls") {
+      const body = await readBody(req, 50_000);
+      const scopeType = body.scopeType === "coordinator" ? "coordinator" : body.scopeType === "task" ? "task" : null;
+      if (!scopeType) throw new Error("未知 Agent 权限范围");
+      const scopeId = scopeType === "coordinator" ? "global" : cleanText(body.runId, 80, "任务 ID", true);
+      if (scopeType === "task" && !getRunRow(scopeId)) throw new Error("任务不存在");
+      json(res, 200, approvalRuntime.setPermission(scopeType, scopeId, body.mode));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/notifications") {
+      json(res, 200, { notifications: approvalRuntime.listNotifications(url.searchParams.get("limit")) });
+      return;
+    }
+    if (parts[0] === "api" && parts[1] === "notifications" && parts[2] && req.method === "POST" && parts[3] === "read") {
+      json(res, 200, approvalRuntime.markNotificationRead(Number(parts[2])));
+      return;
+    }
+    if (parts[0] === "api" && parts[1] === "approvals" && parts[2] && req.method === "POST") {
+      if (parts[3] === "approve") {
+        const approval = await approvalRuntime.approve(Number(parts[2]));
+        json(res, 200, { ...approval, payload: undefined });
+        return;
+      }
+      if (parts[3] === "reject") {
+        const approval = approvalRuntime.reject(Number(parts[2]));
+        json(res, 200, { ...approval, payload: undefined });
+        return;
+      }
     }
     if (req.method === "GET" && url.pathname === "/api/workspaces") {
       json(res, 200, { workspaces: getWorkspacesSummary() });

@@ -197,7 +197,7 @@ function compactRunContext(detail) {
   };
 }
 
-function buildSystemPrompt(detail, history) {
+function buildSystemPrompt(detail, history, permissionMode) {
   const transcript = history.length
     ? history.map((item) => `${item.role === "user" ? "用户" : "Asset Agent"}：${item.content}`).join("\n")
     : "无历史消息";
@@ -216,6 +216,8 @@ function buildSystemPrompt(detail, history) {
 10. 工具报错时解释真实原因，不要绕过阶段、审批或运行中任务限制。
 11. 最终回复使用简洁中文，明确说明实际执行的操作、流水线目标和当前阶段。
 
+当前权限模式：${permissionMode === "auto" ? "Auto（变更工具自动批准）" : "请求批准（变更工具只创建审批，批准前不得声称已执行）"}
+
 当前任务状态：
 ${JSON.stringify(compactRunContext(detail), null, 2)}
 
@@ -233,6 +235,8 @@ export function createAssetAgentRuntime({
   getAgentConfig,
   getRunImagePath,
   addRunEvent,
+  getPermissionMode,
+  requestApproval,
 }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_messages (
@@ -752,6 +756,22 @@ export function createAssetAgentRuntime({
 
   function createTools(runId, execution) {
     const currentContext = () => compactRunContext(getRunDetail(runId));
+    const approvalFor = (operation, title, description, payload) => {
+      if (getPermissionMode(runId) === "auto") return null;
+      const detail = getRunDetail(runId);
+      const approval = requestApproval({
+        scopeType: "task",
+        scopeId: runId,
+        workspaceId: detail.run.workspaceId,
+        runId,
+        operation,
+        title,
+        description,
+        payload,
+      });
+      execution.actions.push({ tool: "approval_required", message: `等待批准：${title}` });
+      return textResult(`该操作需要用户批准，已提交审批：“${title}”。批准前不会修改任务或启动生成。`, { approval });
+    };
     return [
       {
         name: "get_run_context",
@@ -772,6 +792,8 @@ export function createAssetAgentRuntime({
         }),
         executionMode: "sequential",
         execute: async (_toolCallId, params) => {
+          const pending = approvalFor("update_character_prompts", "更新角色提示词", params.reason, params);
+          if (pending) return pending;
           const { promptPlan, detail } = await prepareCharacterPrompts(runId, params, params.reason);
           execution.actions.push({ tool: "art_director", message: `Art Director：${promptPlan.summary}` });
           execution.actions.push({ tool: "update_character_prompts", message: "角色提示词已更新" });
@@ -788,6 +810,8 @@ export function createAssetAgentRuntime({
         parameters: Type.Object({ reason: Type.String({ minLength: 1, maxLength: 240 }) }),
         executionMode: "sequential",
         execute: async (_toolCallId, params) => {
+          const pending = approvalFor("advance_workflow", "推进任务工作流", params.reason, params);
+          if (pending) return pending;
           const detail = advanceWorkflow(runId, params.reason);
           execution.actions.push({ tool: "advance_workflow", message: `流程已推进到${STAGE_NAMES[detail.run.currentStage]}` });
           return textResult(`流程已推进到“${STAGE_NAMES[detail.run.currentStage]}”。`, compactRunContext(detail));
@@ -810,6 +834,13 @@ export function createAssetAgentRuntime({
         executionMode: "sequential",
         execute: async (_toolCallId, params) => {
           if (execution.jobStarted) throw new Error("本次 Agent 对话已经启动过 GPU Job，不能重复创建流水线计划");
+          const pending = approvalFor(
+            "execute_pipeline_goal",
+            `持续执行到“${PIPELINE_TARGETS[params.target].label}”`,
+            `${params.reason}；批准后该目标后续阶段自动执行，并继续遵守质量门禁。`,
+            params,
+          );
+          if (pending) return pending;
           const before = getRunDetail(runId).run.jobStatus;
           const plan = await scheduleWorkflowPlan(runId, params.target);
           const after = getRunDetail(runId).run;
@@ -834,6 +865,8 @@ export function createAssetAgentRuntime({
         }),
         executionMode: "sequential",
         execute: async (_toolCallId, params) => {
+          const pending = approvalFor("revert_workflow", `回退到“${STAGE_NAMES[params.targetStage]}”`, `${params.reason}；下游产物引用将被清除。`, params);
+          if (pending) return pending;
           const detail = revertWorkflow(runId, params.targetStage, params.reason);
           execution.actions.push({ tool: "revert_workflow", message: `流程已回退到${STAGE_NAMES[params.targetStage]}` });
           return textResult(`流程已回退到“${STAGE_NAMES[params.targetStage]}”。`, compactRunContext(detail));
@@ -855,6 +888,9 @@ export function createAssetAgentRuntime({
         executionMode: "sequential",
         execute: async (_toolCallId, params) => {
           if (execution.jobStarted) throw new Error("本次 Agent 对话已经启动过一个 GPU Job，请等待任务完成");
+          const jobLabels = { generate_2d: "生成 2D / T-Pose 图", check_tpose: "运行 T-Pose 质检", generate_3d: "生成静态 3D 模型", rig: "运行自动绑骨" };
+          const pending = approvalFor("run_stage_job", jobLabels[params.action] || "执行阶段生成任务", params.reason, params);
+          if (pending) return pending;
           const detail = runStageJob(runId, params.action, params.reason);
           execution.jobStarted = true;
           execution.actions.push({ tool: "run_stage_job", message: detail.run.jobMessage || "GPU Job 已提交" });
@@ -862,6 +898,33 @@ export function createAssetAgentRuntime({
         },
       },
     ];
+  }
+
+  async function executeApprovedOperation(runId, operation, payload = {}) {
+    if (operation === "update_character_prompts") {
+      const result = await prepareCharacterPrompts(runId, payload, payload.reason || "用户批准更新角色提示词");
+      return { run: compactRunContext(result.detail), promptPlan: result.promptPlan };
+    }
+    if (operation === "advance_workflow") return compactRunContext(advanceWorkflow(runId, payload.reason));
+    if (operation === "execute_pipeline_goal") return scheduleWorkflowPlan(runId, payload.target);
+    if (operation === "revert_workflow") return compactRunContext(revertWorkflow(runId, payload.targetStage, payload.reason));
+    if (operation === "run_stage_job") return compactRunContext(runStageJob(runId, payload.action, payload.reason));
+    throw new Error("未知的任务 Agent 审批操作");
+  }
+
+  async function requestWorkflowPlan(runId, target, reason = "总调度 Agent 委派持续执行目标") {
+    if (getPermissionMode(runId) === "auto") return scheduleWorkflowPlan(runId, target);
+    const detail = getRunDetail(runId);
+    return requestApproval({
+      scopeType: "task",
+      scopeId: runId,
+      workspaceId: detail.run.workspaceId,
+      runId,
+      operation: "execute_pipeline_goal",
+      title: `持续执行到“${PIPELINE_TARGETS[target]?.label || target}”`,
+      description: `${reason}；批准后由该任务的专属 Asset Agent 自动执行。`,
+      payload: { target, reason },
+    });
   }
 
   async function run({ runId, message, image }) {
@@ -884,7 +947,7 @@ export function createAssetAgentRuntime({
     const model = createModel(agentConfig);
     const agent = new Agent({
       initialState: {
-        systemPrompt: buildSystemPrompt(detail, history),
+        systemPrompt: buildSystemPrompt(detail, history, getPermissionMode(runId)),
         model,
         thinkingLevel: "off",
         tools: createTools(runId, execution),
@@ -946,6 +1009,8 @@ export function createAssetAgentRuntime({
     getRoleRuns,
     getWorkflowPlan,
     scheduleWorkflowPlan,
+    requestWorkflowPlan,
+    executeApprovedOperation,
     handleJobCompleted,
     handleJobFailed,
     prepareCharacterPrompts,
