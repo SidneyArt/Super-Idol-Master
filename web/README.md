@@ -42,7 +42,11 @@ npm run agent:verify
 
 ## 主要功能
 
+- 工作空间首页、分组任务列表和跨任务总调度 Agent；
+- 总调度 Agent 可分析多角色合集原画、裁切单体角色、批量建任务并委派给专属 Asset Agent；
 - IDEA → 2D → 自动 T-Pose QA → 3D → 自动绑骨 → 导出的严格状态机；
+- 原画 → T-Pose 图 → 自动 T-Pose QA → 3D → 自动绑骨 → 导出的图生模型工作流；
+- 文生图与图生图模型可独立配置；
 - 调用 DGX 上真实的 Qwen Image、SDPose、Pixal3D 和 SkinTokens 工作流；
 - ComfyUI WebSocket 真实进度与任务事件记录；
 - 静态和绑骨 GLB 的交互式 3D 预览；

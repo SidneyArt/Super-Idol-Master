@@ -93,8 +93,16 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     apiKey: process.env.STEPFUN_API_KEY?.trim() || "",
   };
   const imageApiDefaults = {
-    baseUrl: normalizeUrl(process.env.STEPFUN_IMAGE_BASE_URL || DEFAULT_IMAGE_API_BASE_URL, "2D API Base URL"),
-    model: process.env.STEPFUN_IMAGE_MODEL?.trim() || DEFAULT_IMAGE_API_MODEL,
+    textToImage: {
+      baseUrl: normalizeUrl(process.env.STEPFUN_TEXT_IMAGE_BASE_URL || process.env.STEPFUN_IMAGE_BASE_URL || DEFAULT_IMAGE_API_BASE_URL, "文生图 API Base URL"),
+      model: process.env.STEPFUN_TEXT_IMAGE_MODEL?.trim() || process.env.STEPFUN_IMAGE_MODEL?.trim() || DEFAULT_IMAGE_API_MODEL,
+      apiKey: process.env.STEPFUN_TEXT_IMAGE_API_KEY?.trim() || process.env.STEPFUN_IMAGE_API_KEY?.trim() || "",
+    },
+    imageToImage: {
+      baseUrl: normalizeUrl(process.env.STEPFUN_IMAGE_EDIT_BASE_URL || process.env.STEPFUN_IMAGE_BASE_URL || DEFAULT_IMAGE_API_BASE_URL, "图生图 API Base URL"),
+      model: process.env.STEPFUN_IMAGE_EDIT_MODEL?.trim() || process.env.STEPFUN_IMAGE_MODEL?.trim() || DEFAULT_IMAGE_API_MODEL,
+      apiKey: process.env.STEPFUN_IMAGE_EDIT_API_KEY?.trim() || process.env.STEPFUN_IMAGE_API_KEY?.trim() || "",
+    },
   };
 
   const findSetting = db.prepare("SELECT setting_value AS value FROM app_settings WHERE setting_key = ?");
@@ -184,15 +192,26 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     const config = { mode: "comfyui", url, workflow: clone(records.find((item) => item.id === activeWorkflowId).workflow), activeWorkflowId };
     if (kind !== "2d") return config;
     const mode = read("process.2d.mode", "comfyui") === "api" ? "api" : "comfyui";
-    const storedApiKey = read("image.2d.api_key", null);
+    const textImage = imageConfig("text_to_model");
     return {
       ...config,
       mode,
       api: {
-        baseUrl: normalizeUrl(read("image.2d.base_url", imageApiDefaults.baseUrl), "2D API Base URL"),
-        model: read("image.2d.model", imageApiDefaults.model).trim() || imageApiDefaults.model,
-        apiKey: storedApiKey === null ? process.env.STEPFUN_IMAGE_API_KEY?.trim() || agentConfig().apiKey : storedApiKey.trim(),
+        ...textImage,
       },
+    };
+  }
+
+  function imageConfig(pipelineType) {
+    const isImage = pipelineType === "image_to_model";
+    const prefix = isImage ? "image.image_to_image" : "image.text_to_image";
+    const defaults = isImage ? imageApiDefaults.imageToImage : imageApiDefaults.textToImage;
+    const legacyPrefix = "image.2d";
+    const storedApiKey = read(`${prefix}.api_key`, isImage ? null : read(`${legacyPrefix}.api_key`, null));
+    return {
+      baseUrl: normalizeUrl(read(`${prefix}.base_url`, isImage ? defaults.baseUrl : read(`${legacyPrefix}.base_url`, defaults.baseUrl)), isImage ? "图生图 API Base URL" : "文生图 API Base URL"),
+      model: read(`${prefix}.model`, isImage ? defaults.model : read(`${legacyPrefix}.model`, defaults.model)).trim() || defaults.model,
+      apiKey: storedApiKey === null ? defaults.apiKey || agentConfig().apiKey : storedApiKey.trim(),
     };
   }
 
@@ -272,8 +291,8 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
               baseUrl: current.api.baseUrl,
               model: current.api.model,
               apiKeyConfigured: Boolean(current.api.apiKey),
-              defaultBaseUrl: imageApiDefaults.baseUrl,
-              defaultModel: imageApiDefaults.model,
+              defaultBaseUrl: imageApiDefaults.textToImage.baseUrl,
+              defaultModel: imageApiDefaults.textToImage.model,
             },
           } : {}),
         }];
@@ -284,6 +303,22 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
         apiKeyConfigured: Boolean(agentConfig().apiKey),
         defaultBaseUrl: agentDefaults.baseUrl,
         defaultModel: agentDefaults.model,
+      },
+      imageModels: {
+        textToImage: {
+          baseUrl: imageConfig("text_to_model").baseUrl,
+          model: imageConfig("text_to_model").model,
+          apiKeyConfigured: Boolean(imageConfig("text_to_model").apiKey),
+          defaultBaseUrl: imageApiDefaults.textToImage.baseUrl,
+          defaultModel: imageApiDefaults.textToImage.model,
+        },
+        imageToImage: {
+          baseUrl: imageConfig("image_to_model").baseUrl,
+          model: imageConfig("image_to_model").model,
+          apiKeyConfigured: Boolean(imageConfig("image_to_model").apiKey),
+          defaultBaseUrl: imageApiDefaults.imageToImage.baseUrl,
+          defaultModel: imageApiDefaults.imageToImage.model,
+        },
       },
     };
   }
@@ -333,6 +368,26 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     else if (typeof agentInput.apiKey === "string" && agentInput.apiKey.trim()) nextAgent.apiKey = agentInput.apiKey.trim();
     if (nextAgent.apiKey.length > 1000) throw new Error("Agent API Key 不能超过 1,000 个字符");
 
+    const imageModelsInput = input.imageModels && typeof input.imageModels === "object" ? input.imageModels : {};
+    const normalizeImageModel = (key, pipeline) => {
+      const current = imageConfig(pipeline);
+      const next = imageModelsInput[key] && typeof imageModelsInput[key] === "object" ? imageModelsInput[key] : {};
+      const value = {
+        baseUrl: normalizeUrl(next.baseUrl ?? current.baseUrl, key === "textToImage" ? "文生图 API Base URL" : "图生图 API Base URL"),
+        model: typeof next.model === "string" ? next.model.trim() : current.model,
+        apiKey: current.apiKey,
+      };
+      if (!value.model || value.model.length > 160) throw new Error(`${key === "textToImage" ? "文生图" : "图生图"}模型无效`);
+      if (next.clearApiKey === true) value.apiKey = "";
+      else if (typeof next.apiKey === "string" && next.apiKey.trim()) value.apiKey = next.apiKey.trim();
+      if (value.apiKey.length > 1000) throw new Error("图片 API Key 不能超过 1,000 个字符");
+      return value;
+    };
+    const nextImageModels = {
+      textToImage: normalizeImageModel("textToImage", "text_to_model"),
+      imageToImage: normalizeImageModel("imageToImage", "image_to_model"),
+    };
+
     const now = new Date().toISOString();
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -347,6 +402,12 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       saveSetting.run("agent.base_url", nextAgent.baseUrl, now);
       saveSetting.run("agent.model", nextAgent.model, now);
       saveSetting.run("agent.api_key", nextAgent.apiKey, now);
+      for (const [key, value] of Object.entries(nextImageModels)) {
+        const prefix = key === "textToImage" ? "image.text_to_image" : "image.image_to_image";
+        saveSetting.run(`${prefix}.base_url`, value.baseUrl, now);
+        saveSetting.run(`${prefix}.model`, value.model, now);
+        saveSetting.run(`${prefix}.api_key`, value.apiKey, now);
+      }
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
@@ -379,5 +440,5 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     return publicSettings();
   }
 
-  return { processConfig, agentConfig, publicSettings, getWorkflow, fetchAgentModels, update, uploadWorkflow, removeWorkflow };
+  return { processConfig, imageConfig, agentConfig, publicSettings, getWorkflow, fetchAgentModels, update, uploadWorkflow, removeWorkflow };
 }

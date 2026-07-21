@@ -1,14 +1,18 @@
 # Super Idol Master：数字偶像资产管家
 
-Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生成节点之间的角色资产生产系统。用户可以通过可视化界面或 Asset Agent，把角色描述持续推进为 2D 概念图、通过质检的 T-Pose、静态 3D 模型和带骨骼 GLB。
+Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生成节点之间的角色资产生产系统。首页以工作空间组织不同项目和任务，并提供总调度 Agent；用户可以从角色描述、单体原画或多角色合集原画开始，把角色持续推进为通过质检的 T-Pose、静态 3D 模型和带骨骼 GLB。
 
 系统接入真实的 Qwen Image、SDPose、Pixal3D 和 SkinTokens 工作流，并以状态机、质量门禁和产物校验约束自动化过程。
 
 ## 核心能力
 
-- `角色描述 → 2D → T-Pose QA → 3D → 自动绑骨 → 导出` 的完整资产流水线。
+- 工作空间首页：不同工作空间保存各自的任务列表，已有任务自动归入“默认工作空间”。
+- 总调度 Agent：可创建工作空间与任务，分析多角色合集原画、拆分单体角色，并把目标委派给各任务的专属 Asset Agent。
+- 两套可选资产流水线：
+  - `角色描述 → 2D / T-Pose 图 → T-Pose QA → 3D → 自动绑骨 → 导出`；
+  - `角色原画 → T-Pose 图 → T-Pose QA → 3D → 自动绑骨 → 导出`。
 - 通过 ComfyUI HTTP API 和 WebSocket 调用 DGX，展示真实队列、节点进度和执行结果。
-- 2D 阶段可切换为 Stepfun 图片 API，其他阶段继续使用 ComfyUI。
+- 文生图和图生图分别提供 Stepfun 模型、Base URL 与 API Key 配置，其他阶段继续使用 ComfyUI。
 - 静态与绑骨 GLB 的交互式 3D 预览，包括材质、线框、骨骼和自动旋转。
 - SQLite 持久化任务、阶段、事件、配置、Agent 对话和质检报告。
 - Pi 驱动的多 Agent 协作：
@@ -18,6 +22,8 @@ Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生�
 - 目标驱动的持续执行。用户说“帮我一路生成到模型”后，系统会自动执行后续阶段，不再逐步等待人工确认；只有质量门禁失败或外部任务异常时才暂停。
 
 ## 工作流程
+
+创建任务时可以选择“文生模型”或“图生模型”。图生模型任务必须提供一张单体角色原画；总调度 Agent 也可以从合集原画中生成这些单体输入。
 
 ```text
 角色描述
@@ -38,6 +44,18 @@ Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生�
   ├─ GLB skin / joints 结构检查
   ▼
 资产导出
+```
+
+```text
+单体角色原画
+  │
+  ├─ Stepfun 图生图：保持角色身份并转换为标准 T-Pose
+  ▼
+T-Pose 图
+  │
+  ├─ SDPose + Visual QA 双重质量门禁
+  ▼
+静态 3D 模型 → 自动绑骨 → 资产导出
 ```
 
 Asset Agent 支持把以下自然语言目标登记为持久化执行计划：
@@ -77,7 +95,7 @@ python -m pip install -r scripts/comfy_workflow/requirements.txt
 STEPFUN_API_KEY=your-api-key
 ```
 
-也可以在网站设置面板中配置 Agent、2D 图片 API、各阶段 ComfyUI 地址和工作流版本。API Key 只保存在本机环境变量或本地 SQLite 配置中。
+也可以在网站设置面板中分别配置 Agent、文生图模型、图生图模型、各阶段 ComfyUI 地址和工作流版本。图片配置支持 `STEPFUN_TEXT_IMAGE_*` 与 `STEPFUN_IMAGE_EDIT_*` 环境变量，并兼容原来的 `STEPFUN_IMAGE_*`。API Key 只保存在本机环境变量或本地 SQLite 配置中。
 
 ### 启动网站
 

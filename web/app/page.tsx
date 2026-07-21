@@ -80,9 +80,11 @@ type AgentQueueItem = {
 };
 
 type Assets = {
+  sourceImageReady: boolean;
   imageReady: boolean;
   modelReady: boolean;
   riggedReady: boolean;
+  sourceImageDownloadUrl: string | null;
   imageDownloadUrl: string | null;
   modelDownloadUrl: string | null;
   riggedDownloadUrl: string | null;
@@ -90,6 +92,8 @@ type Assets = {
 
 type Run = {
   id: string;
+  workspaceId: string;
+  pipelineType: "text_to_model" | "image_to_model";
   name: string;
   positivePrompt: string;
   negativePrompt: string;
@@ -107,6 +111,7 @@ type Run = {
   jobPromptId: string | null;
   jobCurrentNode: string | null;
   previewPath: string | null;
+  sourcePreviewPath: string | null;
   assets: Assets;
   createdAt: string;
   updatedAt: string;
@@ -131,6 +136,16 @@ type AgentRoleRun = {
   report: AgentRoleReport | null;
   createdAt: string;
   completedAt: string | null;
+};
+type Workspace = {
+  id: string;
+  name: string;
+  description: string;
+  taskCount: number;
+  completedCount: number;
+  runningCount: number;
+  createdAt: string;
+  updatedAt: string;
 };
 type AgentWorkflowPlan = {
   runId: string;
@@ -179,7 +194,19 @@ type AppSettings = {
     defaultBaseUrl: string;
     defaultModel: string;
   };
+  imageModels: {
+    textToImage: ImageModelSettings;
+    imageToImage: ImageModelSettings;
+  };
 };
+type ImageModelSettings = {
+  baseUrl: string;
+  model: string;
+  apiKeyConfigured: boolean;
+  defaultBaseUrl: string;
+  defaultModel: string;
+};
+type ImageModelDraft = { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
 type SettingsDraft = {
   processes: Record<ProcessKind, {
     mode: "comfyui" | "api";
@@ -189,6 +216,7 @@ type SettingsDraft = {
     api?: { baseUrl: string; model: string; apiKey: string };
   }>;
   agent: { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
+  imageModels: { textToImage: ImageModelDraft; imageToImage: ImageModelDraft };
 };
 type SystemState = {
   api: boolean;
@@ -228,6 +256,10 @@ function settingsDraft(settings: AppSettings): SettingsDraft {
       apiKey: "",
       clearApiKey: false,
     },
+    imageModels: {
+      textToImage: { baseUrl: settings.imageModels.textToImage.baseUrl, model: settings.imageModels.textToImage.model, apiKey: "", clearApiKey: false },
+      imageToImage: { baseUrl: settings.imageModels.imageToImage.baseUrl, model: settings.imageModels.imageToImage.model, apiKey: "", clearApiKey: false },
+    },
   };
 }
 
@@ -255,6 +287,9 @@ function jobName(type: JobType) {
 }
 
 export default function Home() {
+  const [screen, setScreen] = useState<"home" | "task">("home");
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>("default");
   const [runs, setRuns] = useState<Run[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
@@ -288,7 +323,15 @@ export default function Home() {
   const [agentQueue, setAgentQueue] = useState<AgentQueueItem[]>([]);
   const [agentAttachment, setAgentAttachment] = useState<AgentAttachment | null>(null);
   const [agentImageDragging, setAgentImageDragging] = useState(false);
-  const [form, setForm] = useState({ name: "" });
+  const [dispatcherMessages, setDispatcherMessages] = useState<ChatMessage[]>([]);
+  const [dispatcherInput, setDispatcherInput] = useState("");
+  const [dispatcherBusy, setDispatcherBusy] = useState(false);
+  const [dispatcherAttachment, setDispatcherAttachment] = useState<AgentAttachment | null>(null);
+  const [dispatcherDragging, setDispatcherDragging] = useState(false);
+  const [showWorkspaceCreate, setShowWorkspaceCreate] = useState(false);
+  const [workspaceForm, setWorkspaceForm] = useState({ name: "", description: "" });
+  const [form, setForm] = useState({ name: "", workspaceId: "default", pipelineType: "text_to_model" as "text_to_model" | "image_to_model" });
+  const [taskSourceImage, setTaskSourceImage] = useState<AgentAttachment | null>(null);
   const [promptDraft, setPromptDraft] = useState({
     positivePrompt: DEFAULT_POSITIVE_PROMPT,
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
@@ -299,7 +342,11 @@ export default function Home() {
   const agentQueueIdRef = useRef(0);
   const selectedIdRef = useRef<string | null>(selectedId);
   const agentDropDepthRef = useRef(0);
+  const dispatcherDropDepthRef = useRef(0);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const dispatcherEndRef = useRef<HTMLDivElement | null>(null);
+  const dispatcherFileRef = useRef<HTMLInputElement | null>(null);
+  const taskSourceFileRef = useRef<HTMLInputElement | null>(null);
   const workflowFileRef = useRef<HTMLInputElement | null>(null);
   const workflowDirectoryRef = useRef<HTMLInputElement | null>(null);
 
@@ -326,6 +373,14 @@ export default function Home() {
     const nextId = preferredId || selectedId || data.runs[0]?.id || null;
     selectRun(nextId);
     if (!nextId) setDetail(null);
+  }
+
+  async function refreshWorkspaces(preferredId?: string) {
+    const data = await api<{ workspaces: Workspace[] }>("/api/workspaces");
+    setWorkspaces(data.workspaces);
+    const nextId = preferredId || selectedWorkspaceId || data.workspaces[0]?.id || "default";
+    setSelectedWorkspaceId(nextId);
+    return data.workspaces;
   }
 
   useEffect(() => {
@@ -368,14 +423,19 @@ export default function Home() {
     let cancelled = false;
     async function initialize() {
       try {
-        const [runData, systemData] = await Promise.all([
+        const [runData, workspaceData, systemData, settingsData] = await Promise.all([
           api<{ runs: Run[] }>("/api/runs"),
+          api<{ workspaces: Workspace[] }>("/api/workspaces"),
           api<SystemState>("/api/system?force=1"),
+          api<AppSettings>("/api/settings"),
         ]);
         if (cancelled) return;
         setRuns(runData.runs);
+        setWorkspaces(workspaceData.workspaces);
+        setSelectedWorkspaceId(workspaceData.workspaces.find((item) => item.id === "default")?.id || workspaceData.workspaces[0]?.id || "default");
         selectRun(runData.runs[0]?.id || null);
         setSystem(systemData);
+        setSettings(settingsData);
       } catch (reason) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "无法连接本地后端");
       } finally {
@@ -391,6 +451,18 @@ export default function Home() {
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api<{ messages: ChatMessage[] }>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`)
+      .then((data) => { if (!cancelled) setDispatcherMessages(data.messages); })
+      .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "总调度对话读取失败"); });
+    return () => { cancelled = true; };
+  }, [selectedWorkspaceId]);
+
+  useEffect(() => {
+    dispatcherEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [dispatcherMessages, dispatcherBusy]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -468,7 +540,14 @@ export default function Home() {
       && item.sourceKey === `qa:${run?.jobPromptId}`,
   );
   const current = run?.currentStage ?? 0;
-  const stage = stages[viewStage];
+  const activeStages = run?.pipelineType === "image_to_model"
+    ? stages.map((item, index) => index === 0
+      ? { ...item, title: "角色原画", subtitle: "单体输入", input: "拆分后的单体原画", output: "角色规格", action: "确认单体原画、角色身份、服装和 T-Pose 转换提示词。" }
+      : index === 1
+        ? { ...item, title: "T-Pose 图生成", subtitle: "Stepfun 图生图", input: "单体角色原画", output: "T-Pose PNG", action: "使用图生图模型保持角色身份并转换为标准 T-Pose。" }
+        : item)
+    : stages;
+  const stage = activeStages[viewStage];
   const progress = useMemo(() => Math.round((current / (stages.length - 1)) * 100), [current]);
   const isCurrentView = viewStage === current;
   const visiblePreview = viewStage > 0 && viewStage < 3
@@ -576,19 +655,53 @@ export default function Home() {
     try {
       const data = await api<RunDetail>("/api/runs", {
         method: "POST",
-        body: JSON.stringify({ name: form.name }),
+        body: JSON.stringify({
+          name: form.name,
+          workspaceId: form.workspaceId,
+          pipelineType: form.pipelineType,
+          sourceImage: taskSourceImage ? {
+            name: taskSourceImage.name,
+            mimeType: taskSourceImage.mimeType,
+            data: taskSourceImage.data,
+          } : undefined,
+          requireSourceImage: form.pipelineType === "image_to_model",
+        }),
       });
       setShowCreate(false);
-      setForm({ name: "" });
+      setForm({ name: "", workspaceId: form.workspaceId, pipelineType: "text_to_model" });
+      setTaskSourceImage(null);
       setPromptDraft({
         positivePrompt: data.run.positivePrompt || DEFAULT_POSITIVE_PROMPT,
         negativePrompt: data.run.negativePrompt || DEFAULT_NEGATIVE_PROMPT,
       });
       setDetail(data);
       setViewStage(0);
+      setScreen("task");
+      await refreshWorkspaces(form.workspaceId);
       await refreshRuns(data.run.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "创建失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createWorkspace(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const workspace = await api<Workspace>("/api/workspaces", {
+        method: "POST",
+        body: JSON.stringify(workspaceForm),
+      });
+      setWorkspaceForm({ name: "", description: "" });
+      setShowWorkspaceCreate(false);
+      setSelectedWorkspaceId(workspace.id);
+      setForm((current) => ({ ...current, workspaceId: workspace.id }));
+      await refreshWorkspaces(workspace.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "工作空间创建失败");
     } finally {
       setBusy(false);
     }
@@ -797,7 +910,7 @@ export default function Home() {
     try {
       const data = await api<AppSettings>("/api/settings", {
         method: "PUT",
-        body: JSON.stringify({ processes, agent: settingsForm.agent }),
+        body: JSON.stringify({ processes, agent: settingsForm.agent, imageModels: settingsForm.imageModels }),
       });
       setSettings(data);
       setSettingsForm(settingsDraft(data));
@@ -837,13 +950,13 @@ export default function Home() {
     document.body.style.userSelect = "";
   }
 
-  function attachAgentImage(file: File) {
+  function readImage(file: File, maxBytes: number, label: string, onReady: (image: AgentAttachment) => void) {
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
-      setError("参考图片只支持 PNG、JPEG 或 WebP");
+      setError(`${label}只支持 PNG、JPEG 或 WebP`);
       return;
     }
-    if (file.size > 4 * 1024 * 1024) {
-      setError("参考图片不能超过 4 MB");
+    if (file.size > maxBytes) {
+      setError(`${label}不能超过 ${Math.round(maxBytes / 1024 / 1024)} MB`);
       return;
     }
     setError("");
@@ -852,13 +965,21 @@ export default function Home() {
       const value = typeof reader.result === "string" ? reader.result : "";
       const data = value.split(",", 2)[1];
       if (!data) {
-        setError("参考图片读取失败");
+        setError(`${label}读取失败`);
         return;
       }
-      setAgentAttachment({ name: file.name, mimeType: file.type, data, size: file.size });
+      onReady({ name: file.name, mimeType: file.type, data, size: file.size });
     };
-    reader.onerror = () => setError("参考图片读取失败");
+    reader.onerror = () => setError(`${label}读取失败`);
     reader.readAsDataURL(file);
+  }
+
+  function attachAgentImage(file: File) {
+    readImage(file, 4 * 1024 * 1024, "参考图片", setAgentAttachment);
+  }
+
+  function attachDispatcherImage(file: File) {
+    readImage(file, 12 * 1024 * 1024, "合集原画", setDispatcherAttachment);
   }
 
   function handleAgentDragEnter(event: ReactDragEvent<HTMLElement>) {
@@ -895,6 +1016,83 @@ export default function Home() {
       return;
     }
     attachAgentImage(files[0]);
+  }
+
+  function handleDispatcherDragEnter(event: ReactDragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    dispatcherDropDepthRef.current += 1;
+    setDispatcherDragging(true);
+  }
+
+  function handleDispatcherDragLeave(event: ReactDragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    dispatcherDropDepthRef.current = Math.max(0, dispatcherDropDepthRef.current - 1);
+    if (dispatcherDropDepthRef.current === 0) setDispatcherDragging(false);
+  }
+
+  function handleDispatcherDrop(event: ReactDragEvent<HTMLElement>) {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    dispatcherDropDepthRef.current = 0;
+    setDispatcherDragging(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length !== 1) {
+      setError("每次只能上传一张合集原画");
+      return;
+    }
+    attachDispatcherImage(files[0]);
+  }
+
+  async function sendDispatcherMessage(event: FormEvent) {
+    event.preventDefault();
+    const message = dispatcherInput.trim();
+    if ((!message && !dispatcherAttachment) || dispatcherBusy || system?.agent.configured === false) return;
+    setDispatcherBusy(true);
+    setError("");
+    const optimistic: ChatMessage = {
+      id: -Date.now(), role: "user", content: message || "请分析这张角色合集原画并拆分任务。",
+      attachmentName: dispatcherAttachment?.name || null,
+      attachmentMime: dispatcherAttachment?.mimeType || null,
+      createdAt: new Date().toISOString(),
+    };
+    setDispatcherMessages((items) => [...items, optimistic]);
+    const attachment = dispatcherAttachment;
+    setDispatcherInput("");
+    setDispatcherAttachment(null);
+    try {
+      const data = await api<{ messages: ChatMessage[]; workspaces: Workspace[] }>("/api/dispatcher/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          workspaceId: selectedWorkspaceId,
+          message,
+          image: attachment ? { name: attachment.name, mimeType: attachment.mimeType, data: attachment.data } : undefined,
+        }),
+      });
+      setDispatcherMessages(data.messages);
+      setWorkspaces(data.workspaces);
+      const runData = await api<{ runs: Run[] }>("/api/runs");
+      setRuns(runData.runs);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "总调度 Agent 请求失败");
+      try {
+        const history = await api<{ messages: ChatMessage[] }>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`);
+        setDispatcherMessages(history.messages);
+      } catch {
+        setDispatcherMessages((items) => items.filter((item) => item.id !== optimistic.id));
+      }
+    } finally {
+      setDispatcherBusy(false);
+    }
+  }
+
+  async function cancelDispatcher() {
+    if (!dispatcherBusy) return;
+    try {
+      await api("/api/dispatcher/cancel", { method: "POST" });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "取消总调度 Agent 失败");
+    }
   }
 
   function replaceAgentQueue(items: AgentQueueItem[]) {
@@ -1012,15 +1210,17 @@ export default function Home() {
     : run?.previewPath ? "2D 概念图" : "等待资产";
   const selectedRunAgentBusy = agentBusy && activeAgentRunId === run?.id;
   const activeAgentRunName = runs.find((item) => item.id === activeAgentRunId)?.name;
+  const selectedWorkspace = workspaces.find((item) => item.id === selectedWorkspaceId) || workspaces[0] || null;
+  const workspaceRuns = runs.filter((item) => item.workspaceId === selectedWorkspace?.id);
 
   return (
     <main className={`site-shell ${sidebarCollapsed ? "tasks-collapsed" : ""}`}>
       <header className="topbar">
         <div className="topbar-left">
-          <div className="brand">
+          <button className="brand home-brand" type="button" onClick={() => setScreen("home")} title="返回首页">
             <span className="brand-mark"><Sparkles size={18} /></span>
             <span className="brand-copy"><strong>Super Idol Master</strong><small>AI Asset Studio</small></span>
-          </div>
+          </button>
         </div>
         <div className="topbar-right">
           <div className="system-status">
@@ -1045,12 +1245,96 @@ export default function Home() {
         </div>
       )}
 
+      {screen === "home" ? (
+        <div className="home-frame">
+          <aside className="workspace-sidebar">
+            <div className="workspace-sidebar-header">
+              <div><span>工作空间</span><strong>{workspaces.length} 个空间</strong></div>
+              <button className="icon-button accent" type="button" onClick={() => setShowWorkspaceCreate(true)} title="新建工作空间" aria-label="新建工作空间"><Plus size={18} /></button>
+            </div>
+            <div className="workspace-list">
+              {workspaces.map((workspace) => (
+                <div className={`workspace-group ${workspace.id === selectedWorkspaceId ? "selected" : ""}`} key={workspace.id}>
+                  <button type="button" className="workspace-item" onClick={() => {
+                    setSelectedWorkspaceId(workspace.id);
+                    setForm((current) => ({ ...current, workspaceId: workspace.id }));
+                  }}>
+                    <span className="workspace-icon"><FolderOpen size={17} /></span>
+                    <span><strong>{workspace.name}</strong><small>{workspace.taskCount} 个任务 · {workspace.runningCount} 个运行中</small></span>
+                    <ChevronRight size={15} />
+                  </button>
+                  {workspace.id === selectedWorkspaceId && (
+                    <div className="workspace-task-list">
+                      {workspaceRuns.map((item) => (
+                        <button type="button" key={item.id} onClick={() => { selectRun(item.id); setScreen("task"); }}>
+                          <span>{item.name.slice(0, 1).toUpperCase()}</span>
+                          <div><strong>{item.name}</strong><small>{item.pipelineType === "image_to_model" ? "图生模型" : "文生模型"} · {stages[item.currentStage].title}</small></div>
+                          {item.jobStatus === "running" && <LoaderCircle className="spinning" size={14} />}
+                        </button>
+                      ))}
+                      {!workspaceRuns.length && <p>该工作空间还没有任务。</p>}
+                      <button type="button" className="workspace-new-task" onClick={() => {
+                        setForm({ name: "", workspaceId: workspace.id, pipelineType: "text_to_model" });
+                        setShowCreate(true);
+                      }}><Plus size={14} />新建任务</button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </aside>
+
+          <section
+            className={`dispatcher-panel ${dispatcherDragging ? "dragging" : ""}`}
+            onDragEnter={handleDispatcherDragEnter}
+            onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }}
+            onDragLeave={handleDispatcherDragLeave}
+            onDrop={handleDispatcherDrop}
+          >
+            <header className="dispatcher-header">
+              <div className="dispatcher-title"><span><Bot size={22} /></span><div><small>总调度中心</small><h1>Workspace Coordinator</h1><p>{selectedWorkspace ? `当前空间：${selectedWorkspace.name}` : "创建工作空间后开始调度"}</p></div></div>
+              <div className="dispatcher-actions">
+                <button className="secondary-button" type="button" onClick={() => { setForm({ name: "", workspaceId: selectedWorkspaceId, pipelineType: "text_to_model" }); setShowCreate(true); }}><Plus size={16} />新建任务</button>
+                <button className="secondary-button" type="button" onClick={() => { setSettingsTab("agent"); void openSettings(); }}><Settings size={16} />模型配置</button>
+              </div>
+            </header>
+
+            <div className="dispatcher-models">
+              <div className={settings?.imageModels.textToImage.apiKeyConfigured ? "configured" : "missing"}><Sparkles size={16} /><span><small>文生图 API</small><strong>{settings?.imageModels.textToImage.model || "未读取"}</strong></span><em>{settings?.imageModels.textToImage.apiKeyConfigured ? "已配置" : "待配置"}</em></div>
+              <div className={settings?.imageModels.imageToImage.apiKeyConfigured ? "configured" : "missing"}><ImageIcon size={16} /><span><small>图生图 API</small><strong>{settings?.imageModels.imageToImage.model || "未读取"}</strong></span><em>{settings?.imageModels.imageToImage.apiKeyConfigured ? "已配置" : "待配置"}</em></div>
+              <div className={system?.agent.configured ? "configured" : "missing"}><Bot size={16} /><span><small>调度模型</small><strong>{system?.agent.model || "未读取"}</strong></span><em>{system?.agent.configured ? "已配置" : "待配置"}</em></div>
+            </div>
+
+            <div className="dispatcher-thread">
+              {!dispatcherMessages.length && (
+                <div className="dispatcher-welcome"><span><ImageIcon size={28} /></span><h2>从一个目标开始整个角色项目</h2><p>描述角色清单，或者直接拖入包含多个角色的合集原画。总调度 Agent 会创建工作空间、拆分单体原画、建立任务，并把生成目标委派给每个任务的专属 Agent。</p><div><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传合集原画</button></div></div>
+              )}
+              {dispatcherMessages.map((message) => (
+                <div className={`dispatcher-message ${message.role}`} key={message.id}>
+                  <span>{message.role === "assistant" ? <Bot size={17} /> : <User size={17} />}</span>
+                  <div><strong>{message.role === "assistant" ? "总调度 Agent" : "你"}</strong>{message.attachmentName && <small><ImageIcon size={13} />{message.attachmentName}</small>}<div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{message.content}</ReactMarkdown></div></div>
+                </div>
+              ))}
+              {dispatcherBusy && <div className="dispatcher-message assistant pending"><span><Bot size={17} /></span><div><strong>总调度 Agent</strong><p><LoaderCircle size={15} />正在分析并调度任务</p></div></div>}
+              <div ref={dispatcherEndRef} />
+            </div>
+
+            <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
+              {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
+              <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} placeholder="描述一个项目，或拖入角色合集原画，让总调度 Agent 拆分并分派任务…" />
+              <div><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span>{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || system?.agent.configured === false}><Send size={16} />发送调度</button></div>
+            </form>
+            {dispatcherDragging && <div className="dispatcher-drop"><ImageIcon size={34} /><strong>松开以分析合集原画</strong><span>支持最多 12 MB 的 PNG、JPEG 或 WebP</span></div>}
+          </section>
+        </div>
+      ) : (
       <div className="app-frame" style={{ "--agent-width": `${agentCollapsed ? 60 : agentWidth}px` } as CSSProperties}>
         <aside className="task-sidebar">
           <div className="sidebar-header">
-            <div className="sidebar-copy"><span>任务</span><strong>{runs.length} 个角色资产</strong></div>
+            <div className="sidebar-copy"><span>{workspaces.find((item) => item.id === run?.workspaceId)?.name || "工作空间"}</span><strong>{runs.filter((item) => item.workspaceId === run?.workspaceId).length} 个角色任务</strong></div>
             <div className="sidebar-actions">
-              <button className="icon-button accent new-task-button" type="button" onClick={() => setShowCreate(true)} title="新建任务" aria-label="新建角色任务">
+              <button className="icon-button" type="button" onClick={() => setScreen("home")} title="返回工作空间首页" aria-label="返回工作空间首页"><FolderOpen size={17} /></button>
+              <button className="icon-button accent new-task-button" type="button" onClick={() => { setForm({ name: "", workspaceId: run?.workspaceId || selectedWorkspaceId, pipelineType: "text_to_model" }); setTaskSourceImage(null); setShowCreate(true); }} title="新建任务" aria-label="新建角色任务">
                 <Plus size={18} />
               </button>
               <button
@@ -1066,12 +1350,12 @@ export default function Home() {
           </div>
           <div className="run-list">
             {loading && <p className="empty-note">正在读取任务…</p>}
-            {!loading && runs.length === 0 && <p className="empty-note">还没有角色任务。</p>}
-            {runs.map((item) => (
+            {!loading && runs.filter((item) => item.workspaceId === run?.workspaceId).length === 0 && <p className="empty-note">还没有角色任务。</p>}
+            {runs.filter((item) => item.workspaceId === run?.workspaceId).map((item) => (
               <button
                 key={item.id}
                 className={`run-item ${item.id === selectedId ? "selected" : ""}`}
-                onClick={() => selectRun(item.id)}
+                onClick={() => { selectRun(item.id); setSelectedWorkspaceId(item.workspaceId); }}
                 title={sidebarCollapsed ? item.name : undefined}
               >
                 <span className={`run-avatar ${item.jobStatus === "running" ? "running" : ""}`}>
@@ -1107,7 +1391,7 @@ export default function Home() {
                 <div className="workspace-heading">
                   <span className="workspace-kicker">当前任务</span>
                   <h1>{run.name}</h1>
-                  <p>更新于 {formatTime(run.updatedAt)} · {progress}% 完成</p>
+                  <p><span className="pipeline-type-badge">{run.pipelineType === "image_to_model" ? "图生模型" : "文生模型"}</span>更新于 {formatTime(run.updatedAt)} · {progress}% 完成</p>
                 </div>
                 <div className="workspace-actions">
                   <button className="icon-button" type="button" onClick={resetRun} disabled={busy || run.jobStatus === "running"} title="重置任务" aria-label="重置任务"><RotateCcw size={17} /></button>
@@ -1128,7 +1412,7 @@ export default function Home() {
                 <nav className="stage-rail" aria-label="资产生成阶段">
                   <div className="stage-rail-header"><span>流程</span><strong>{current + 1} / {stages.length}</strong></div>
                   <div className="stage-list">
-                    {stages.map((item, index) => {
+                    {activeStages.map((item, index) => {
                       const state = index < current || (index === current && run.status === "completed") ? "done" : index === current ? "active" : "pending";
                       let stateLabel = state === "done" ? "已完成" : state === "active" ? "当前" : "待处理";
                       if (index === current && currentStageReady && current < 5) stateLabel = "待确认";
@@ -1177,14 +1461,20 @@ export default function Home() {
                             <div className="current-stage-summary">
                               <div className="current-stage-heading">
                                 <span>{current === 0 ? "当前阶段 01" : "阶段 01 · 已完成"}</span>
-                                <strong>{stages[0].title}</strong>
-                                <p>{stages[0].action}</p>
+                                <strong>{activeStages[0].title}</strong>
+                                <p>{activeStages[0].action}</p>
                               </div>
                               <div className="current-stage-io">
-                                <span>输入 <b>{stages[0].input}</b></span>
-                                <span>输出 <b>{stages[0].output}</b></span>
+                                <span>输入 <b>{activeStages[0].input}</b></span>
+                                <span>输出 <b>{activeStages[0].output}</b></span>
                               </div>
                             </div>
+                            {run.pipelineType === "image_to_model" && run.assets.sourceImageReady && (
+                              <div className="source-art-card">
+                                <Image src={run.sourcePreviewPath || downloadUrl(run.assets.sourceImageDownloadUrl)!} alt={`${run.name} 的单体角色原画`} width={720} height={720} unoptimized />
+                                <div><span>图生图输入</span><strong>单体角色原画已就绪</strong><small>下一阶段将保持角色身份并转换为标准 T-Pose。</small></div>
+                              </div>
+                            )}
                             <div className={`stage-prompt-editor ${current > 0 ? "read-only" : ""}`}>
                               <label>
                                 <span>正向提示词</span>
@@ -1269,9 +1559,9 @@ export default function Home() {
                       <div className="asset-status-row">
                         <div className="asset-status-actions">
                           {isCurrentView && current === 0 && <button className="primary-button" onClick={() => runAction("start", "进入 2D 阶段失败", promptDraft)} disabled={busy || !promptDraft.positivePrompt.trim()}><Play size={16} />确认设定</button>}
-                          {isCurrentView && current === 1 && !run.assets.imageReady && <button className="primary-button" onClick={() => runAction("generate-2d", "2D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Sparkles size={16} />生成 2D 概念图</button>}
-                          {isCurrentView && current === 1 && run.assets.imageReady && <button className="secondary-button" onClick={() => runAction("generate-2d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新生成 2D</button>}
-                          {isCurrentView && current === 1 && run.assets.imageReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy || run.jobStatus === "running"}><Check size={16} />确认 2D 完成，进入检查</button>}
+                          {isCurrentView && current === 1 && !run.assets.imageReady && <button className="primary-button" onClick={() => runAction("generate-2d", "2D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Sparkles size={16} />{run.pipelineType === "image_to_model" ? "生成 T-Pose 图" : "生成 2D 概念图"}</button>}
+                          {isCurrentView && current === 1 && run.assets.imageReady && <button className="secondary-button" onClick={() => runAction("generate-2d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />{run.pipelineType === "image_to_model" ? "重新转换 T-Pose" : "重新生成 2D"}</button>}
+                          {isCurrentView && current === 1 && run.assets.imageReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy || run.jobStatus === "running"}><Check size={16} />确认 {run.pipelineType === "image_to_model" ? "T-Pose" : "2D"} 完成，进入检查</button>}
                           {isCurrentView && current === 2 && run.qaStatus === "failed" && <button className="warning-button" onClick={() => runAction("generate-2d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新生成 2D</button>}
                           {isCurrentView && current === 2 && run.qaStatus !== "passed" && run.jobStatus !== "running" && <button className="secondary-button" onClick={() => runAction("check-tpose", "姿态检查启动失败")} disabled={busy}><RefreshCw size={16} />{run.qaStatus === "failed" ? "重新检查姿态" : "运行姿态检查"}</button>}
                           {isCurrentView && current === 2 && run.qaStatus === "passed" && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认检查通过，进入 3D</button>}
@@ -1295,12 +1585,12 @@ export default function Home() {
                         <div className="current-stage-summary">
                           <div className="current-stage-heading">
                             <span>当前阶段 {String(current + 1).padStart(2, "0")}</span>
-                            <strong>{stages[current].title}</strong>
-                            <p>{stages[current].action}</p>
+                            <strong>{activeStages[current].title}</strong>
+                            <p>{activeStages[current].action}</p>
                           </div>
                           <div className="current-stage-io">
-                            <span>输入 <b>{stages[current].input}</b></span>
-                            <span>输出 <b>{stages[current].output}</b></span>
+                            <span>输入 <b>{activeStages[current].input}</b></span>
+                            <span>输出 <b>{activeStages[current].output}</b></span>
                           </div>
                         </div>
                       )}
@@ -1334,7 +1624,7 @@ export default function Home() {
                       {detail.events.slice(0, 8).map((item) => (
                         <div className="event-item" key={item.id}>
                           <span className="event-dot" />
-                          <div><strong>{item.message}</strong><span>{stages[item.stage]?.title || "流程"} · {formatTime(item.createdAt)}</span></div>
+                          <div><strong>{item.message}</strong><span>{activeStages[item.stage]?.title || "流程"} · {formatTime(item.createdAt)}</span></div>
                         </div>
                       ))}
                     </div>
@@ -1377,12 +1667,12 @@ export default function Home() {
             <div className="agent-context">
               <span>任务上下文</span>
               <strong>{run?.name || "未选择任务"}</strong>
-              <p>{run ? `${stages[current].title} · ${progress}% 完成` : "选择或创建任务后开始"}</p>
+              <p>{run ? `${activeStages[current].title} · ${progress}% 完成` : "选择或创建任务后开始"}</p>
             </div>
             {selectedDetail?.agentWorkflowPlan && (
               <section className={`agent-orchestration ${selectedDetail.agentWorkflowPlan.status}`}>
                 <div><Bot size={15} /><strong>Supervisor 自动编排</strong><span>{selectedDetail.agentWorkflowPlan.status === "running" ? "执行中" : selectedDetail.agentWorkflowPlan.status === "completed" ? "已完成" : selectedDetail.agentWorkflowPlan.status === "blocked" ? "已暂停" : "失败"}</span></div>
-                <p>目标：{stages[selectedDetail.agentWorkflowPlan.targetStage].title}</p>
+                <p>目标：{activeStages[selectedDetail.agentWorkflowPlan.targetStage].title}</p>
                 <small>{selectedDetail.agentWorkflowPlan.message}</small>
               </section>
             )}
@@ -1481,6 +1771,7 @@ export default function Home() {
           </form>
         </aside>
       </div>
+      )}
 
       {revertStage !== null && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setRevertStage(null); }}>
@@ -1488,7 +1779,7 @@ export default function Home() {
             <div className="revert-confirm-icon"><RotateCcw size={21} /></div>
             <div className="revert-confirm-copy">
               <span>流程回滚</span>
-              <h2 id="revert-confirm-title">回退到“{stages[revertStage].title}”？</h2>
+              <h2 id="revert-confirm-title">回退到“{activeStages[revertStage].title}”？</h2>
               <p>该阶段及后续阶段的产物引用和流程进度将被清除。</p>
             </div>
             <div className="revert-confirm-actions">
@@ -1655,6 +1946,22 @@ export default function Home() {
                           <span>清除已保存的 API Key</span>
                         </label>
                       )}
+                      <div className="settings-section-heading image-model-heading">
+                        <div><span>总调度 Agent</span><h3>图片模型 API</h3></div>
+                        <span className={`config-state ${settings.imageModels.textToImage.apiKeyConfigured && settings.imageModels.imageToImage.apiKeyConfigured ? "configured" : ""}`}><i />{settings.imageModels.textToImage.apiKeyConfigured && settings.imageModels.imageToImage.apiKeyConfigured ? "两项均已配置" : "需要分别配置"}</span>
+                      </div>
+                      {(["textToImage", "imageToImage"] as const).map((key) => {
+                        const label = key === "textToImage" ? "文生图" : "图生图";
+                        const current = settings.imageModels[key];
+                        const draft = settingsForm.imageModels[key];
+                        return <fieldset className="image-model-config" key={key}>
+                          <legend>{label}模型</legend>
+                          <label className="settings-field"><span>Base URL</span><input type="url" required value={draft.baseUrl} onChange={(event) => setSettingsForm({ ...settingsForm, imageModels: { ...settingsForm.imageModels, [key]: { ...draft, baseUrl: event.target.value } } })} /></label>
+                          <label className="settings-field"><span>模型</span><input type="text" required maxLength={160} value={draft.model} onChange={(event) => setSettingsForm({ ...settingsForm, imageModels: { ...settingsForm.imageModels, [key]: { ...draft, model: event.target.value } } })} /></label>
+                          <label className="settings-field"><span>API Key</span><input type="password" autoComplete="off" maxLength={1000} disabled={draft.clearApiKey} value={draft.apiKey} placeholder={current.apiKeyConfigured ? "留空以保留当前密钥" : "输入 API Key"} onChange={(event) => setSettingsForm({ ...settingsForm, imageModels: { ...settingsForm.imageModels, [key]: { ...draft, apiKey: event.target.value } } })} /></label>
+                          {current.apiKeyConfigured && <label className="clear-key-control"><input type="checkbox" checked={draft.clearApiKey} onChange={(event) => setSettingsForm({ ...settingsForm, imageModels: { ...settingsForm.imageModels, [key]: { ...draft, clearApiKey: event.target.checked, apiKey: event.target.checked ? "" : draft.apiKey } } })} /><span>清除已保存的 {label} API Key</span></label>}
+                        </fieldset>;
+                      })}
                     </section>
                   )}
                 </div>
@@ -1673,8 +1980,29 @@ export default function Home() {
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowCreate(false); }}>
           <form className="create-modal" onSubmit={createRun}>
             <div className="modal-header"><div><span>新资产</span><h2>创建角色资产</h2></div><button className="icon-button" type="button" onClick={() => setShowCreate(false)} aria-label="关闭"><X size={19} /></button></div>
-            <label>资产名称<input autoFocus required maxLength={80} value={form.name} onChange={(event) => setForm({ name: event.target.value })} placeholder="例如：未来城市女飞行员" /></label>
-            <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "创建中…" : "创建资产"}</button></div>
+            <label>资产名称<input autoFocus required maxLength={80} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：未来城市女飞行员" /></label>
+            <div className="create-form-grid">
+              <label>工作空间<select required value={form.workspaceId} onChange={(event) => setForm({ ...form, workspaceId: event.target.value })}>{workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}</select></label>
+              <label>工作流<select value={form.pipelineType} onChange={(event) => { const value = event.target.value as "text_to_model" | "image_to_model"; setForm({ ...form, pipelineType: value }); if (value === "text_to_model") setTaskSourceImage(null); }}><option value="text_to_model">文生图 → T-Pose → 模型 → 绑定</option><option value="image_to_model">原画 → T-Pose 图 → 模型 → 绑定</option></select></label>
+            </div>
+            {form.pipelineType === "image_to_model" && (
+              <div className="task-source-upload" role="button" tabIndex={0} onClick={() => taskSourceFileRef.current?.click()} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") taskSourceFileRef.current?.click(); }}>
+                <input ref={taskSourceFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) readImage(file, 12 * 1024 * 1024, "角色原画", setTaskSourceImage); event.currentTarget.value = ""; }} />
+                <ImageIcon size={22} /><div><strong>{taskSourceImage?.name || "上传单体角色原画"}</strong><span>{taskSourceImage ? "原画已就绪，创建后将使用图生图模型转换 T-Pose" : "PNG、JPEG 或 WebP，最大 12 MB"}</span></div><Upload size={17} />
+              </div>
+            )}
+            <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowCreate(false)}>取消</button><button className="primary-button" disabled={busy || (form.pipelineType === "image_to_model" && !taskSourceImage)}>{busy ? "创建中…" : "创建资产"}</button></div>
+          </form>
+        </div>
+      )}
+
+      {showWorkspaceCreate && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowWorkspaceCreate(false); }}>
+          <form className="create-modal workspace-create-modal" onSubmit={createWorkspace}>
+            <div className="modal-header"><div><span>新空间</span><h2>创建工作空间</h2></div><button className="icon-button" type="button" onClick={() => setShowWorkspaceCreate(false)} aria-label="关闭"><X size={19} /></button></div>
+            <label>工作空间名称<input autoFocus required maxLength={80} value={workspaceForm.name} onChange={(event) => setWorkspaceForm({ ...workspaceForm, name: event.target.value })} placeholder="例如：忍者角色系列" /></label>
+            <label>说明<textarea rows={4} maxLength={500} value={workspaceForm.description} onChange={(event) => setWorkspaceForm({ ...workspaceForm, description: event.target.value })} placeholder="描述该工作空间要管理的角色、风格或交付目标" /></label>
+            <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowWorkspaceCreate(false)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "创建中…" : "创建工作空间"}</button></div>
           </form>
         </div>
       )}

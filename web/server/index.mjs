@@ -14,11 +14,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { loadEnvFile } from "node:process";
 import { createAssetAgentRuntime } from "./agent-runtime.mjs";
+import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
 import { createSettingsStore, PROCESS_KINDS } from "./settings.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -43,6 +45,7 @@ const scripts = {
   qa: join(workflowDir, "run_tpose_qa.py"),
   "3d": join(workflowDir, "run_3d_generation.py"),
   rig: join(workflowDir, "run_3d_skinning.py"),
+  crop: join(workflowDir, "crop_character_sheet.py"),
 };
 const workflowFiles = {
   "2d": join(workflowDir, "2D_Gen_QwenImage2512.json"),
@@ -60,8 +63,27 @@ db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA foreign_keys = ON");
 const settingsStore = createSettingsStore({ db, workflowFiles, defaultComfyUrl: DEFAULT_COMFYUI_URL });
 db.exec(`
+  CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
+const defaultWorkspace = db.prepare("SELECT id FROM workspaces WHERE id = 'default'").get();
+if (!defaultWorkspace) {
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO workspaces (id, name, description, created_at, updated_at)
+    VALUES ('default', '默认工作空间', '由现有角色任务自动迁移而来', ?, ?)
+  `).run(now, now);
+}
+db.exec(`
   CREATE TABLE IF NOT EXISTS runs (
     id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'default',
+    pipeline_type TEXT NOT NULL DEFAULT 'text_to_model',
     name TEXT NOT NULL,
     positive_prompt TEXT NOT NULL DEFAULT '',
     negative_prompt TEXT NOT NULL DEFAULT '',
@@ -76,6 +98,8 @@ db.exec(`
     preview_path TEXT,
     job_type TEXT NOT NULL DEFAULT 'none',
     image_path TEXT,
+    source_image_path TEXT,
+    source_preview_path TEXT,
     model_path TEXT,
     rigged_model_path TEXT,
     qa_score INTEGER,
@@ -83,7 +107,8 @@ db.exec(`
     qa_metrics TEXT NOT NULL DEFAULT '{}',
     qa_overlay_path TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
   )
 `);
 db.exec(`
@@ -120,6 +145,13 @@ addColumn("qa_score", "INTEGER");
 addColumn("qa_summary", "TEXT NOT NULL DEFAULT ''");
 addColumn("qa_metrics", "TEXT NOT NULL DEFAULT '{}'");
 addColumn("qa_overlay_path", "TEXT");
+addColumn("workspace_id", "TEXT NOT NULL DEFAULT 'default'");
+addColumn("pipeline_type", "TEXT NOT NULL DEFAULT 'text_to_model'");
+addColumn("source_image_path", "TEXT");
+addColumn("source_preview_path", "TEXT");
+db.prepare("UPDATE runs SET workspace_id = 'default' WHERE workspace_id IS NULL OR workspace_id = ''").run();
+db.prepare("UPDATE runs SET pipeline_type = 'text_to_model' WHERE pipeline_type IS NULL OR pipeline_type = ''").run();
+db.exec("CREATE INDEX IF NOT EXISTS runs_workspace_id_idx ON runs(workspace_id, updated_at DESC)");
 
 db.prepare(`
   UPDATE runs SET generation_status = 'failed', generation_message = '本地服务重启，原 DGX 任务已中断'
@@ -169,13 +201,14 @@ if (count === 0) {
 }
 
 const runSelect = `
-  SELECT id, name, positive_prompt AS positivePrompt,
+  SELECT id, workspace_id AS workspaceId, pipeline_type AS pipelineType, name, positive_prompt AS positivePrompt,
          negative_prompt AS negativePrompt, current_stage AS currentStage,
          status, qa_status AS qaStatus, generation_status AS jobStatus,
          generation_message AS jobMessage, generation_progress AS jobProgress,
          generation_prompt_id AS jobPromptId, generation_current_node AS jobCurrentNode,
          job_type AS jobType, preview_path AS previewPath,
          image_path AS imagePathInternal, model_path AS modelPathInternal,
+         source_image_path AS sourceImagePathInternal, source_preview_path AS sourcePreviewPath,
          rigged_model_path AS riggedModelPathInternal,
          qa_score AS qaScore, qa_summary AS qaSummary, qa_metrics AS qaMetricsJson,
          qa_overlay_path AS qaOverlayPath,
@@ -198,6 +231,7 @@ function serializeRun(row) {
   if (!row) return null;
   const {
     imagePathInternal,
+    sourceImagePathInternal,
     modelPathInternal,
     riggedModelPathInternal,
     qaMetricsJson,
@@ -213,9 +247,11 @@ function serializeRun(row) {
     ...publicRow,
     qaMetrics,
     assets: {
+      sourceImageReady: Boolean(sourceImagePathInternal && existsSync(sourceImagePathInternal)),
       imageReady: Boolean(imagePathInternal && existsSync(imagePathInternal)),
       modelReady: Boolean(modelPathInternal && existsSync(modelPathInternal)),
       riggedReady: Boolean(riggedModelPathInternal && existsSync(riggedModelPathInternal)),
+      sourceImageDownloadUrl: sourceImagePathInternal ? `/api/runs/${row.id}/download/source` : null,
       imageDownloadUrl: imagePathInternal ? `/api/runs/${row.id}/download/image` : null,
       modelDownloadUrl: modelPathInternal ? `/api/runs/${row.id}/download/model` : null,
       riggedDownloadUrl: riggedModelPathInternal ? `/api/runs/${row.id}/download/rigged` : null,
@@ -420,6 +456,112 @@ function cleanText(value, maxLength, field, required = false) {
   if (required && !text) throw new Error(`${field}不能为空`);
   if (text.length > maxLength) throw new Error(`${field}不能超过 ${maxLength} 个字符`);
   return text;
+}
+
+function pipelineType(value) {
+  if (value === undefined || value === null || value === "") return "text_to_model";
+  if (!["text_to_model", "image_to_model"].includes(value)) throw new Error("未知任务工作流");
+  return value;
+}
+
+function getWorkspace(id) {
+  return db.prepare(`
+    SELECT id, name, description, created_at AS createdAt, updated_at AS updatedAt
+    FROM workspaces WHERE id = ?
+  `).get(id);
+}
+
+function getWorkspacesSummary() {
+  return db.prepare(`
+    SELECT workspaces.id, workspaces.name, workspaces.description,
+           workspaces.created_at AS createdAt, workspaces.updated_at AS updatedAt,
+           COUNT(runs.id) AS taskCount,
+           SUM(CASE WHEN runs.status = 'completed' THEN 1 ELSE 0 END) AS completedCount,
+           SUM(CASE WHEN runs.generation_status = 'running' THEN 1 ELSE 0 END) AS runningCount
+    FROM workspaces LEFT JOIN runs ON runs.workspace_id = workspaces.id
+    GROUP BY workspaces.id ORDER BY workspaces.updated_at DESC
+  `).all().map((item) => ({
+    ...item,
+    taskCount: Number(item.taskCount || 0),
+    completedCount: Number(item.completedCount || 0),
+    runningCount: Number(item.runningCount || 0),
+  }));
+}
+
+function createWorkspaceRecord(input = {}) {
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO workspaces (id, name, description, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    id,
+    cleanText(input.name, 80, "工作空间名称", true),
+    cleanText(input.description, 500, "工作空间描述"),
+    now,
+    now,
+  );
+  return getWorkspace(id);
+}
+
+function saveSourceImage(image, prefix = randomUUID()) {
+  if (!image || typeof image !== "object") return null;
+  const mimeType = typeof image.mimeType === "string" ? image.mimeType.toLowerCase() : "";
+  const extensions = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp" };
+  const extension = extensions[mimeType];
+  if (!extension) throw new Error("原画只支持 PNG、JPEG 或 WebP");
+  const raw = typeof image.data === "string" ? image.data.replace(/^data:[^;]+;base64,/, "") : "";
+  if (!raw || !/^[a-zA-Z0-9+/=\r\n]+$/.test(raw)) throw new Error("原画数据无效");
+  const data = Buffer.from(raw, "base64");
+  if (!data.length || data.length > 12 * 1024 * 1024) throw new Error("原画不能超过 12 MB");
+  const isPng = data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isJpeg = data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  const isWebp = data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
+  if ((mimeType === "image/png" && !isPng) || (mimeType === "image/jpeg" && !isJpeg) || (mimeType === "image/webp" && !isWebp)) {
+    throw new Error("原画内容与文件类型不匹配");
+  }
+  const filename = `${prefix}${extension}`;
+  const filePath = join(generatedDir, filename);
+  writeFileSync(filePath, data);
+  return { filePath, previewPath: `/generated/${filename}?v=${Date.now()}`, mimeType };
+}
+
+function createRunRecord(input = {}) {
+  const workspaceId = typeof input.workspaceId === "string" && input.workspaceId ? input.workspaceId : "default";
+  if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
+  const kind = pipelineType(input.pipelineType);
+  const source = input.sourceImagePath
+    ? (() => {
+        const filePath = resolve(input.sourceImagePath);
+        const inGenerated = filePath.startsWith(`${generatedDir}${sep}`);
+        const inOutput = filePath.startsWith(`${outputRoot}${sep}`);
+        if ((!inGenerated && !inOutput) || !existsSync(filePath) || !statSync(filePath).isFile()) throw new Error("角色原画不在受控目录中");
+        return { filePath, previewPath: input.sourcePreviewPath || null };
+      })()
+    : saveSourceImage(input.sourceImage, `source-${randomUUID()}`);
+  if (kind === "image_to_model" && !source && input.requireSourceImage === true) throw new Error("图生模型工作流需要角色原画");
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO runs (
+      id, workspace_id, pipeline_type, name, positive_prompt, negative_prompt,
+      source_image_path, source_preview_path, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    workspaceId,
+    kind,
+    cleanText(input.name, 80, "资产名称", true),
+    cleanText(input.positivePrompt, 4000, "正向提示词"),
+    cleanText(input.negativePrompt, 2000, "反向提示词"),
+    source?.filePath || null,
+    source?.previewPath || null,
+    now,
+    now,
+  );
+  addEvent(id, "created", 0, kind === "image_to_model" ? "创建图生模型角色任务" : "创建文生模型角色任务", now);
+  db.prepare("UPDATE workspaces SET updated_at = ? WHERE id = ?").run(now, workspaceId);
+  return runDetail(id);
 }
 
 function safeOutputPath(value, expected = "any") {
@@ -639,6 +781,7 @@ function launchJob(run, jobType, processConfig = settingsStore.processConfig(job
   const usesImageApi = jobType === "2d" && processConfig.mode === "api";
   const workflowPath = usesImageApi ? null : join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
   if (workflowPath) writeFileSync(workflowPath, JSON.stringify(processConfig.workflow), "utf8");
+  const sourceImage = run.pipelineType === "image_to_model" ? run.sourceImagePathInternal : run.imagePathInternal;
   const args = usesImageApi
     ? [
         scripts["2d-api"],
@@ -646,7 +789,7 @@ function launchJob(run, jobType, processConfig = settingsStore.processConfig(job
         "--negative", run.negativePrompt || "",
         "--base-url", processConfig.api.baseUrl,
         "--model", processConfig.api.model,
-        ...(run.imagePathInternal && existsSync(run.imagePathInternal) ? ["--source-image", run.imagePathInternal] : []),
+        ...(sourceImage && existsSync(sourceImage) ? ["--source-image", sourceImage] : []),
       ]
     : [
         scripts[jobType],
@@ -744,7 +887,13 @@ function startJob(runId, jobType) {
   if (jobType === "3d" && run.qaStatus !== "passed") throw new Error("SDPose 自动检查未通过，不能生成 3D");
   if (jobType === "3d" && (!run.imagePathInternal || !existsSync(run.imagePathInternal))) throw new Error("合格的 2D 图片不存在");
   if (jobType === "rig" && (!run.modelPathInternal || !existsSync(run.modelPathInternal))) throw new Error("静态 GLB 不存在，不能绑骨");
-  const processConfig = settingsStore.processConfig(jobType);
+  let processConfig = settingsStore.processConfig(jobType);
+  if (jobType === "2d" && run.pipelineType === "image_to_model") {
+    processConfig = { ...processConfig, mode: "api", api: settingsStore.imageConfig("image_to_model") };
+    if (!run.sourceImagePathInternal || !existsSync(run.sourceImagePathInternal)) {
+      throw new Error("图生模型工作流缺少角色原画");
+    }
+  }
   if (jobType === "2d" && processConfig.mode === "api" && !processConfig.api.apiKey) throw new Error("2D API Key 未配置，请在请求设置中填写或配置 Agent API Key");
 
   const stage = { "2d": 1, qa: 2, "3d": 3, rig: 4 }[jobType];
@@ -905,6 +1054,78 @@ const assetAgent = createAssetAgentRuntime({
   addRunEvent: addEvent,
 });
 
+async function createCoordinatorTasks({ workspaceId, tasks, image }) {
+  if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
+  const usesImage = tasks.some((task) => pipelineType(task.pipelineType) === "image_to_model");
+  let cropPaths = [];
+  if (usesImage) {
+    if (!image) throw new Error("图生模型批量任务需要上传合集原画");
+    if (tasks.some((task) => task.pipelineType === "image_to_model" && !task.bounds)) throw new Error("每个图生模型任务都需要角色裁切框");
+    const uploaded = saveSourceImage(image, `sheet-${randomUUID()}`);
+    const imageTasks = tasks.filter((task) => task.pipelineType === "image_to_model");
+    const cropDir = join(outputRoot, "crops", randomUUID());
+    mkdirSync(cropDir, { recursive: true });
+    const result = spawnSync(PYTHON_COMMAND, [
+      scripts.crop,
+      uploaded.filePath,
+      cropDir,
+      JSON.stringify(imageTasks.map((task) => task.bounds)),
+    ], {
+      cwd: repoRoot,
+      windowsHide: true,
+      encoding: "utf8",
+      timeout: 120_000,
+      env: { ...process.env, PYTHONUTF8: "1" },
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error((result.stderr || "角色原画裁切失败").trim().slice(-1200));
+    const lines = result.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    cropPaths = JSON.parse(lines.at(-1) || "[]");
+    if (cropPaths.length !== imageTasks.length) throw new Error("角色原画裁切结果数量不一致");
+  }
+
+  let imageIndex = 0;
+  const created = [];
+  for (const task of tasks) {
+    let sourceImagePath = null;
+    let sourcePreviewPath = null;
+    if (task.pipelineType === "image_to_model") {
+      const cropPath = resolve(cropPaths[imageIndex]);
+      imageIndex += 1;
+      if (!cropPath.startsWith(`${outputRoot}${sep}`) || !existsSync(cropPath)) throw new Error("角色裁切结果不在受控目录中");
+      const previewName = `source-${randomUUID()}.png`;
+      const previewFile = join(generatedDir, previewName);
+      copyFileSync(cropPath, previewFile);
+      sourceImagePath = previewFile;
+      sourcePreviewPath = `/generated/${previewName}?v=${Date.now()}`;
+    }
+    created.push(createRunRecord({
+      workspaceId,
+      pipelineType: task.pipelineType,
+      name: task.name,
+      positivePrompt: `${task.description}，${task.positivePrompt}`.slice(0, 4000),
+      negativePrompt: task.negativePrompt,
+      sourceImagePath,
+      sourcePreviewPath,
+      requireSourceImage: task.pipelineType === "image_to_model",
+    }));
+  }
+  return created;
+}
+
+const coordinatorAgent = createCoordinatorRuntime({
+  db,
+  getAgentConfig: settingsStore.agentConfig,
+  getWorkspaces: getWorkspacesSummary,
+  createWorkspace: createWorkspaceRecord,
+  createCharacterTasks: createCoordinatorTasks,
+  delegateTask: (runId, target) => assetAgent.scheduleWorkflowPlan(runId, target),
+  getImageModelStatus: () => {
+    const settings = settingsStore.publicSettings();
+    return settings.imageModels;
+  },
+});
+
 const server = createServer(async (req, res) => {
   setCors(req, res);
   if (req.method === "OPTIONS") {
@@ -968,27 +1189,44 @@ const server = createServer(async (req, res) => {
       json(res, 200, result);
       return;
     }
+    if (req.method === "GET" && url.pathname === "/api/workspaces") {
+      json(res, 200, { workspaces: getWorkspacesSummary() });
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/api/dispatcher/messages") {
+      const workspaceId = url.searchParams.get("workspaceId");
+      json(res, 200, { messages: coordinatorAgent.getMessages(workspaceId) });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/dispatcher/messages") {
+      const body = await readBody(req, 18_000_000);
+      json(res, 200, await coordinatorAgent.run({
+        workspaceId: typeof body.workspaceId === "string" && body.workspaceId ? body.workspaceId : null,
+        message: body.message,
+        image: body.image,
+      }));
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/dispatcher/cancel") {
+      json(res, 200, { cancelled: coordinatorAgent.cancel() });
+      return;
+    }
+    if (req.method === "POST" && url.pathname === "/api/workspaces") {
+      const body = await readBody(req);
+      json(res, 201, createWorkspaceRecord(body));
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/runs") {
-      json(res, 200, { runs: db.prepare(`${runSelect} ORDER BY updated_at DESC`).all().map(serializeRun) });
+      const workspaceId = url.searchParams.get("workspaceId");
+      const rows = workspaceId
+        ? db.prepare(`${runSelect} WHERE workspace_id = ? ORDER BY updated_at DESC`).all(workspaceId)
+        : db.prepare(`${runSelect} ORDER BY updated_at DESC`).all();
+      json(res, 200, { runs: rows.map(serializeRun) });
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/runs") {
       const body = await readBody(req);
-      const id = randomUUID();
-      const now = new Date().toISOString();
-      db.prepare(`
-        INSERT INTO runs (id, name, positive_prompt, negative_prompt, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(
-        id,
-        cleanText(body.name, 80, "资产名称", true),
-        cleanText(body.positivePrompt, 4000, "正向提示词"),
-        cleanText(body.negativePrompt, 2000, "反向提示词"),
-        now,
-        now,
-      );
-      addEvent(id, "created", 0, "创建角色任务", now);
-      json(res, 201, runDetail(id));
+      json(res, 201, createRunRecord(body));
       return;
     }
 
@@ -1060,6 +1298,7 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "GET" && parts[3] === "download" && parts[4]) {
         const paths = {
+          source: existing.sourceImagePathInternal,
           image: existing.imagePathInternal,
           model: existing.modelPathInternal,
           rigged: existing.riggedModelPathInternal,

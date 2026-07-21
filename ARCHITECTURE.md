@@ -24,6 +24,7 @@ Super-Idol-Master/
 │   ├── comfy_client.py               # ComfyUI 上传、提交、轮询和下载客户端
 │   ├── run_2d_generation.py          # Qwen Image 2D 生成入口
 │   ├── run_2d_stepfun_api.py         # Stepfun 图片 API 入口
+│   ├── crop_character_sheet.py       # 合集原画的受控角色裁切入口
 │   ├── run_tpose_qa.py               # SDPose T-Pose 检查入口
 │   ├── run_3d_generation.py          # Pixal3D 生成入口
 │   ├── run_3d_skinning.py            # SkinTokens 绑骨入口
@@ -31,12 +32,13 @@ Super-Idol-Master/
 │   └── *.json                        # 各阶段默认 ComfyUI 工作流
 ├── web/
 │   ├── app/
-│   │   ├── page.tsx                  # 主控制台、状态展示和 Agent 面板
+│   │   ├── page.tsx                  # 工作空间首页、任务控制台和 Agent 面板
 │   │   ├── globals.css               # 全局界面样式
 │   │   └── components/ModelViewer.tsx # Three.js GLB 预览器
 │   ├── server/
 │   │   ├── index.mjs                 # HTTP API、状态机、Job 与产物校验
 │   │   ├── agent-runtime.mjs         # Supervisor、多 Agent 与持续执行计划
+│   │   ├── coordinator-runtime.mjs   # 跨工作空间总调度与批量任务委派
 │   │   └── settings.mjs              # 工作流、端点、模型和密钥配置
 │   ├── scripts/
 │   │   ├── start-local.mjs           # 前后端联合启动器
@@ -85,13 +87,15 @@ Super-Idol-Master/
 
 主数据流如下：
 
-1. 用户在前端创建角色任务，或向 Asset Agent 下达自然语言目标。
-2. Node.js API 校验当前阶段，并将 Run、事件和 Agent 计划写入 SQLite。
-3. 后端以固定脚本和白名单参数启动一个 Python 子进程。
-4. Python 客户端向 ComfyUI 上传输入、提交工作流并下载产物；后端通过 WebSocket 接收节点进度。
-5. Job 完成后，后端验证输出路径和文件结构，再登记 PNG 或 GLB。
-6. 如果存在持续执行计划，完成事件会恢复 Supervisor 编排；质量门禁通过后才启动下一阶段。
-7. 前端轮询 Run、子 Agent 和计划状态，展示进度、报告及最终产物。
+1. 用户选择工作空间，直接创建任务，或向总调度 Agent 描述一个包含多个角色的项目。
+2. 总调度 Agent 可以建立工作空间；收到合集原画时，先识别角色与归一化边界框，再通过固定裁切脚本生成受控的单体原画。
+3. 每个角色保存为独立 Run，并由总调度 Agent 把目标委派给该 Run 的专属 Asset Agent。
+4. Node.js API 校验工作流类型和当前阶段，并将 Run、事件和 Agent 计划写入 SQLite。
+5. 后端以固定脚本和白名单参数启动一个 Python 子进程。文生图与图生图选择各自配置，后续阶段使用 ComfyUI。
+6. Python 客户端上传输入、提交工作流并下载产物；后端通过 WebSocket 接收节点进度。
+7. Job 完成后，后端验证输出路径和文件结构，再登记 PNG 或 GLB。
+8. 如果存在持续执行计划，完成事件会恢复 Supervisor 编排；质量门禁通过后才启动下一阶段。
+9. 前端轮询 Run、子 Agent 和计划状态，展示进度、报告及最终产物。
 
 ## 3. 核心组件
 
@@ -102,6 +106,8 @@ Super-Idol-Master/
 **职责：**
 
 - 创建、选择、重置和删除角色任务；
+- 创建和切换工作空间，在工作空间内查看任务列表；
+- 承载跨任务的总调度 Agent、合集原画上传和批量拆分反馈；
 - 展示六阶段状态、ComfyUI 进度和事件历史；
 - 预览概念图、姿态覆盖图、静态 GLB 和绑骨 GLB；
 - 提供工作流版本、ComfyUI 地址、Agent 模型和 API Key 设置；
@@ -130,9 +136,11 @@ Super-Idol-Master/
 
 ### 3.3. Agent Runtime
 
-**名称：** Asset Agent Runtime
+**名称：** Coordinator + Asset Agent Runtime
 
-**职责：** 将自然语言意图转换为有限的领域工具调用，并协调专业角色。
+**职责：** 将自然语言意图转换为有限的领域工具调用，在工作空间与任务两个层级协调专业角色。
+
+总调度层的 `Coordinator` 可以列出或创建工作空间、读取图片模型状态、分析合集原画、创建多个角色任务，并分别调用这些任务的 Asset Agent。它不能执行任意 Shell 或绕过 Run 状态机。任务层仍由 `Supervisor`、`Art Director` 和 `Visual QA` 负责。
 
 角色边界：
 
@@ -185,8 +193,8 @@ Super-Idol-Master/
 
 | 阶段 | 入口条件 | 执行器 | 成功证据 | 下一阶段门禁 |
 | --- | --- | --- | --- | --- |
-| 角色描述 | Run 已创建 | Supervisor / Art Director | 已保存角色提示词 | 角色设定已确认或存在持续执行授权 |
-| 2D 概念图 | 正向提示词非空 | Qwen Image 或 Stepfun 图片 API | PNG 文件存在于受控路径 | 用户确认，或持续计划自动确认 |
+| 角色描述 / 原画 | Run 已创建；图生模型任务另需受控路径内的单体原画 | Supervisor / Art Director | 已保存提示词或原画 | 角色设定已确认或存在持续执行授权 |
+| 2D / T-Pose 图 | 文生模型需正向提示词；图生模型需原画 | Qwen Image 或对应 Stepfun 图片 API | PNG 文件存在于受控路径 | 用户确认，或持续计划自动确认 |
 | T-Pose 检查 | 2D 图片存在 | SDPose + Visual QA | 关键点评分、覆盖图、结构化视觉报告 | SDPose 为 `passed` 且 Visual QA 为 `pass` |
 | 3D 模型生成 | T-Pose 硬门禁通过 | Pixal3D | 有效 glTF 2.0 GLB，至少一个 mesh | 用户确认，或持续计划自动确认 |
 | 自动绑骨 | 静态 GLB 存在 | SkinTokens | 有效 GLB，至少一个 skin 和 joint | 用户确认，或持续计划自动确认 |
@@ -202,9 +210,11 @@ Super-Idol-Master/
 
 | 表 | 用途 |
 | --- | --- |
-| `runs` | 角色任务、当前阶段、Job、QA 和产物路径 |
+| `workspaces` | 工作空间名称、描述和时间信息 |
+| `runs` | 所属工作空间、工作流类型、角色任务、当前阶段、Job、QA 和产物路径 |
 | `run_events` | 创建、推进、回退、Job 和质量检查事件 |
 | `app_settings` | ComfyUI 端点、工作流版本、模型和本地密钥配置 |
+| `dispatcher_messages` | 总调度 Agent 按工作空间保存的对话历史 |
 | `agent_messages` | 每个 Run 的 Agent 对话历史 |
 | `agent_role_runs` | Art Director 与 Visual QA 的执行状态和输入输出 |
 | `agent_reports` | 结构化 `PromptPlan` 与视觉质量报告 |
@@ -230,9 +240,9 @@ Super-Idol-Master/
 **用途：**
 
 - 为 Pi Agent Runtime 提供文本、视觉和工具调用模型；
-- 可选地为 2D 阶段提供图片生成或编辑 API。
+- 分别为文生图与图生图阶段提供图片生成或编辑 API。
 
-**集成方式：** OpenAI 兼容的 HTTP API。默认 Agent 模型为 `step-3.7-flash`，默认图片模型为 `step-image-edit-2`，均可在设置中调整。
+**集成方式：** OpenAI 兼容的 HTTP API。默认 Agent 模型为 `step-3.7-flash`；文生图和图生图默认都使用 `step-image-edit-2`，但拥有独立的模型、端点与密钥配置。
 
 ### 6.2. ComfyUI
 

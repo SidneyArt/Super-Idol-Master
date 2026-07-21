@@ -945,6 +945,7 @@ export function createAssetAgentRuntime({
     getMessages,
     getRoleRuns,
     getWorkflowPlan,
+    scheduleWorkflowPlan,
     handleJobCompleted,
     handleJobFailed,
     prepareCharacterPrompts,
