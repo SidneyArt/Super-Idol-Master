@@ -567,6 +567,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .agent-context { margin: 12px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); }
 .agent-context strong { display: block; margin-top: 3px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-context p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+.agent-orchestration, .agent-role-activity { margin: 0 12px 10px; padding: 10px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); }
+.agent-orchestration > div { display: flex; align-items: center; gap: 6px; color: var(--accent); }
+.agent-orchestration > div strong { flex: 1; color: var(--text); font-size: 12px; }
+.agent-orchestration > div span { font-size: 10px; }
+.agent-orchestration p { margin: 6px 0 2px; color: var(--text-secondary); font-size: 12px; }
+.agent-orchestration small { display: block; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.agent-orchestration.running { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.agent-orchestration.blocked { border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); }
+.agent-orchestration.failed { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
+.agent-role-activity > span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+.agent-role-row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: start; gap: 6px; padding: 6px 0; border-top: 1px solid var(--border); }
+.agent-role-row > svg { margin-top: 2px; color: var(--accent); }
+.agent-role-row strong, .agent-role-row small { display: block; }
+.agent-role-row strong { font-size: 11px; }
+.agent-role-row small { margin-top: 2px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.agent-role-row em { color: var(--success); font-size: 10px; font-style: normal; white-space: nowrap; }
+.agent-role-row.running em { color: var(--warning); }
+.agent-role-row.failed em { color: var(--danger); }
 .chat-thread { min-height: 0; padding: 8px 14px 16px; overflow-y: auto; }
 .chat-message { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 9px; padding: 10px 0; }
 .chat-avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }

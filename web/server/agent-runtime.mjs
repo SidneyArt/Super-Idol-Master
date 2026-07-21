@@ -9,6 +9,13 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_TOOL_CALLS = 10;
 const MAX_TURNS = 10;
 const MAX_ROLE_TURNS = 4;
+const PIPELINE_TARGETS = {
+  concept_image: { stage: 1, label: "2D 概念图" },
+  validated_tpose: { stage: 2, label: "通过质检的 T-Pose" },
+  model: { stage: 3, label: "静态 3D 模型" },
+  rigged_model: { stage: 4, label: "带骨骼 3D 模型" },
+  export: { stage: 5, label: "可导出的最终资产" },
+};
 const REQUIRED_TPOSE_CONSTRAINTS = [
   { label: "单人主体", pattern: /单人|1\s*个|one\s+(person|character|subject)/i },
   { label: "完整全身", pattern: /完整全身|全身出镜|full[- ]?body/i },
@@ -199,14 +206,15 @@ function buildSystemPrompt(detail, history) {
 工作原则：
 1. 你只能通过已注册工具改变项目状态，绝不能声称未执行的操作已经完成。
 2. 用户提供角色描述或参考图片，并要求创建、完善或重生成时，主动整理正向和负向提示词，再调用 update_character_prompts。
-3. 用户明确要求开始、继续、确认、推进时，调用 advance_workflow；如果进入的新阶段需要执行任务，再调用 run_stage_job。
-4. 用户要求回退时调用 revert_workflow。修改已经产生下游资产的提示词前，先回退到“概念图生成”。
-5. 一次对话最多启动一个 GPU Job。Job 创建后立即向用户说明已经提交，不等待生成完成。
-6. 不要自动替用户确认生成结果。只有用户明确表达认可、确认或要求继续时，才能调用 advance_workflow 确认已有产物。
-7. 如果用户只是询问状态或建议，不要调用写工具。信息不足时先提出一个简短问题。
-8. 图片是参考信息，不等于流水线已经生成的正式资产。分析图片时把可见的角色、服装、风格、配色和构图转成提示词。
-9. 工具报错时解释真实原因，不要绕过阶段、审批或运行中任务限制。
-10. 最终回复使用简洁中文，明确说明实际执行的操作和当前阶段。
+3. 用户给出明确终点（例如“一路生成到模型”“自动做到绑骨完成”）时，优先调用 execute_pipeline_goal 一次登记持续执行目标。系统会在每个异步 Job 完成后自动恢复编排，不要把它拆成多轮人工确认。
+4. 用户只要求推进一步时，调用 advance_workflow；如果进入的新阶段需要执行任务，再调用 run_stage_job。
+5. 用户要求回退时调用 revert_workflow。修改已经产生下游资产的提示词前，先回退到“概念图生成”。
+6. 一次对话最多直接启动一个 GPU Job。execute_pipeline_goal 的后续 Job 由完成事件依次触发，仍遵守单 GPU 串行规则。
+7. 不要在没有明确终点时替用户确认生成结果；明确的流水线终点属于对中间合格产物的持续授权。SDPose 或 Visual QA 不通过时必须暂停，不能自动越过。
+8. 如果用户只是询问状态或建议，不要调用写工具。信息不足时先提出一个简短问题。
+9. 图片是参考信息，不等于流水线已经生成的正式资产。分析图片时把可见的角色、服装、风格、配色和构图转成提示词。
+10. 工具报错时解释真实原因，不要绕过阶段、审批或运行中任务限制。
+11. 最终回复使用简洁中文，明确说明实际执行的操作、流水线目标和当前阶段。
 
 当前任务状态：
 ${JSON.stringify(compactRunContext(detail), null, 2)}
@@ -272,6 +280,23 @@ export function createAssetAgentRuntime({
   `);
   db.exec("CREATE INDEX IF NOT EXISTS agent_role_runs_run_id_idx ON agent_role_runs(run_id, created_at DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS agent_reports_run_id_idx ON agent_reports(run_id, created_at DESC)");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_workflow_plans (
+      run_id TEXT PRIMARY KEY,
+      target TEXT NOT NULL,
+      target_stage INTEGER NOT NULL CHECK(target_stage BETWEEN 1 AND 5),
+      status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'blocked', 'failed', 'cancelled')),
+      message TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
+    )
+  `);
+  db.prepare(`
+    UPDATE agent_workflow_plans
+    SET status = 'failed', message = '本地服务重启，自动流水线已中断，请重新下达目标', updated_at = ?
+    WHERE status = 'running'
+  `).run(new Date().toISOString());
   db.prepare(`
     UPDATE agent_role_runs SET status = 'failed', error_message = '本地服务重启，角色调用已中断', completed_at = ?
     WHERE status = 'running'
@@ -279,6 +304,22 @@ export function createAssetAgentRuntime({
 
   const activeAgents = new Map();
   const activeRoleRuns = new Set();
+  const drivingPlans = new Set();
+
+  function getWorkflowPlan(runId) {
+    return db.prepare(`
+      SELECT run_id AS runId, target, target_stage AS targetStage, status, message,
+             created_at AS createdAt, updated_at AS updatedAt
+      FROM agent_workflow_plans WHERE run_id = ?
+    `).get(runId) || null;
+  }
+
+  function updateWorkflowPlan(runId, status, message) {
+    db.prepare(`
+      UPDATE agent_workflow_plans SET status = ?, message = ?, updated_at = ? WHERE run_id = ?
+    `).run(status, message.slice(0, 1000), new Date().toISOString(), runId);
+    addRunEvent(runId, `agent_pipeline_${status}`, getRunDetail(runId).run.currentStage, message.slice(0, 500));
+  }
 
   function getRoleRuns(runId, limit = 20) {
     const rows = db.prepare(`
@@ -482,17 +523,204 @@ export function createAssetAgentRuntime({
     });
   }
 
-  async function handleJobCompleted({ runId, jobType, sourceKey }) {
-    if (jobType !== "qa" || !getAgentConfig().apiKey) return { skipped: true };
+  function latestVisualQa(runId, sourceKey) {
+    const row = db.prepare(`
+      SELECT status, output_json AS outputJson, error_message AS errorMessage
+      FROM agent_role_runs
+      WHERE run_id = ? AND agent_role = 'visual_qa' AND trigger_type = 'qa_job_completed'
+        AND source_key = ?
+      ORDER BY created_at DESC LIMIT 1
+    `).get(runId, sourceKey);
+    if (!row) return null;
+    let report = null;
     try {
-      const report = await reviewVisualQa(runId, sourceKey);
-      addRunEvent(runId, "visual_qa_completed", 2, `Visual QA：${report.summary}`);
-      return { skipped: false, report };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Visual QA 调用失败";
-      addRunEvent(runId, "visual_qa_failed", 2, `Visual QA 复核失败：${message.slice(0, 500)}`);
-      return { skipped: false, error: message };
+      report = row.outputJson ? JSON.parse(row.outputJson) : null;
+    } catch {
+      report = null;
     }
+    return { ...row, report };
+  }
+
+  async function driveWorkflowPlan(runId) {
+    if (drivingPlans.has(runId)) return getWorkflowPlan(runId);
+    const plan = getWorkflowPlan(runId);
+    if (!plan || plan.status !== "running") return plan;
+    drivingPlans.add(runId);
+    try {
+      let detail = getRunDetail(runId);
+      const run = detail.run;
+      if (run.jobStatus === "running") return plan;
+
+      if (run.currentStage === 0) {
+        advanceWorkflow(runId, `Agent 按“${PIPELINE_TARGETS[plan.target].label}”目标自动确认角色设定`);
+        detail = runStageJob(runId, "generate_2d", "Agent 流水线自动启动 2D 生成");
+        updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动继续`);
+        return getWorkflowPlan(runId);
+      }
+
+      if (run.currentStage === 1) {
+        if (!run.assets.imageReady) {
+          detail = runStageJob(runId, "generate_2d", "Agent 流水线自动启动 2D 生成");
+          updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动继续`);
+          return getWorkflowPlan(runId);
+        }
+        if (plan.targetStage === 1) {
+          updateWorkflowPlan(runId, "completed", "已生成 2D 概念图，达到自动执行目标");
+          addMessage(runId, "assistant", "自动流水线已完成：2D 概念图已生成。");
+          return getWorkflowPlan(runId);
+        }
+        advanceWorkflow(runId, "Agent 已获持续授权，自动确认 2D 产物并进入质检");
+        detail = runStageJob(runId, "check_tpose", "Agent 流水线自动启动 SDPose 质检");
+        updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；随后将调用 Visual QA`);
+        return getWorkflowPlan(runId);
+      }
+
+      if (run.currentStage === 2) {
+        if (run.qaStatus === "failed") {
+          updateWorkflowPlan(runId, "blocked", `SDPose 质检未通过：${run.qaSummary || "姿态硬门禁失败"}`);
+          addMessage(runId, "assistant", `自动流水线已暂停：SDPose 质检未通过。${run.qaSummary || "请检查姿态结果后重新生成。"}`);
+          return getWorkflowPlan(runId);
+        }
+        if (run.qaStatus !== "passed") {
+          detail = runStageJob(runId, "check_tpose", "Agent 流水线自动启动 SDPose 质检");
+          updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；随后将调用 Visual QA`);
+          return getWorkflowPlan(runId);
+        }
+        const sourceKey = `qa:${run.jobPromptId || "current"}`;
+        let visual = latestVisualQa(runId, sourceKey);
+        if (!visual) {
+          try {
+            const report = await reviewVisualQa(runId, sourceKey);
+            addRunEvent(runId, "visual_qa_completed", 2, `Visual QA：${report.summary}`);
+            visual = { status: "succeeded", report, errorMessage: "" };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Visual QA 调用失败";
+            addRunEvent(runId, "visual_qa_failed", 2, `Visual QA 复核失败：${message.slice(0, 500)}`);
+            updateWorkflowPlan(runId, "blocked", `Visual QA 未能完成：${message}`);
+            addMessage(runId, "assistant", `自动流水线已暂停：Visual QA 未能完成。${message}`);
+            return getWorkflowPlan(runId);
+          }
+        }
+        if (visual.status !== "succeeded" || visual.report?.decision !== "pass") {
+          const reason = visual.report?.summary || visual.errorMessage || "Visual QA 建议人工复核";
+          updateWorkflowPlan(runId, "blocked", `Visual QA 未放行：${reason}`);
+          addMessage(runId, "assistant", `自动流水线已暂停：Visual QA 未放行。${reason}`);
+          return getWorkflowPlan(runId);
+        }
+        if (plan.targetStage === 2) {
+          updateWorkflowPlan(runId, "completed", "SDPose 与 Visual QA 均已通过，达到自动执行目标");
+          addMessage(runId, "assistant", "自动流水线已完成：T-Pose 已通过 SDPose 与 Visual QA 双重质检。");
+          return getWorkflowPlan(runId);
+        }
+        advanceWorkflow(runId, "SDPose 与 Visual QA 均通过，Agent 自动进入 3D 生成");
+        detail = runStageJob(runId, "generate_3d", "Agent 流水线自动启动 3D 生成");
+        updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动核对模型`);
+        return getWorkflowPlan(runId);
+      }
+
+      if (run.currentStage === 3) {
+        if (!run.assets.modelReady) {
+          detail = runStageJob(runId, "generate_3d", "Agent 流水线自动启动 3D 生成");
+          updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动核对模型`);
+          return getWorkflowPlan(runId);
+        }
+        if (plan.targetStage === 3) {
+          updateWorkflowPlan(runId, "completed", "静态 3D 模型已生成并通过 GLB 结构检查");
+          addMessage(runId, "assistant", "自动流水线已完成：静态 3D 模型已生成，并通过 GLB 结构检查。");
+          return getWorkflowPlan(runId);
+        }
+        advanceWorkflow(runId, "3D 模型通过结构检查，Agent 自动进入绑骨");
+        detail = runStageJob(runId, "rig", "Agent 流水线自动启动绑骨");
+        updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动核对骨骼`);
+        return getWorkflowPlan(runId);
+      }
+
+      if (run.currentStage === 4) {
+        if (!run.assets.riggedReady) {
+          detail = runStageJob(runId, "rig", "Agent 流水线自动启动绑骨");
+          updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动核对骨骼`);
+          return getWorkflowPlan(runId);
+        }
+        if (plan.targetStage === 4) {
+          updateWorkflowPlan(runId, "completed", "带骨骼 3D 模型已生成并通过 skin/joints 检查");
+          addMessage(runId, "assistant", "自动流水线已完成：带骨骼 3D 模型已生成，并通过骨骼结构检查。");
+          return getWorkflowPlan(runId);
+        }
+        advanceWorkflow(runId, "绑骨模型通过结构检查，Agent 自动完成资产导出阶段");
+        updateWorkflowPlan(runId, "completed", "最终资产已就绪，可下载带骨骼 GLB");
+        addMessage(runId, "assistant", "自动流水线已完成：最终带骨骼 GLB 已就绪，可以下载。");
+        return getWorkflowPlan(runId);
+      }
+
+      updateWorkflowPlan(runId, "completed", "最终资产已就绪");
+      return getWorkflowPlan(runId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "自动流水线执行失败";
+      updateWorkflowPlan(runId, "failed", message);
+      addMessage(runId, "assistant", `自动流水线执行失败：${message}`);
+      return getWorkflowPlan(runId);
+    } finally {
+      drivingPlans.delete(runId);
+    }
+  }
+
+  async function scheduleWorkflowPlan(runId, target) {
+    const targetConfig = PIPELINE_TARGETS[target];
+    if (!targetConfig) throw new Error("未知流水线目标");
+    const detail = getRunDetail(runId);
+    if (detail.run.currentStage > targetConfig.stage) {
+      throw new Error(`当前任务已经超过“${targetConfig.label}”阶段，无需创建自动执行计划`);
+    }
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO agent_workflow_plans (run_id, target, target_stage, status, message, created_at, updated_at)
+      VALUES (?, ?, ?, 'running', ?, ?, ?)
+      ON CONFLICT(run_id) DO UPDATE SET target = excluded.target, target_stage = excluded.target_stage,
+        status = 'running', message = excluded.message, created_at = excluded.created_at,
+        updated_at = excluded.updated_at
+    `).run(runId, target, targetConfig.stage, `已接管流水线，将自动执行到“${targetConfig.label}”`, now, now);
+    addRunEvent(runId, "agent_pipeline_started", detail.run.currentStage, `Agent 已接管流水线，目标：${targetConfig.label}`, now);
+
+    if (detail.run.currentStage === 0 && detail.run.jobStatus !== "running") {
+      try {
+        await prepareCharacterPrompts(runId, {
+          positivePrompt: detail.run.positivePrompt,
+          negativePrompt: detail.run.negativePrompt,
+        }, `为“${targetConfig.label}”自动流水线执行 Art Director 提示词检查`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Art Director 检查失败";
+        updateWorkflowPlan(runId, "blocked", `Art Director 未能完成：${message}`);
+        throw error;
+      }
+    }
+    await driveWorkflowPlan(runId);
+    return getWorkflowPlan(runId);
+  }
+
+  async function handleJobCompleted({ runId, jobType, sourceKey }) {
+    let roleResult = { skipped: true };
+    if (jobType === "qa" && getAgentConfig().apiKey) {
+      try {
+        const report = await reviewVisualQa(runId, sourceKey);
+        addRunEvent(runId, "visual_qa_completed", 2, `Visual QA：${report.summary}`);
+        roleResult = { skipped: false, report };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Visual QA 调用失败";
+        addRunEvent(runId, "visual_qa_failed", 2, `Visual QA 复核失败：${message.slice(0, 500)}`);
+        roleResult = { skipped: false, error: message };
+      }
+    }
+    await driveWorkflowPlan(runId);
+    return roleResult;
+  }
+
+  function handleJobFailed({ runId, jobType, message }) {
+    const plan = getWorkflowPlan(runId);
+    if (!plan || plan.status !== "running") return { skipped: true };
+    const detail = `自动流水线在 ${jobType.toUpperCase()} 阶段失败：${message}`;
+    updateWorkflowPlan(runId, "failed", detail);
+    addMessage(runId, "assistant", detail);
+    return { skipped: false };
   }
 
   function getMessages(runId, limit = 100) {
@@ -563,6 +791,37 @@ export function createAssetAgentRuntime({
           const detail = advanceWorkflow(runId, params.reason);
           execution.actions.push({ tool: "advance_workflow", message: `流程已推进到${STAGE_NAMES[detail.run.currentStage]}` });
           return textResult(`流程已推进到“${STAGE_NAMES[detail.run.currentStage]}”。`, compactRunContext(detail));
+        },
+      },
+      {
+        name: "execute_pipeline_goal",
+        label: "持续执行流水线",
+        description: "登记一个可跨越多个异步 Job 持续执行的目标。适用于‘一路生成到模型’、‘自动做到绑骨’等明确终点；每个 Job 完成后会自动恢复，并调用专业 Agent 质检，不需要用户逐阶段再次确认。",
+        parameters: Type.Object({
+          target: Type.Union([
+            Type.Literal("concept_image"),
+            Type.Literal("validated_tpose"),
+            Type.Literal("model"),
+            Type.Literal("rigged_model"),
+            Type.Literal("export"),
+          ]),
+          reason: Type.String({ minLength: 1, maxLength: 240 }),
+        }),
+        executionMode: "sequential",
+        execute: async (_toolCallId, params) => {
+          if (execution.jobStarted) throw new Error("本次 Agent 对话已经启动过 GPU Job，不能重复创建流水线计划");
+          const before = getRunDetail(runId).run.jobStatus;
+          const plan = await scheduleWorkflowPlan(runId, params.target);
+          const after = getRunDetail(runId).run;
+          execution.jobStarted = before === "running" || after.jobStatus === "running";
+          execution.actions.push({
+            tool: "execute_pipeline_goal",
+            message: `自动流水线目标：${PIPELINE_TARGETS[params.target].label}；${plan.message}`,
+          });
+          return textResult(`已登记持续执行目标“${PIPELINE_TARGETS[params.target].label}”。${plan.message}`, {
+            plan,
+            run: compactRunContext(getRunDetail(runId)),
+          });
         },
       },
       {
@@ -662,7 +921,11 @@ export function createAssetAgentRuntime({
         message: assistantMessage,
         messages: getMessages(runId),
         actions: execution.actions,
-        detail: { ...getRunDetail(runId), agentRoleRuns: getRoleRuns(runId) },
+        detail: {
+          ...getRunDetail(runId),
+          agentRoleRuns: getRoleRuns(runId),
+          agentWorkflowPlan: getWorkflowPlan(runId),
+        },
       };
     } finally {
       activeAgents.delete(runId);
@@ -681,7 +944,9 @@ export function createAssetAgentRuntime({
     cancel,
     getMessages,
     getRoleRuns,
+    getWorkflowPlan,
     handleJobCompleted,
+    handleJobFailed,
     prepareCharacterPrompts,
     status: () => {
       const config = getAgentConfig();

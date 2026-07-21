@@ -280,7 +280,7 @@ function revertRun(runId, targetStage) {
   return runDetail(runId);
 }
 
-function advanceRun(runId) {
+function advanceRun(runId, reason = "用户确认当前阶段产物") {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
   if (activeJobs.has(runId) || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能确认阶段");
@@ -303,7 +303,7 @@ function advanceRun(runId) {
         generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ?
       WHERE id = ?
     `).run(nextStage, nextStage === 5 ? "completed" : "active", now, runId);
-    addEvent(runId, "stage_confirmed", stage, `用户确认“${stageNames[stage]}”已完成，进入“${stageNames[nextStage]}”`, now);
+    addEvent(runId, "stage_confirmed", stage, `${cleanText(reason, 240, "推进原因", true)}；进入“${stageNames[nextStage]}”`, now);
     if (nextStage === 5) addEvent(runId, "pipeline_completed", 5, "角色资产流水线完成，可下载最终 GLB", now);
     db.exec("COMMIT");
   } catch (error) {
@@ -365,10 +365,10 @@ function confirmCharacterIdea(runId, input = {}) {
   return runDetail(runId);
 }
 
-function advanceWorkflow(runId) {
+function advanceWorkflow(runId, reason = "用户确认当前阶段产物") {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
-  return run.currentStage === 0 ? confirmCharacterIdea(runId) : advanceRun(runId);
+  return run.currentStage === 0 ? confirmCharacterIdea(runId) : advanceRun(runId, reason);
 }
 
 function runStageJob(runId, action) {
@@ -716,10 +716,14 @@ function launchJob(run, jobType, processConfig = settingsStore.processConfig(job
           console.error(`[Agent] ${jobType} completion hook failed:`, error);
         });
       } else {
-        failJob(run.id, jobType, errorMessage || stderr || `Python 退出代码非零`);
+        const message = errorMessage || stderr || `Python 退出代码非零`;
+        failJob(run.id, jobType, message);
+        assetAgent.handleJobFailed({ runId: run.id, jobType, message: message.trim().slice(-1200) });
       }
     } catch (error) {
-      failJob(run.id, jobType, error instanceof Error ? error.message : "任务结果处理失败");
+      const message = error instanceof Error ? error.message : "任务结果处理失败";
+      failJob(run.id, jobType, message);
+      assetAgent.handleJobFailed({ runId: run.id, jobType, message });
     }
   };
 
@@ -996,7 +1000,11 @@ const server = createServer(async (req, res) => {
         return;
       }
       if (req.method === "GET" && parts.length === 3) {
-        json(res, 200, { ...runDetail(id), agentRoleRuns: assetAgent.getRoleRuns(id) });
+        json(res, 200, {
+          ...runDetail(id),
+          agentRoleRuns: assetAgent.getRoleRuns(id),
+          agentWorkflowPlan: assetAgent.getWorkflowPlan(id),
+        });
         return;
       }
       if (req.method === "GET" && parts[3] === "agent" && parts[4] === "messages") {

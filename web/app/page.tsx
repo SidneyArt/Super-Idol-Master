@@ -130,7 +130,21 @@ type AgentRoleRun = {
   createdAt: string;
   completedAt: string | null;
 };
-type RunDetail = { run: Run; events: RunEvent[]; agentRoleRuns?: AgentRoleRun[] };
+type AgentWorkflowPlan = {
+  runId: string;
+  target: "concept_image" | "validated_tpose" | "model" | "rigged_model" | "export";
+  targetStage: number;
+  status: "running" | "completed" | "blocked" | "failed" | "cancelled";
+  message: string;
+  createdAt: string;
+  updatedAt: string;
+};
+type RunDetail = {
+  run: Run;
+  events: RunEvent[];
+  agentRoleRuns?: AgentRoleRun[];
+  agentWorkflowPlan?: AgentWorkflowPlan | null;
+};
 type WorkflowCheck = { ready: boolean; missing: string[] };
 type ProcessKind = "2d" | "qa" | "3d" | "rig";
 type ProcessSettings = {
@@ -403,16 +417,23 @@ export default function Home() {
   const hasRunningTask = runs.some((item) => item.jobStatus === "running");
   const selectedTaskIsRunning = runs.some((item) => item.id === selectedId && item.jobStatus === "running");
   const selectedRoleIsRunning = detail?.agentRoleRuns?.some((item) => item.status === "running") === true;
+  const selectedPlanIsRunning = detail?.agentWorkflowPlan?.status === "running";
+  const agentOperationalBusy = agentBusy || selectedRoleIsRunning || selectedPlanIsRunning;
 
   useEffect(() => {
-    if (!hasRunningTask && !selectedRoleIsRunning) return;
+    if (!hasRunningTask && !selectedRoleIsRunning && !selectedPlanIsRunning) return;
     const timer = window.setInterval(() => {
-      const detailRequest = selectedId && (selectedTaskIsRunning || selectedRoleIsRunning)
+      const shouldRefreshSelected = selectedId && (selectedTaskIsRunning || selectedRoleIsRunning || selectedPlanIsRunning);
+      const detailRequest = shouldRefreshSelected
         ? api<RunDetail>(`/api/runs/${selectedId}`)
         : Promise.resolve(null);
-      void Promise.all([api<{ runs: Run[] }>("/api/runs"), detailRequest])
-        .then(([runData, detailData]) => {
+      const messagesRequest = shouldRefreshSelected
+        ? api<{ messages: ChatMessage[] }>(`/api/runs/${selectedId}/agent/messages`)
+        : Promise.resolve(null);
+      void Promise.all([api<{ runs: Run[] }>("/api/runs"), detailRequest, messagesRequest])
+        .then(([runData, detailData, messagesData]) => {
           setRuns(runData.runs);
+          if (messagesData) setChatMessages(messagesData.messages);
           if (!detailData) return;
           setDetail(detailData);
           setViewStage(detailData.run.currentStage);
@@ -420,7 +441,7 @@ export default function Home() {
         .catch((reason) => setError(reason instanceof Error ? reason.message : "DGX 状态读取失败"));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [hasRunningTask, selectedId, selectedRoleIsRunning, selectedTaskIsRunning]);
+  }, [hasRunningTask, selectedId, selectedPlanIsRunning, selectedRoleIsRunning, selectedTaskIsRunning]);
 
   const run = detail?.run;
   const artDirectorRun = detail?.agentRoleRuns?.find((item) =>
@@ -1332,8 +1353,8 @@ export default function Home() {
           <div className="agent-header">
             <div className="agent-title"><span><Bot size={19} /></span><div><strong>Asset Agent</strong><small>工作对话</small></div></div>
             <div className="agent-header-actions">
-              <span className={`agent-state ${agentBusy ? "busy" : system?.agent.configured ? "" : "unavailable"}`}>
-                <i />{agentBusy ? agentQueue.length ? `处理中 · ${agentQueue.length} 排队` : "处理中" : system?.agent.configured ? "待命" : "未配置"}
+              <span className={`agent-state ${agentOperationalBusy ? "busy" : system?.agent.configured ? "" : "unavailable"}`}>
+                <i />{agentBusy ? agentQueue.length ? `处理中 · ${agentQueue.length} 排队` : "处理中" : selectedRoleIsRunning ? "子 Agent 质检中" : selectedPlanIsRunning ? "自动执行中" : system?.agent.configured ? "待命" : "未配置"}
               </span>
               <button className="icon-button" type="button" onClick={() => setAgentCollapsed((value) => !value)} title={agentCollapsed ? "展开 Agent 面板" : "收起 Agent 面板"} aria-label={agentCollapsed ? "展开 Agent 面板" : "收起 Agent 面板"}>
                 {agentCollapsed ? <PanelRightOpen size={18} /> : <PanelRightClose size={18} />}
@@ -1345,6 +1366,20 @@ export default function Home() {
             <strong>{run?.name || "未选择任务"}</strong>
             <p>{run ? `${stages[current].title} · ${progress}% 完成` : "选择或创建任务后开始"}</p>
           </div>
+          {detail?.agentWorkflowPlan && (
+            <section className={`agent-orchestration ${detail.agentWorkflowPlan.status}`}>
+              <div><Bot size={15} /><strong>Supervisor 自动编排</strong><span>{detail.agentWorkflowPlan.status === "running" ? "执行中" : detail.agentWorkflowPlan.status === "completed" ? "已完成" : detail.agentWorkflowPlan.status === "blocked" ? "已暂停" : "失败"}</span></div>
+              <p>目标：{stages[detail.agentWorkflowPlan.targetStage].title}</p>
+              <small>{detail.agentWorkflowPlan.message}</small>
+            </section>
+          )}
+          {(artDirectorRun || visualQaRun) && (
+            <section className="agent-role-activity" aria-label="多 Agent 协作记录">
+              <span>多 Agent 协作</span>
+              {artDirectorRun && <div className={`agent-role-row ${artDirectorRun.status}`}><Sparkles size={14} /><div><strong>Art Director</strong><small>{artDirectorRun.status === "running" ? "正在检查提示词" : artDirectorRun.status === "succeeded" ? artDirectorRun.report?.summary || "提示词检查完成" : artDirectorRun.errorMessage}</small></div><em>{artDirectorRun.status === "running" ? "运行中" : artDirectorRun.status === "succeeded" ? "已完成" : "失败"}</em></div>}
+              {visualQaRun && <div className={`agent-role-row ${visualQaRun.status}`}><Bot size={14} /><div><strong>Visual QA</strong><small>{visualQaRun.status === "running" ? "正在复核朝向、遮挡和背景" : visualQaRun.status === "succeeded" ? visualQaRun.report?.summary || "视觉质检完成" : visualQaRun.errorMessage}</small></div><em>{visualQaRun.status === "running" ? "运行中" : visualQaRun.status === "succeeded" ? "已完成" : "失败"}</em></div>}
+            </section>
+          )}
           <div className="chat-thread">
             {chatMessages.map((message) => (
               <div className={`chat-message ${message.role}`} key={message.id}>
