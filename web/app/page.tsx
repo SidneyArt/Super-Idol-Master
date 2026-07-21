@@ -1316,7 +1316,7 @@ export default function Home() {
     }
   }
 
-  function handleChatKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
     event.currentTarget.form?.requestSubmit();
@@ -1464,7 +1464,6 @@ export default function Home() {
             <header className="dispatcher-header">
               <div className="dispatcher-title"><span><Bot size={22} /></span><div><small>总调度中心</small><h1>Workspace Coordinator</h1><p>{selectedWorkspace ? `当前空间：${selectedWorkspace.name}` : "创建工作空间后开始调度"}</p></div></div>
               <div className="dispatcher-actions">
-                <label className="agent-permission-control" title="选择总调度 Agent 的变更审批方式"><ShieldCheck size={15} /><select value={coordinatorMode} onChange={(event) => void changeAgentMode("coordinator", event.target.value as ApprovalMode)}><option value="request">请求批准</option><option value="auto">Auto</option></select></label>
                 <button className="secondary-button" type="button" onClick={() => { setForm({ name: "", workspaceId: selectedWorkspaceId, pipelineType: "text_to_model" }); setShowCreate(true); }}><Plus size={16} />新建任务</button>
                 <button className="secondary-button" type="button" onClick={() => { setSettingsTab("agent"); void openSettings(); }}><Settings size={16} />模型配置</button>
               </div>
@@ -1499,8 +1498,8 @@ export default function Home() {
 
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
-              <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} placeholder="描述一个项目，或拖入角色合集原画，让总调度 Agent 拆分并分派任务…" />
-              <div><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span>{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || system?.agent.configured === false}><Send size={16} />发送调度</button></div>
+              <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="描述一个项目，或拖入角色合集原画，让总调度 Agent 拆分并分派任务…" />
+              <div><label className="agent-permission-control compact" title="选择总调度 Agent 的变更审批方式"><ShieldCheck size={14} /><select value={coordinatorMode} onChange={(event) => void changeAgentMode("coordinator", event.target.value as ApprovalMode)}><option value="request">请求批准</option><option value="auto">Auto</option></select></label><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><button className="secondary-button" type="button" onClick={() => dispatcherFileRef.current?.click()}><Upload size={16} />合集原画</button><span>{selectedWorkspace?.name || "未选择工作空间"}</span>{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()}><X size={16} /></button>}<button className="primary-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || system?.agent.configured === false}><Send size={16} />发送调度</button></div>
             </form>
             {dispatcherDragging && <div className="dispatcher-drop"><ImageIcon size={34} /><strong>松开以分析合集原画</strong><span>支持最多 12 MB 的 PNG、JPEG 或 WebP</span></div>}
           </section>
@@ -1833,7 +1832,6 @@ export default function Home() {
           <div className="agent-header">
             <div className="agent-title"><span><Bot size={19} /></span><div><strong>Asset Agent</strong><small>工作对话</small></div></div>
             <div className="agent-header-actions">
-              {run && <label className="agent-permission-control compact" title="选择当前任务 Agent 的变更审批方式"><ShieldCheck size={14} /><select value={taskAgentMode} onChange={(event) => void changeAgentMode("task", event.target.value as ApprovalMode)}><option value="request">请求批准</option><option value="auto">Auto</option></select></label>}
               <span className={`agent-state ${agentOperationalBusy ? "busy" : system?.agent.configured ? "" : "unavailable"}`}>
                 <i />{agentBusy ? agentQueue.length ? `处理中 · ${agentQueue.length} 排队` : "处理中" : selectedRoleIsRunning ? "子 Agent 质检中" : selectedPlanIsRunning ? "自动执行中" : system?.agent.configured ? "待命" : "未配置"}
               </span>
@@ -1944,9 +1942,10 @@ export default function Home() {
                 <button type="button" onClick={() => setAgentAttachment(null)} title="移除图片" aria-label="移除参考图片"><X size={14} /></button>
               </div>
             )}
-            <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={handleChatKeyDown} rows={3} placeholder={agentBusy ? "继续输入，消息将进入待发送队列…" : "给 Agent 下达资产生成任务…"} />
+            <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={handleComposerKeyDown} rows={3} placeholder={agentBusy ? "继续输入，消息将进入待发送队列…" : "给 Agent 下达资产生成任务…"} />
             <div className="composer-footer">
               <div className="composer-meta">
+                {run && <label className="agent-permission-control compact" title="选择当前任务 Agent 的变更审批方式"><ShieldCheck size={14} /><select value={taskAgentMode} onChange={(event) => void changeAgentMode("task", event.target.value as ApprovalMode)}><option value="request">请求批准</option><option value="auto">Auto</option></select></label>}
                 <span><MessageSquare size={15} />{system?.agent.model || "当前会话"}</span>
               </div>
               <div className="composer-actions">

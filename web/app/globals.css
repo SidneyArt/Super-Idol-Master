@@ -1007,7 +1007,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 @media (max-width: 560px) {
   .dispatcher-actions, .dispatcher-welcome > div { width: 100%; flex-direction: column; }
   .dispatcher-actions button, .dispatcher-welcome button { width: 100%; justify-content: center; }
-  .dispatcher-actions .agent-permission-control { width: 100%; justify-content: center; }
   .dispatcher-composer > div:last-child { flex-wrap: wrap; }
   .approval-card { grid-template-columns: 34px minmax(0, 1fr); }
   .approval-card .approval-actions { grid-column: 2; justify-content: flex-end; }
