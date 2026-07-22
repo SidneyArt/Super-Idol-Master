@@ -1,11 +1,13 @@
 # Super-Idol-Master 技术实现框架与方法
 
-> **实现状态提示（2026-07-18）：** 本文保留比赛完整版架构提案，其中 Vue/FastAPI/SSE 等内容不是当前本地 Demo 的实际实现。当前已落地系统采用 React/Vinext + Node HTTP API + SQLite，并已接通 Qwen Image、SDPose、Pixal3D、SkinTokens。实际运行与接口以 `docs/local-fullstack-web.md` 和 `docs/dgx-pipeline-integration.md` 为准。
+> 分类：架构与技术决策
+>
+> **实现状态提示（2026-07-18）：** 本文保留比赛完整版架构提案，其中 Vue/FastAPI/SSE 等内容不是当前本地 Demo 的实际实现。当前已落地系统采用 React/Vinext + Node HTTP API + SQLite，并已接通 Qwen Image、SDPose、Pixal3D、AutoRemesher、SkinTokens。实际运行与接口以 `docs/getting-started/local-fullstack-web.md` 和 `docs/deployment/dgx-pipeline-integration.md` 为准。
 
 > 文档版本：v1.0  
 > 状态：五人五天实施基线  
 > 更新日期：2026-07-18  
-> 关联文档：`docs/super-idol-master-prd.md`、`docs/agent-backend-selection.md`
+> 关联文档：`docs/product/super-idol-master-prd.md`、`docs/architecture/agent-backend-selection.md`
 
 ## 0. 实施结论
 

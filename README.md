@@ -12,8 +12,8 @@ Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生�
 - 分级 Agent 权限：总调度 Agent 和每个任务的 Asset Agent 可分别选择“请求批准”或 `Auto`；请求批准模式会在执行生成、推进、回滚或批量调度前暂停。
 - 全局通知中心：待审批、阶段生成完成、质量检查结果和全流程完成都会在右上角提醒，`View` 可跳转到对应工作空间或任务。
 - 两套可选资产流水线：
-  - `角色描述 → 2D / T-Pose 图 → T-Pose QA → 3D → 自动绑骨 → 导出`；
-  - `角色原画 → T-Pose 图 → T-Pose QA → 3D → 自动绑骨 → 导出`。
+  - `角色描述 → 2D / T-Pose 图 → T-Pose QA → 3D → 自动拓扑 → 自动绑骨 → 导出`；
+  - `角色原画 → T-Pose 图 → T-Pose QA → 3D → 自动拓扑 → 自动绑骨 → 导出`。
 - 通过 ComfyUI HTTP API 和 WebSocket 调用 DGX，展示真实队列、节点进度和执行结果。
 - 文生图和图生图分别提供 Stepfun 模型、Base URL 与 API Key 配置，其他阶段继续使用 ComfyUI。
 - 静态与绑骨 GLB 的交互式 3D 预览，包括材质、线框、骨骼和自动旋转。
@@ -67,7 +67,7 @@ T-Pose 图
   │
   ├─ SDPose + Visual QA 双重质量门禁
   ▼
-静态 3D 模型 → 自动绑骨 → 资产导出
+静态 3D 模型 → AutoRemesher 自动拓扑 → 自动绑骨 → 资产导出
 ```
 
 Asset Agent 支持把以下自然语言目标登记为持久化执行计划：
@@ -159,10 +159,11 @@ Python 执行器也可以通过锁定的 uv 环境脱离网站单独调用：
 uv run --locked --project web/server/pipeline python web/server/pipeline/run_2d_generation.py --positive "角色描述" --negative "低画质，肢体畸形"
 uv run --locked --project web/server/pipeline python web/server/pipeline/run_tpose_qa.py path/to/character.png
 uv run --locked --project web/server/pipeline python web/server/pipeline/run_3d_generation.py path/to/character.png
-uv run --locked --project web/server/pipeline python web/server/pipeline/run_3d_skinning.py path/to/model.glb
+uv run --locked --project web/server/pipeline python web/server/pipeline/run_3d_retopology.py path/to/model.glb --service-url http://DGX:8190
+uv run --locked --project web/server/pipeline python web/server/pipeline/run_3d_skinning.py path/to/retopologized.glb
 ```
 
-所有下载到本机的生成结果都必须位于项目的 `output/` 目录。完整参数和工作流节点映射见 [`docs/dgx-pipeline-integration.md`](./docs/dgx-pipeline-integration.md)。
+所有下载到本机的生成结果都必须位于项目的 `output/` 目录。完整参数和工作流节点映射见 [`docs/deployment/dgx-pipeline-integration.md`](./docs/deployment/dgx-pipeline-integration.md)。
 
 ## 开发检查
 
@@ -180,10 +181,11 @@ npm run agent:verify
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md)：系统结构、数据流、组件职责和架构边界。
 - [`docs/README.md`](./docs/README.md)：全部项目文档索引。
-- [`docs/current-project-baseline.md`](./docs/current-project-baseline.md)：当前工程基线和真实运行证据。
-- [`docs/local-fullstack-web.md`](./docs/local-fullstack-web.md)：本地网站、API 和状态机说明。
-- [`docs/dgx-pipeline-integration.md`](./docs/dgx-pipeline-integration.md)：DGX / ComfyUI 全链路映射。
-- [`docs/agent-runtime-pi-adr.md`](./docs/agent-runtime-pi-adr.md)：Agent Runtime 技术决策。
+- [`docs/getting-started/current-project-baseline.md`](./docs/getting-started/current-project-baseline.md)：当前工程基线和真实运行证据。
+- [`docs/getting-started/local-fullstack-web.md`](./docs/getting-started/local-fullstack-web.md)：本地网站、API 和状态机说明。
+- [`docs/deployment/dgx-pipeline-integration.md`](./docs/deployment/dgx-pipeline-integration.md)：DGX / ComfyUI 全链路映射。
+- [`docs/deployment/dgx-autoremesher-deployment.md`](./docs/deployment/dgx-autoremesher-deployment.md)：在 DGX Spark 上独立部署自动拓扑 API，不部署 Super Idol Master。
+- [`docs/architecture/agent-runtime-pi-adr.md`](./docs/architecture/agent-runtime-pi-adr.md)：Agent Runtime 技术决策。
 
 ## 安全边界
 

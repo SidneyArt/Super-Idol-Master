@@ -76,4 +76,4 @@ npm run agent:verify
 - `public/generated/` 中的任务预览图片；
 - 本地环境变量和 DGX 生成产物。
 
-系统边界见主仓库的 `ARCHITECTURE.md`，完整运行说明见 `docs/local-fullstack-web.md`。
+系统边界见主仓库的 `ARCHITECTURE.md`，完整运行说明见 `docs/getting-started/local-fullstack-web.md`。

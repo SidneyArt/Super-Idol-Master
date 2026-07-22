@@ -1,5 +1,7 @@
 # 本地全栈网站运行与维护
 
+> 分类：上手与运行
+
 更新日期：2026-07-21
 
 ## 1. 当前实现
@@ -56,6 +58,8 @@ IDEA
   --SDPose 检查通过--> QA / 待确认
   --用户确认--> 3D
   --Pixal3D 返回静态 GLB--> 3D / 待确认
+  --用户确认--> TOPOLOGY
+  --AutoRemesher 返回拓扑 GLB--> TOPOLOGY / 待确认
   --用户确认--> RIG
   --SkinTokens 返回带骨骼 GLB--> RIG / 待确认
   --用户确认--> OUT / completed
@@ -68,10 +72,11 @@ IDEA
 - 2D 失败：停留在 2D，可重试。
 - QA 未通过：停留在 QA，只能重新生成 2D 或重新检查。
 - 3D 失败：停留在 3D，上游 PNG 保留。
-- 绑骨失败：停留在 RIG，静态 GLB 保留。
+- 拓扑失败：停留在 TOPOLOGY，原始静态 GLB 保留。
+- 绑骨失败：停留在 RIG，原始静态 GLB 与拓扑 GLB 均保留。
 - 页面点击阶段卡片不会解锁后续阶段。
 - 手动路径中的生成或检查任务成功后停留在当前阶段；存在用户明确授权的持续执行计划时，后端完成事件可以自动推进到计划目标。
-- 回退到 2D 会清除 PNG、QA 和 3D/RIG 引用；回退到 QA 保留 PNG；回退到 3D 保留已通过 QA；回退到 RIG 保留静态 GLB。
+- 回退到 2D 会清除 PNG、QA、3D、TOPOLOGY 和 RIG 引用；回退到 QA 保留 PNG；回退到 3D 保留已通过 QA；回退到 TOPOLOGY 保留静态 GLB；回退到 RIG 保留静态 GLB 与拓扑 GLB。
 
 ## 4. API
 
@@ -89,11 +94,13 @@ IDEA
 | `POST` | `/api/runs/:id/generate-2d` | 执行 Qwen Image |
 | `POST` | `/api/runs/:id/check-tpose` | 执行 SDPose 自动检查 |
 | `POST` | `/api/runs/:id/generate-3d` | 执行 Pixal3D |
+| `POST` | `/api/runs/:id/retopologize` | 调用 DGX AutoRemesher 服务并回烘纹理 |
 | `POST` | `/api/runs/:id/rig` | 执行 SkinTokens |
 | `POST` | `/api/runs/:id/advance` | 用户确认当前阶段完成并进入下一阶段 |
 | `POST` | `/api/runs/:id/revert` | 回退到指定已完成阶段并清除下游产物引用 |
 | `GET` | `/api/runs/:id/download/image` | 下载真实 PNG |
 | `GET` | `/api/runs/:id/download/model` | 下载真实静态 GLB |
+| `GET` | `/api/runs/:id/download/topology` | 下载真实拓扑 GLB |
 | `GET` | `/api/runs/:id/download/rigged` | 下载真实绑骨 GLB |
 | `POST` | `/api/runs/:id/reset` | 清除任务产物引用并回到 IDEA |
 | `DELETE` | `/api/runs/:id` | 删除任务和事件 |
@@ -108,13 +115,14 @@ IDEA
 | --- | --- |
 | `current_stage` | 严格状态机的当前阶段 |
 | `status` | `active` / `completed` / `failed` |
-| `job_type` | `2d` / `qa` / `3d` / `rig` / `none` |
+| `job_type` | `2d` / `qa` / `3d` / `topology` / `rig` / `none` |
 | `generation_status` | 当前 DGX Job 状态；历史字段名，现用于所有工作流 |
 | `generation_progress` | ComfyUI 实时事件计算的实际进度 |
 | `generation_prompt_id` | ComfyUI 真正的 prompt ID |
 | `generation_current_node` | 当前执行节点 |
 | `image_path` | 本机真实 PNG 路径 |
 | `model_path` | 本机真实静态 GLB 路径 |
+| `topology_path` | 本机真实拓扑 GLB 路径；SkinTokens 的唯一模型输入 |
 | `rigged_model_path` | 本机真实绑骨 GLB 路径 |
 | `qa_status` | SDPose 业务判定 |
 | `qa_score` | 自动检查得分 |

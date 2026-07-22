@@ -71,6 +71,8 @@ export function classifyCoordinatorIntent(message, hasAttachment) {
       ? "rigged_model"
       : /导出|交付|export/i.test(text)
         ? "export"
+        : /拓扑|重拓扑|retopolog|remesh/i.test(text)
+          ? "retopologized_model"
         : /3d|模型|model/i.test(text)
           ? "model"
           : /概念图|2d/i.test(text)
@@ -453,7 +455,7 @@ ${transcript.slice(-12000)}
         parameters: Type.Object({
           target: Type.Union([
             Type.Literal("concept_image"), Type.Literal("validated_tpose"), Type.Literal("model"),
-            Type.Literal("rigged_model"), Type.Literal("export"),
+            Type.Literal("retopologized_model"), Type.Literal("rigged_model"), Type.Literal("export"),
           ]),
           reason: Type.String({ minLength: 1, maxLength: 500 }),
         }),
@@ -473,7 +475,7 @@ ${transcript.slice(-12000)}
           delegateToAgents: Type.Boolean(),
           target: Type.Union([
             Type.Literal("concept_image"), Type.Literal("validated_tpose"), Type.Literal("model"),
-            Type.Literal("rigged_model"), Type.Literal("export"),
+            Type.Literal("retopologized_model"), Type.Literal("rigged_model"), Type.Literal("export"),
           ]),
           tasks: Type.Array(Type.Object({
             name: Type.String({ minLength: 1, maxLength: 80 }),

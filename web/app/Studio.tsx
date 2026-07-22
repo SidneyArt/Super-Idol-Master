@@ -58,11 +58,12 @@ const stages = [
   { short: "2D", title: "概念图生成", subtitle: "Qwen Image", input: "角色规格", output: "PNG 概念图", action: "DGX 执行 Qwen Image 工作流并下载真实 PNG。" },
   { short: "QA", title: "T-Pose 检查", subtitle: "SDPose", input: "2D 概念图", output: "关键点与评分", action: "SDPose 检查单人全身、双臂水平、肘部伸直和左右对称。" },
   { short: "3D", title: "3D 模型生成", subtitle: "Pixal3D", input: "合格 T-Pose PNG", output: "静态 GLB", action: "DGX 执行 Pixal3D 工作流并下载真实静态 GLB。" },
-  { short: "RIG", title: "自动绑骨", subtitle: "SkinTokens", input: "静态 GLB", output: "带骨骼 GLB", action: "DGX 执行 SkinTokens，生成 Mixamo 骨骼与蒙皮。" },
+  { short: "TOPO", title: "自动拓扑", subtitle: "AutoRemesher", input: "静态 GLB", output: "四边面派生拓扑 GLB", action: "DGX 执行 AutoRemesher 重拓扑，并通过 Blender 回烘纹理；GLB 导出时按 glTF 规范三角化。" },
+  { short: "RIG", title: "自动绑骨", subtitle: "SkinTokens", input: "拓扑 GLB", output: "带骨骼 GLB", action: "DGX 使用拓扑模型执行 SkinTokens，生成 Mixamo 骨骼与蒙皮。" },
   { short: "OUT", title: "资产导出", subtitle: "文件交付", input: "已绑骨 GLB", output: "最终资产", action: "下载后端实际保存的 PNG、静态 GLB 或最终绑骨 GLB。" },
 ];
 
-type JobType = "none" | "2d" | "qa" | "3d" | "rig";
+type JobType = "none" | "2d" | "qa" | "3d" | "topology" | "rig";
 type JobStatus = "idle" | "running" | "succeeded" | "failed";
 type Theme = "light" | "dark";
 type ApprovalMode = "request" | "auto";
@@ -87,10 +88,12 @@ type Assets = {
   sourceImageReady: boolean;
   imageReady: boolean;
   modelReady: boolean;
+  topologyReady: boolean;
   riggedReady: boolean;
   sourceImageDownloadUrl: string | null;
   imageDownloadUrl: string | null;
   modelDownloadUrl: string | null;
+  topologyDownloadUrl: string | null;
   riggedDownloadUrl: string | null;
 };
 
@@ -226,7 +229,7 @@ type DispatcherTaskBatch = {
   id: string;
   workspaceId: string;
   sessionId: string;
-  target: "concept_image" | "validated_tpose" | "model" | "rigged_model" | "export";
+  target: "concept_image" | "validated_tpose" | "model" | "retopologized_model" | "rigged_model" | "export";
   tasks: Run[];
   createdAt: string;
 };
@@ -329,7 +332,7 @@ function buildDispatcherTimeline(
 }
 type AgentWorkflowPlan = {
   runId: string;
-  target: "concept_image" | "validated_tpose" | "model" | "rigged_model" | "export";
+  target: "concept_image" | "validated_tpose" | "model" | "retopologized_model" | "rigged_model" | "export";
   targetStage: number;
   status: "running" | "completed" | "blocked" | "failed" | "cancelled";
   message: string;
@@ -493,7 +496,7 @@ function formatTime(value: string) {
 }
 
 function jobName(type: JobType) {
-  return { none: "本地流程", "2d": "Qwen Image", qa: "SDPose", "3d": "Pixal3D", rig: "SkinTokens" }[type];
+  return { none: "本地流程", "2d": "Qwen Image", qa: "SDPose", "3d": "Pixal3D", topology: "AutoRemesher", rig: "SkinTokens" }[type];
 }
 
 function formatTokenCount(value: number) {
@@ -1106,23 +1109,27 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     ? viewStage === 2 && run?.qaOverlayPath ? run.qaOverlayPath : run?.previewPath
     : null;
   const hasQaComparison = Boolean(viewStage === 2 && run?.previewPath && run.qaOverlayPath);
-  const useRiggedPreview = viewStage >= 4 && run?.assets.riggedReady === true;
+  const useRiggedPreview = viewStage >= 5 && run?.assets.riggedReady === true;
+  const useTopologyPreview = !useRiggedPreview && viewStage >= 4 && run?.assets.topologyReady === true;
   const modelPreviewUrl = viewStage >= 3 && run?.assets.modelReady
-    ? downloadUrl(useRiggedPreview ? run.assets.riggedDownloadUrl : run.assets.modelDownloadUrl)
+    ? downloadUrl(useRiggedPreview
+      ? run.assets.riggedDownloadUrl
+      : useTopologyPreview ? run.assets.topologyDownloadUrl : run.assets.modelDownloadUrl)
     : null;
   const hasPreview = Boolean(viewStage === 0 || visiblePreview || modelPreviewUrl);
   const currentStageReady = Boolean(
     (current === 1 && run?.assets.imageReady)
       || (current === 2 && run?.qaStatus === "passed")
       || (current === 3 && run?.assets.modelReady)
-      || (current === 4 && run?.assets.riggedReady)
-      || (current === 5 && run?.status === "completed"),
+      || (current === 4 && run?.assets.topologyReady)
+      || (current === 5 && run?.assets.riggedReady)
+      || (current === 6 && run?.status === "completed"),
   );
   const hasPreviewFooter = Boolean(
     isCurrentView
       || (viewStage === 1 && run?.assets.imageReady)
       || (viewStage === 2 && run?.qaScore !== null)
-      || (viewStage >= 4 && run?.assets.riggedReady),
+      || (viewStage >= 3 && run?.assets.modelReady),
   );
 
   async function runAction(path: string, fallback: string, payload?: Record<string, unknown>) {
@@ -2022,7 +2029,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }
 
   const previewType = modelPreviewUrl
-    ? useRiggedPreview ? "绑骨 GLB" : "静态 GLB"
+    ? useRiggedPreview ? "绑骨 GLB" : useTopologyPreview ? "拓扑 GLB" : "静态 GLB"
     : viewStage === 0 ? "角色规格"
     : hasQaComparison ? "SDPose 对比"
     : viewStage === 2 && run?.qaOverlayPath ? "SDPose 覆盖图"
@@ -2214,7 +2221,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   }
                   if (entry.kind === "taskBatch") {
                     const batch = entry.item;
-                    const targetLabel = batch.target === "concept_image" ? "概念图" : batch.target === "validated_tpose" ? "T-Pose 检查" : batch.target === "model" ? "静态 3D 模型" : batch.target === "rigged_model" ? "自动绑骨" : "资产导出";
+                    const targetLabel = batch.target === "concept_image" ? "概念图" : batch.target === "validated_tpose" ? "T-Pose 检查" : batch.target === "model" ? "静态 3D 模型" : batch.target === "retopologized_model" ? "自动拓扑" : batch.target === "rigged_model" ? "自动绑骨" : "资产导出";
                     return (
                       <div className="dispatcher-timeline-card-row" key={`task-batch-${batch.id}`}>
                         <section className="dispatcher-task-batch">
@@ -2296,7 +2303,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 <span className="run-copy">
                   <span className="run-row"><strong>{item.name}</strong><time>{formatTime(item.updatedAt)}</time></span>
                   <span className="run-meta">{item.jobStatus === "running" ? `${jobName(item.jobType)} 执行中` : stages[item.currentStage].title}</span>
-                  <span className="run-progress"><i style={{ width: `${Math.round((item.currentStage / 5) * 100)}%` }} /></span>
+                  <span className="run-progress"><i style={{ width: `${Math.round((item.currentStage / (stages.length - 1)) * 100)}%` }} /></span>
                 </span>
               </button>
             ))}
@@ -2345,7 +2352,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     {activeStages.map((item, index) => {
                       const state = index < current || (index === current && run.status === "completed") ? "done" : index === current ? "active" : "pending";
                       let stateLabel = state === "done" ? "已完成" : state === "active" ? "当前" : "待处理";
-                      if (index === current && currentStageReady && current < 5) stateLabel = "待确认";
+                      if (index === current && currentStageReady && current < stages.length - 1) stateLabel = "待确认";
                       if (index === current && run.jobStatus === "running") stateLabel = `${run.jobProgress}%`;
                       if (index === 2 && index === current && run.qaStatus === "failed") stateLabel = "未通过";
                       if (index === 2 && index < current) stateLabel = `${run.qaScore ?? "-"} 分`;
@@ -2421,7 +2428,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                           </div>
                         </div>
                       ) : modelPreviewUrl ? (
-                        <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} />
+                        <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : useTopologyPreview ? "拓扑 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} />
                       ) : hasQaComparison ? (
                         <div className="qa-blend-preview">
                           <Image
@@ -2485,7 +2492,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                         </div>
                       )}
                     </div>
-                    {(isCurrentView || (viewStage === 1 && run.assets.imageReady) || (viewStage >= 3 && run.assets.modelReady) || (viewStage >= 4 && run.assets.riggedReady)) && (
+                    {(isCurrentView || (viewStage === 1 && run.assets.imageReady) || (viewStage >= 3 && run.assets.modelReady)) && (
                       <div className="asset-status-row">
                         <div className="asset-status-actions">
                           {isCurrentView && current === 0 && <button className="primary-button" onClick={() => runAction("start", "进入 2D 阶段失败", promptDraft)} disabled={busy || !promptDraft.positivePrompt.trim()}><Play size={16} />确认设定</button>}
@@ -2497,13 +2504,17 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                           {isCurrentView && current === 2 && run.qaStatus === "passed" && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认检查通过，进入 3D</button>}
                           {isCurrentView && current === 3 && !run.assets.modelReady && <button className="primary-button" onClick={() => runAction("generate-3d", "3D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Box size={16} />生成静态 GLB</button>}
                           {isCurrentView && current === 3 && run.assets.modelReady && <button className="secondary-button" onClick={() => runAction("generate-3d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新生成 3D</button>}
-                          {isCurrentView && current === 3 && run.assets.modelReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认 3D 完成，进入绑骨</button>}
-                          {isCurrentView && current === 4 && !run.assets.riggedReady && <button className="primary-button" onClick={() => runAction("rig", "绑骨任务提交失败")} disabled={busy || run.jobStatus === "running"}><Expand size={16} />运行自动绑骨</button>}
-                          {isCurrentView && current === 4 && run.assets.riggedReady && <button className="secondary-button" onClick={() => runAction("rig", "重新绑骨失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新运行绑骨</button>}
-                          {isCurrentView && current === 4 && run.assets.riggedReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认绑骨完成，进入导出</button>}
+                          {isCurrentView && current === 3 && run.assets.modelReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认 3D 完成，进入拓扑</button>}
+                          {isCurrentView && current === 4 && !run.assets.topologyReady && <button className="primary-button" onClick={() => runAction("retopologize", "拓扑任务提交失败")} disabled={busy || run.jobStatus === "running"}><Expand size={16} />运行自动拓扑</button>}
+                          {isCurrentView && current === 4 && run.assets.topologyReady && <button className="secondary-button" onClick={() => runAction("retopologize", "重新拓扑失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新运行拓扑</button>}
+                          {isCurrentView && current === 4 && run.assets.topologyReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认拓扑完成，进入绑骨</button>}
+                          {isCurrentView && current === 5 && !run.assets.riggedReady && <button className="primary-button" onClick={() => runAction("rig", "绑骨任务提交失败")} disabled={busy || run.jobStatus === "running"}><Expand size={16} />运行自动绑骨</button>}
+                          {isCurrentView && current === 5 && run.assets.riggedReady && <button className="secondary-button" onClick={() => runAction("rig", "重新绑骨失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新运行绑骨</button>}
+                          {isCurrentView && current === 5 && run.assets.riggedReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认绑骨完成，进入导出</button>}
                           {viewStage === 1 && run.assets.imageReady && <a className="download-button" href={downloadUrl(run.assets.imageDownloadUrl)}><Download size={16} />下载 PNG</a>}
                           {viewStage >= 3 && run.assets.modelReady && <a className="download-button" href={downloadUrl(run.assets.modelDownloadUrl)}><Download size={16} />下载静态 GLB</a>}
-                          {viewStage >= 4 && run.assets.riggedReady && <a className="download-button primary" href={downloadUrl(run.assets.riggedDownloadUrl)}><Download size={16} />下载最终 GLB</a>}
+                          {viewStage >= 4 && run.assets.topologyReady && <a className="download-button" href={downloadUrl(run.assets.topologyDownloadUrl)}><Download size={16} />下载拓扑 GLB</a>}
+                          {viewStage >= 5 && run.assets.riggedReady && <a className="download-button primary" href={downloadUrl(run.assets.riggedDownloadUrl)}><Download size={16} />下载最终 GLB</a>}
                         </div>
                       </div>
                     )}

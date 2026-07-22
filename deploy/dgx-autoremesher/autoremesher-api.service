@@ -1,0 +1,20 @@
+[Unit]
+Description=Standalone AutoRemesher HTTP API
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/autoremesher-api.env
+Environment=HOME=/var/lib/autoremesher-api
+ExecStart=/usr/bin/python3 /opt/autoremesher-api/service.py
+Restart=on-failure
+RestartSec=5
+User=www-data
+Group=www-data
+RuntimeDirectory=autoremesher-api
+StateDirectory=autoremesher-api
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

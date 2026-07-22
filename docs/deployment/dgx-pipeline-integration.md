@@ -1,5 +1,7 @@
 # DGX / ComfyUI 全链路对应关系
 
+> 分类：部署与远程环境
+
 更新日期：2026-07-18
 
 ## 1. 一一对应表
@@ -9,7 +11,8 @@
 | 2D | `2d` | `run_2d_generation.py` | `2D_Gen_QwenImage2512.json` / Qwen Image | 节点 60 PNG 已下载 |
 | QA | `qa` | `run_tpose_qa.py` | SDPose Wholebody | 关键点 JSON、覆盖图、评分 |
 | 3D | `3d` | `run_3d_generation.py` | `3D_Gen_Pixal3D.json` | 节点 308 静态 GLB 已下载 |
-| RIG | `rig` | `run_3d_skinning.py` | `3D_Skin_SkinTokens.json` | SkinTokens GLB 已下载 |
+| TOPOLOGY | `topology` | `run_3d_retopology.py` | AutoRemesher HTTP 服务 | 四边面拓扑 GLB，纹理经 Blender 回烘 |
+| RIG | `rig` | `run_3d_skinning.py` | `3D_Skin_SkinTokens.json` | 使用拓扑 GLB 作为输入，SkinTokens GLB 已下载 |
 | OUT | 无推理 | Node 下载 API | 本机产物存储 | HTTP 字节数与本地文件一致 |
 
 ## 2. 自动 T-Pose 检查
@@ -103,5 +106,7 @@ rigged HTTP 200 / 45,726,624 bytes
 - Node 后端重启：运行中的本地 Job 标记 failed；不会假定远程任务成功。
 - 输出不在仓库 `output/`：后端拒绝登记。
 - 3D 返回非 GLB、没有 mesh，或 GLB 文件头/JSON chunk/声明长度无效：后端拒绝推进。
+- 自动拓扑服务返回非 GLB、没有 mesh 或超过大小上限：后端停留在拓扑阶段，保留原始静态 GLB。
+- 绑骨只能读取 `topology_path`；缺少拓扑产物时，后端拒绝提交 SkinTokens。
 - SkinTokens 目录没有 GLB，或 GLB 内没有 `skins` / `joints`：后端拒绝完成。
 - QA 推理成功但姿态未通过：Job 可为 succeeded，但业务 `qa_status=failed`，流程停在 QA。

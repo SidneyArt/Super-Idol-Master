@@ -1,5 +1,6 @@
 # Super-Idol-Master 对话式角色资产工坊 PRD
 
+> 分类：产品与需求  
 > 文档版本：v1.0  
 > 状态：5 天黑客松执行版  
 > 更新日期：2026-07-18  
@@ -830,7 +831,7 @@ flowchart TB
 | Agent | 轻量自建 tool-calling loop 或现成 Runtime Adapter |
 | 3D | Three.js `GLTFLoader`、`OrbitControls`、`SkeletonHelper`、`TransformControls` |
 
-关于 Agent Runtime 的长期选型和 OpenCode/Pi 对比，见 `docs/agent-backend-selection.md`。五天版本应优先减少运行组件；如果 OpenCode 接入成本高于轻量 Stepfun 工具调用循环，应直接实现受控循环，不让框架选型阻塞交付。
+关于 Agent Runtime 的长期选型和 OpenCode/Pi 对比，见 `docs/architecture/agent-backend-selection.md`。五天版本应优先减少运行组件；如果 OpenCode 接入成本高于轻量 Stepfun 工具调用循环，应直接实现受控循环，不让框架选型阻塞交付。
 
 ### 11.2 编排器与 Agent 的边界
 
@@ -1409,7 +1410,7 @@ approval.required
 
 ## 26. 参考资料
 
-- 项目 Agent 选型分析：`docs/agent-backend-selection.md`
+- 项目 Agent 选型分析：`docs/architecture/agent-backend-selection.md`
 - NVIDIA DGX Spark Hardware Overview：<https://docs.nvidia.com/dgx/dgx-spark/hardware.html>
 - NVIDIA DGX Spark 产品页：<https://www.nvidia.com/en-us/products/workstations/dgx-spark/>
 - Stepfun 视觉理解模型：<https://platform.stepfun.com/docs/zh/guides/models/vision>

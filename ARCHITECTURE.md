@@ -2,7 +2,7 @@
 
 本文档帮助开发者和 Agent 快速理解 Super Idol Master 的代码结构、运行边界和关键数据流。架构或职责发生变化时，应同步更新本文档。
 
-最后更新日期：2026-07-21
+最后更新日期：2026-07-22
 
 ## 1. 项目结构
 
@@ -12,14 +12,12 @@ Super-Idol-Master/
 ├── ARCHITECTURE.md                   # 本文档
 ├── docs/                             # 产品、工程、接入与技术决策文档
 │   ├── README.md                     # 文档索引
-│   ├── current-project-baseline.md   # 当前实现与真实运行基线
-│   ├── dgx-access-and-network.md     # DGX、Tailscale 和网络说明
-│   ├── dgx-pipeline-integration.md   # 工作流、节点和产物映射
-│   ├── local-fullstack-web.md        # 本地网站与 API 约定
-│   ├── super-idol-master-prd.md      # 产品需求文档
-│   ├── technical-implementation-guide.md
-│   ├── agent-runtime-pi-adr.md       # Pi Agent Runtime 技术决策
-│   └── agent-backend-selection.md    # Agent 后端选型记录
+│   ├── getting-started/              # 当前基线与本地运行维护
+│   ├── deployment/                   # DGX、网络、流水线与服务部署
+│   ├── architecture/                 # 技术实现、ADR 与选型记录
+│   └── product/                      # PRD 与产品验收范围
+├── deploy/
+│   └── dgx-autoremesher/             # 可单独上传的 ARM64 AutoRemesher API 安装包
 ├── web/
 │   ├── app/
 │   │   ├── page.tsx                  # 工作空间首页、任务控制台和 Agent 面板
@@ -175,6 +173,8 @@ Super-Idol-Master/
   → 图片与身份门禁通过
   → 生成 3D
   → 检查 GLB mesh
+  → AutoRemesher 自动拓扑与纹理回烘
+  → 检查拓扑 GLB mesh
   → 调用 Asset Inspector
   → 完成计划
 ```

@@ -1,6 +1,8 @@
 # 当前工程基线与运行信息
 
-更新日期：2026-07-21
+> 分类：上手与运行
+
+更新日期：2026-07-22
 
 ## 1. 仓库与目录
 
@@ -19,6 +21,7 @@
 | 2D 概念图 | `run_2d_generation.py` | `2D_Gen_QwenImage2512.json` | PNG |
 | 自动 T-Pose QA | `run_tpose_qa.py` | DGX SDPose Wholebody | 关键点 JSON、覆盖图、评分 |
 | 图片转 3D | `run_3d_generation.py` | `3D_Gen_Pixal3D.json` | GLB、纹理、预览 |
+| 自动拓扑 | `run_3d_retopology.py` | DGX AutoRemesher 服务与 Blender 桥接 | 四边面拓扑 GLB、回烘基础色纹理 |
 | 自动绑骨 | `run_3d_skinning.py` | `3D_Skin_SkinTokens.json` | 带骨骼 GLB |
 | 全流程编排 | `run_comfy_workflows.py` | 依次调用以上三项 | 完整角色资产 |
 
@@ -28,7 +31,7 @@
 
 ## 3. 已验证的真实结果
 
-本地网站的 Qwen → SDPose → Pixal3D → SkinTokens 全链路已经真实跑通。固定验证任务：
+原有 Qwen → SDPose → Pixal3D → SkinTokens 全链路已经真实跑通。AutoRemesher 阶段的代码、状态机和部署脚本已经接入，但仍需在 DGX Spark 上完成 ARM64 构建与真实角色资产验收。原链路固定验证任务：
 
 ```text
 run_id: 6251e426-c2a2-47c7-9a3c-4607555aba13
@@ -37,7 +40,7 @@ Pixal3D: 36,807,352 bytes，Prompt 2bbe05b5-583a-45be-bae8-66ea66b88772
 SkinTokens: 45,726,624 bytes，1 skin / 49 joints，Prompt bc87f335-023d-4d2f-8f18-7074a532568b
 ```
 
-完整证据见 `docs/dgx-pipeline-integration.md`。
+完整证据见 [DGX / ComfyUI 全链路对应关系](../deployment/dgx-pipeline-integration.md)。
 
 ## 4. 当前产品流程
 
@@ -46,6 +49,7 @@ SkinTokens: 45,726,624 bytes，1 skin / 49 joints，Prompt bc87f335-023d-4d2f-8f
   → 2D 概念图
   → T-Pose 质量检查
   → 3D 模型生成
+  → AutoRemesher 自动拓扑与纹理回烘
   → SkinTokens 自动绑骨
   → GLB 导出与验证
 ```
@@ -60,7 +64,7 @@ T-Pose 检查是显式质量门，未通过时不应自动推进到 3D。
 - 后端以严格状态机控制流程，不提供任意阶段跳转和手工 QA 放行。
 - 默认手动操作仍在每个阶段等待用户确认；用户通过 Asset Agent 明确指定终点后，系统会持久化持续执行计划，在 SDPose 与 Visual QA 门禁通过的前提下自动推进到目标阶段。
 - Agent 面板会展示 Supervisor 编排状态，以及各阶段专业 Agent 的运行记录与结构化结论。
-- Pixal3D 和 SkinTokens 均由网站实际提交，下载并登记真实 GLB。
+- Pixal3D、AutoRemesher 和 SkinTokens 均由网站状态机编排；SkinTokens 只接受已登记的拓扑 GLB。
 - SQLite 持久化任务、阶段状态和操作时间。
 - 使用 Windows CMD 脚本一键启动前端、后端并打开浏览器。
 - 默认只监听本机回环地址，不把管理服务暴露到公网。

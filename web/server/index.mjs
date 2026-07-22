@@ -53,6 +53,7 @@ const scripts = {
   "2d-api": join(pipelineDir, "run_2d_stepfun_api.py"),
   qa: join(pipelineDir, "run_tpose_qa.py"),
   "3d": join(pipelineDir, "run_3d_generation.py"),
+  topology: join(pipelineDir, "run_3d_retopology.py"),
   rig: join(pipelineDir, "run_3d_skinning.py"),
   crop: join(pipelineDir, "crop_character_sheet.py"),
 };
@@ -96,7 +97,7 @@ db.exec(`
     name TEXT NOT NULL,
     positive_prompt TEXT NOT NULL DEFAULT '',
     negative_prompt TEXT NOT NULL DEFAULT '',
-    current_stage INTEGER NOT NULL DEFAULT 0 CHECK(current_stage BETWEEN 0 AND 5),
+    current_stage INTEGER NOT NULL DEFAULT 0 CHECK(current_stage BETWEEN 0 AND 6),
     status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'failed')),
     qa_status TEXT NOT NULL DEFAULT 'pending' CHECK(qa_status IN ('pending', 'passed', 'failed')),
     generation_status TEXT NOT NULL DEFAULT 'idle' CHECK(generation_status IN ('idle', 'running', 'succeeded', 'failed')),
@@ -110,6 +111,7 @@ db.exec(`
     source_image_path TEXT,
     source_preview_path TEXT,
     model_path TEXT,
+    topology_path TEXT,
     rigged_model_path TEXT,
     qa_score INTEGER,
     qa_summary TEXT NOT NULL DEFAULT '',
@@ -125,7 +127,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
-    stage INTEGER NOT NULL CHECK(stage BETWEEN 0 AND 5),
+    stage INTEGER NOT NULL CHECK(stage BETWEEN 0 AND 6),
     message TEXT NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
@@ -158,6 +160,92 @@ addColumn("workspace_id", "TEXT NOT NULL DEFAULT 'default'");
 addColumn("pipeline_type", "TEXT NOT NULL DEFAULT 'text_to_model'");
 addColumn("source_image_path", "TEXT");
 addColumn("source_preview_path", "TEXT");
+addColumn("topology_path", "TEXT");
+
+function migrateTopologyStage() {
+  const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get()?.sql || "";
+  if (!/current_stage\s+BETWEEN\s+0\s+AND\s+5/i.test(schema)) return;
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    db.exec(`
+      CREATE TABLE runs_topology_v2 (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL DEFAULT 'default',
+        pipeline_type TEXT NOT NULL DEFAULT 'text_to_model',
+        name TEXT NOT NULL,
+        positive_prompt TEXT NOT NULL DEFAULT '',
+        negative_prompt TEXT NOT NULL DEFAULT '',
+        current_stage INTEGER NOT NULL DEFAULT 0 CHECK(current_stage BETWEEN 0 AND 6),
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'completed', 'failed')),
+        qa_status TEXT NOT NULL DEFAULT 'pending' CHECK(qa_status IN ('pending', 'passed', 'failed')),
+        generation_status TEXT NOT NULL DEFAULT 'idle' CHECK(generation_status IN ('idle', 'running', 'succeeded', 'failed')),
+        generation_message TEXT NOT NULL DEFAULT '',
+        generation_progress INTEGER NOT NULL DEFAULT 0 CHECK(generation_progress BETWEEN 0 AND 100),
+        generation_prompt_id TEXT,
+        generation_current_node TEXT,
+        preview_path TEXT,
+        job_type TEXT NOT NULL DEFAULT 'none',
+        image_path TEXT,
+        source_image_path TEXT,
+        source_preview_path TEXT,
+        model_path TEXT,
+        topology_path TEXT,
+        rigged_model_path TEXT,
+        qa_score INTEGER,
+        qa_summary TEXT NOT NULL DEFAULT '',
+        qa_metrics TEXT NOT NULL DEFAULT '{}',
+        qa_overlay_path TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+      );
+      INSERT INTO runs_topology_v2 (
+        id, workspace_id, pipeline_type, name, positive_prompt, negative_prompt,
+        current_stage, status, qa_status, generation_status, generation_message,
+        generation_progress, generation_prompt_id, generation_current_node,
+        preview_path, job_type, image_path, source_image_path, source_preview_path,
+        model_path, topology_path, rigged_model_path, qa_score, qa_summary,
+        qa_metrics, qa_overlay_path, created_at, updated_at
+      )
+      SELECT id, workspace_id, pipeline_type, name, positive_prompt, negative_prompt,
+        CASE WHEN current_stage >= 4 THEN current_stage + 1 ELSE current_stage END,
+        CASE WHEN current_stage >= 4 THEN 'active' ELSE status END,
+        qa_status, generation_status, generation_message, generation_progress,
+        generation_prompt_id, generation_current_node, preview_path, job_type,
+        image_path, source_image_path, source_preview_path, model_path, NULL,
+        CASE WHEN current_stage >= 4 THEN NULL ELSE rigged_model_path END,
+        qa_score, qa_summary, qa_metrics, qa_overlay_path, created_at, updated_at
+      FROM runs;
+      CREATE TABLE run_events_topology_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        stage INTEGER NOT NULL CHECK(stage BETWEEN 0 AND 6),
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
+      );
+      INSERT INTO run_events_topology_v2 (id, run_id, event_type, stage, message, created_at)
+      SELECT id, run_id, event_type, CASE WHEN stage >= 4 THEN stage + 1 ELSE stage END, message, created_at
+      FROM run_events;
+      DROP TABLE run_events;
+      DROP TABLE runs;
+      ALTER TABLE runs_topology_v2 RENAME TO runs;
+      ALTER TABLE run_events_topology_v2 RENAME TO run_events;
+      CREATE INDEX run_events_run_id_idx ON run_events(run_id, id DESC);
+      CREATE INDEX IF NOT EXISTS runs_workspace_id_idx ON runs(workspace_id, updated_at DESC);
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+migrateTopologyStage();
 db.prepare("UPDATE runs SET workspace_id = 'default' WHERE workspace_id IS NULL OR workspace_id = ''").run();
 db.prepare("UPDATE runs SET pipeline_type = 'text_to_model' WHERE pipeline_type IS NULL OR pipeline_type = ''").run();
 db.exec("CREATE INDEX IF NOT EXISTS runs_workspace_id_idx ON runs(workspace_id, updated_at DESC)");
@@ -210,19 +298,21 @@ db.prepare(`
 
 // Never advance a stage during startup repair. Only move backward when a stage's
 // required upstream artifact is missing.
-for (const row of db.prepare("SELECT id, current_stage, qa_status, preview_path, image_path, model_path, rigged_model_path FROM runs").all()) {
+for (const row of db.prepare("SELECT id, current_stage, qa_status, preview_path, image_path, model_path, topology_path, rigged_model_path FROM runs").all()) {
   let imagePath = row.image_path;
   const migratedImage = join(generatedDir, `${row.id}.png`);
   if (!imagePath && row.preview_path && existsSync(migratedImage)) imagePath = migratedImage;
   const hasImage = Boolean(imagePath && existsSync(imagePath));
   const hasModel = Boolean(row.model_path && existsSync(row.model_path));
+  const hasTopology = Boolean(row.topology_path && existsSync(row.topology_path));
   const hasRig = Boolean(row.rigged_model_path && existsSync(row.rigged_model_path));
   let stage = Number(row.current_stage || 0);
   if (stage >= 2 && !hasImage) stage = 1;
   if (stage >= 3 && row.qa_status !== "passed") stage = 2;
   if (stage >= 4 && !hasModel) stage = 3;
-  if (stage >= 5 && !hasRig) stage = 4;
-  const status = stage === 5 && hasRig ? "completed" : "active";
+  if (stage >= 5 && !hasTopology) stage = 4;
+  if (stage >= 6 && !hasRig) stage = 5;
+  const status = stage === 6 && hasRig ? "completed" : "active";
   db.prepare(`
     UPDATE runs SET image_path = ?, current_stage = ?, status = ?, updated_at = updated_at
     WHERE id = ?
@@ -257,8 +347,9 @@ const runSelect = `
          generation_message AS jobMessage, generation_progress AS jobProgress,
          generation_prompt_id AS jobPromptId, generation_current_node AS jobCurrentNode,
          job_type AS jobType, preview_path AS previewPath,
-         image_path AS imagePathInternal, model_path AS modelPathInternal,
-         source_image_path AS sourceImagePathInternal, source_preview_path AS sourcePreviewPath,
+          image_path AS imagePathInternal, model_path AS modelPathInternal,
+          topology_path AS topologyPathInternal,
+          source_image_path AS sourceImagePathInternal, source_preview_path AS sourcePreviewPath,
          rigged_model_path AS riggedModelPathInternal,
          qa_score AS qaScore, qa_summary AS qaSummary, qa_metrics AS qaMetricsJson,
          qa_overlay_path AS qaOverlayPath,
@@ -276,10 +367,12 @@ function addEvent(runId, eventType, stage, message, createdAt = new Date().toISO
     qa_passed: ["stage_completed", "T-Pose 质检完成"],
     qa_failed: ["generation_failed", "T-Pose 质检未通过"],
     model_succeeded: ["generation_completed", "3D 模型生成完成"],
+    topology_succeeded: ["generation_completed", "自动拓扑完成"],
     rig_succeeded: ["generation_completed", "自动绑骨完成"],
     pipeline_completed: ["pipeline_completed", "角色资产流程已完成"],
     "2d_failed": ["generation_failed", "图片生成失败"],
     "3d_failed": ["generation_failed", "3D 模型生成失败"],
+    topology_failed: ["generation_failed", "自动拓扑失败"],
     rig_failed: ["generation_failed", "自动绑骨失败"],
   };
   const notification = notificationKinds[eventType];
@@ -305,6 +398,7 @@ function serializeRun(row) {
     imagePathInternal,
     sourceImagePathInternal,
     modelPathInternal,
+    topologyPathInternal,
     riggedModelPathInternal,
     qaMetricsJson,
     ...publicRow
@@ -322,10 +416,12 @@ function serializeRun(row) {
       sourceImageReady: Boolean(sourceImagePathInternal && existsSync(sourceImagePathInternal)),
       imageReady: Boolean(imagePathInternal && existsSync(imagePathInternal)),
       modelReady: Boolean(modelPathInternal && existsSync(modelPathInternal)),
+      topologyReady: Boolean(topologyPathInternal && existsSync(topologyPathInternal)),
       riggedReady: Boolean(riggedModelPathInternal && existsSync(riggedModelPathInternal)),
       sourceImageDownloadUrl: sourceImagePathInternal ? `/api/runs/${row.id}/download/source` : null,
       imageDownloadUrl: imagePathInternal ? `/api/runs/${row.id}/download/image` : null,
       modelDownloadUrl: modelPathInternal ? `/api/runs/${row.id}/download/model` : null,
+      topologyDownloadUrl: topologyPathInternal ? `/api/runs/${row.id}/download/topology` : null,
       riggedDownloadUrl: riggedModelPathInternal ? `/api/runs/${row.id}/download/rigged` : null,
     },
   };
@@ -355,7 +451,8 @@ function revertRun(runId, targetStage) {
   const keepPreview = targetStage >= 2 ? run.previewPath : null;
   const keepQa = targetStage >= 3;
   const keepModel = targetStage >= 4 ? run.modelPathInternal : null;
-  const stageNames = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动绑骨", "资产导出"];
+  const keepTopology = targetStage >= 5 ? run.topologyPathInternal : null;
+  const stageNames = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动拓扑", "自动绑骨", "资产导出"];
 
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -363,7 +460,7 @@ function revertRun(runId, targetStage) {
       UPDATE runs SET current_stage = ?, status = 'active', job_type = 'none',
         generation_status = 'idle', generation_message = '', generation_progress = 0,
         generation_prompt_id = NULL, generation_current_node = NULL,
-        preview_path = ?, image_path = ?, model_path = ?, rigged_model_path = NULL,
+        preview_path = ?, image_path = ?, model_path = ?, topology_path = ?, rigged_model_path = NULL,
         qa_status = ?, qa_score = ?, qa_summary = ?, qa_metrics = ?, qa_overlay_path = ?,
         updated_at = ? WHERE id = ?
     `).run(
@@ -371,6 +468,7 @@ function revertRun(runId, targetStage) {
       keepPreview,
       keepImage,
       keepModel,
+      keepTopology,
       keepQa ? run.qaStatus : "pending",
       keepQa ? run.qaScore : null,
       keepQa ? run.qaSummary : "",
@@ -394,15 +492,16 @@ function advanceRun(runId, reason = "用户确认当前阶段产物") {
   if (activeJobs.has(runId) || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能确认阶段");
 
   const stage = run.currentStage;
-  if (stage < 1 || stage > 4) throw new Error("当前阶段不能执行完成确认");
+  if (stage < 1 || stage > 5) throw new Error("当前阶段不能执行完成确认");
   if (stage === 1 && (!run.imagePathInternal || !existsSync(run.imagePathInternal))) throw new Error("2D 概念图尚未生成完成");
   if (stage === 2 && run.qaStatus !== "passed") throw new Error("T-Pose 检查尚未通过");
   if (stage === 3 && (!run.modelPathInternal || !existsSync(run.modelPathInternal))) throw new Error("静态 GLB 尚未生成完成");
-  if (stage === 4 && (!run.riggedModelPathInternal || !existsSync(run.riggedModelPathInternal))) throw new Error("绑骨 GLB 尚未生成完成");
+  if (stage === 4 && (!run.topologyPathInternal || !existsSync(run.topologyPathInternal))) throw new Error("拓扑 GLB 尚未生成完成");
+  if (stage === 5 && (!run.riggedModelPathInternal || !existsSync(run.riggedModelPathInternal))) throw new Error("绑骨 GLB 尚未生成完成");
 
   const nextStage = stage + 1;
   const now = new Date().toISOString();
-  const stageNames = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动绑骨", "资产导出"];
+  const stageNames = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动拓扑", "自动绑骨", "资产导出"];
   db.exec("BEGIN IMMEDIATE");
   try {
     db.prepare(`
@@ -410,9 +509,9 @@ function advanceRun(runId, reason = "用户确认当前阶段产物") {
         generation_status = 'idle', generation_message = '', generation_progress = 0,
         generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ?
       WHERE id = ?
-    `).run(nextStage, nextStage === 5 ? "completed" : "active", now, runId);
+    `).run(nextStage, nextStage === 6 ? "completed" : "active", now, runId);
     addEvent(runId, "stage_confirmed", stage, `${cleanText(reason, 240, "推进原因", true)}；进入“${stageNames[nextStage]}”`, now);
-    if (nextStage === 5) addEvent(runId, "pipeline_completed", 5, "角色资产流水线完成，可下载最终 GLB", now);
+    if (nextStage === 6) addEvent(runId, "pipeline_completed", 6, "角色资产流水线完成，可下载最终 GLB", now);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -440,6 +539,7 @@ function updateRunPrompts(runId, { positivePrompt, negativePrompt, reason = "Age
         preview_path = CASE WHEN current_stage = 1 THEN NULL ELSE preview_path END,
         image_path = CASE WHEN current_stage = 1 THEN NULL ELSE image_path END,
         model_path = CASE WHEN current_stage = 1 THEN NULL ELSE model_path END,
+        topology_path = CASE WHEN current_stage = 1 THEN NULL ELSE topology_path END,
         rigged_model_path = CASE WHEN current_stage = 1 THEN NULL ELSE rigged_model_path END,
         qa_status = CASE WHEN current_stage = 1 THEN 'pending' ELSE qa_status END,
         qa_score = CASE WHEN current_stage = 1 THEN NULL ELSE qa_score END,
@@ -480,7 +580,7 @@ function advanceWorkflow(runId, reason = "用户确认当前阶段产物") {
 }
 
 function runStageJob(runId, action) {
-  const jobTypes = { generate_2d: "2d", check_tpose: "qa", generate_3d: "3d", rig: "rig" };
+  const jobTypes = { generate_2d: "2d", check_tpose: "qa", generate_3d: "3d", retopologize: "topology", rig: "rig" };
   const jobType = jobTypes[action];
   if (!jobType) throw new Error("未知阶段任务");
   return startJob(runId, jobType);
@@ -778,7 +878,8 @@ function jobArguments(run, jobType) {
   }
   if (jobType === "qa") return [run.imagePathInternal];
   if (jobType === "3d") return [run.imagePathInternal];
-  if (jobType === "rig") return [run.modelPathInternal];
+  if (jobType === "topology") return [run.modelPathInternal];
+  if (jobType === "rig") return [run.topologyPathInternal];
   throw new Error("未知 DGX 任务类型");
 }
 
@@ -800,7 +901,7 @@ function completeJob(runId, jobType, stdout) {
         UPDATE runs SET current_stage = 1, status = 'active', qa_status = 'pending',
           job_type = '2d', generation_status = 'succeeded', generation_message = '2D 图片生成完成，等待用户确认',
           generation_progress = 100, generation_current_node = NULL, preview_path = ?, image_path = ?,
-          model_path = NULL, rigged_model_path = NULL, qa_score = NULL, qa_summary = '', qa_metrics = '{}',
+          model_path = NULL, topology_path = NULL, rigged_model_path = NULL, qa_score = NULL, qa_summary = '', qa_metrics = '{}',
           qa_overlay_path = NULL, updated_at = ? WHERE id = ?
       `).run(previewPath, source, now, runId);
       addEvent(runId, "generation_succeeded", 1, "DGX Qwen Image 已返回真实 PNG", now);
@@ -840,18 +941,29 @@ function completeJob(runId, jobType, stdout) {
         UPDATE runs SET current_stage = 3, status = 'active', job_type = '3d',
           generation_status = 'succeeded', generation_message = 'Pixal3D 已返回静态 GLB，等待用户确认',
           generation_progress = 100, generation_current_node = NULL, model_path = ?,
-          rigged_model_path = NULL, updated_at = ? WHERE id = ?
+          topology_path = NULL, rigged_model_path = NULL, updated_at = ? WHERE id = ?
       `).run(modelPath, now, runId);
       addEvent(runId, "model_succeeded", 3, `DGX Pixal3D 已返回真实静态 GLB（${glb.meshCount} mesh）`, now);
+    } else if (jobType === "topology") {
+      const topologyPath = safeOutputPath(lastLine, "file");
+      if (extname(topologyPath).toLowerCase() !== ".glb") throw new Error("自动拓扑服务没有返回 GLB");
+      const glb = inspectGlb(topologyPath);
+      db.prepare(`
+        UPDATE runs SET current_stage = 4, status = 'active', job_type = 'topology',
+          generation_status = 'succeeded', generation_message = 'AutoRemesher 已返回拓扑 GLB，等待用户确认',
+          generation_progress = 100, generation_current_node = NULL, topology_path = ?,
+          rigged_model_path = NULL, updated_at = ? WHERE id = ?
+      `).run(topologyPath, now, runId);
+      addEvent(runId, "topology_succeeded", 4, `DGX AutoRemesher 已返回真实拓扑 GLB（${glb.meshCount} mesh）`, now);
     } else if (jobType === "rig") {
       const riggedPath = findLatestGlb(lastLine);
       const glb = inspectGlb(riggedPath, true);
       db.prepare(`
-        UPDATE runs SET current_stage = 4, status = 'active', job_type = 'rig',
+        UPDATE runs SET current_stage = 5, status = 'active', job_type = 'rig',
           generation_status = 'succeeded', generation_message = 'SkinTokens 已返回带骨骼 GLB，等待用户确认',
           generation_progress = 100, generation_current_node = NULL, rigged_model_path = ?, updated_at = ? WHERE id = ?
       `).run(riggedPath, now, runId);
-      addEvent(runId, "rig_succeeded", 4, `DGX SkinTokens 已返回真实带骨骼 GLB（${glb.skinCount} skin / ${glb.jointCount} joints）`, now);
+      addEvent(runId, "rig_succeeded", 5, `DGX SkinTokens 已返回真实带骨骼 GLB（${glb.skinCount} skin / ${glb.jointCount} joints）`, now);
     }
     db.exec("COMMIT");
   } catch (error) {
@@ -867,12 +979,13 @@ function failJob(runId, jobType, errorMessage) {
   db.prepare(`
     UPDATE runs SET generation_status = 'failed', generation_message = ?, updated_at = ? WHERE id = ?
   `).run(message, now, runId);
-  addEvent(runId, `${jobType}_failed`, { "2d": 1, qa: 2, "3d": 3, rig: 4 }[jobType], `${jobType.toUpperCase()} 任务失败：${message}`, now);
+  addEvent(runId, `${jobType}_failed`, { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType], `${jobType.toUpperCase()} 任务失败：${message}`, now);
 }
 
-function launchJob(run, jobType, processConfig = settingsStore.processConfig(jobType)) {
+function launchJob(run, jobType, processConfig) {
   const usesImageApi = jobType === "2d" && processConfig.mode === "api";
-  const workflowPath = usesImageApi ? null : join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
+  const usesTopologyApi = jobType === "topology";
+  const workflowPath = usesImageApi || usesTopologyApi ? null : join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
   if (workflowPath) writeFileSync(workflowPath, JSON.stringify(processConfig.workflow), "utf8");
   const sourceImage = run.pipelineType === "image_to_model" ? run.sourceImagePathInternal : run.imagePathInternal;
   const args = usesImageApi
@@ -885,7 +998,14 @@ function launchJob(run, jobType, processConfig = settingsStore.processConfig(job
         ...(sourceImage && existsSync(sourceImage) ? ["--source-image", sourceImage] : []),
         ...(run.pipelineType === "image_to_model" ? ["--tpose-output"] : []),
       ]
-    : [
+    : usesTopologyApi
+      ? [
+          scripts.topology,
+          ...jobArguments(run, jobType),
+          "--service-url", processConfig.url,
+          "--target-quads", String(processConfig.targetQuads),
+        ]
+      : [
         scripts[jobType],
         ...jobArguments(run, jobType),
         "--comfyui-url", processConfig.url,
@@ -918,7 +1038,11 @@ function launchJob(run, jobType, processConfig = settingsStore.processConfig(job
   });
   child.stderr.on("data", (chunk) => {
     stderr = `${stderr}${chunk.toString("utf8")}`.slice(-100_000);
-    if (!usesImageApi && !activeJob.socket) {
+    if (usesTopologyApi) {
+      const progressMatches = [...stderr.matchAll(/\[topology\]\s+progress=(\d+)\s+message=([^\r\n]+)/g)];
+      const latest = progressMatches.at(-1);
+      if (latest) persistJobProgress(run.id, jobType, Number(latest[1]), `自动拓扑：${latest[2].replaceAll("_", " ")}`);
+    } else if (!usesImageApi && !activeJob.socket) {
       const match = stderr.match(new RegExp(`\\[${comfyKind}\\] submitted prompt_id=(\\S+) client_id=(\\S+)`));
       if (match) {
         const [, promptId, clientId] = match;
@@ -979,13 +1103,24 @@ function startJob(runId, jobType) {
   if (jobType === "2d" && run.currentStage !== 1 && !(run.currentStage === 2 && run.qaStatus === "failed")) throw new Error("当前阶段不能生成 2D 概念图");
   if (jobType === "qa" && run.currentStage !== 2) throw new Error("请先确认 2D 阶段完成");
   if (jobType === "3d" && run.currentStage !== 3) throw new Error("请先确认 T-Pose 检查完成");
-  if (jobType === "rig" && run.currentStage !== 4) throw new Error("请先确认 3D 模型生成完成");
+  if (jobType === "topology" && run.currentStage !== 4) throw new Error("请先确认 3D 模型生成完成");
+  if (jobType === "rig" && run.currentStage !== 5) throw new Error("请先确认自动拓扑完成");
   if (jobType === "2d" && !run.positivePrompt.trim()) throw new Error("请先填写正向提示词");
   if (jobType === "qa" && (!run.imagePathInternal || !existsSync(run.imagePathInternal))) throw new Error("没有可供 SDPose 检查的 2D 图片");
   if (jobType === "3d" && run.qaStatus !== "passed") throw new Error("SDPose 自动检查未通过，不能生成 3D");
   if (jobType === "3d" && (!run.imagePathInternal || !existsSync(run.imagePathInternal))) throw new Error("合格的 2D 图片不存在");
-  if (jobType === "rig" && (!run.modelPathInternal || !existsSync(run.modelPathInternal))) throw new Error("静态 GLB 不存在，不能绑骨");
-  let processConfig = settingsStore.processConfig(jobType);
+  if (jobType === "topology" && (!run.modelPathInternal || !existsSync(run.modelPathInternal))) throw new Error("静态 GLB 不存在，不能执行自动拓扑");
+  if (jobType === "rig" && (!run.topologyPathInternal || !existsSync(run.topologyPathInternal))) throw new Error("拓扑 GLB 不存在，不能绑骨");
+  let processConfig = jobType === "topology"
+    ? {
+        mode: "api",
+        url: process.env.TOPOLOGY_SERVICE_URL?.trim() || "",
+        token: process.env.TOPOLOGY_SERVICE_TOKEN?.trim() || "",
+        targetQuads: Number(process.env.TOPOLOGY_TARGET_QUADS || 50_000),
+      }
+    : settingsStore.processConfig(jobType);
+  if (jobType === "topology" && !processConfig.url) throw new Error("TOPOLOGY_SERVICE_URL 未配置，无法连接 DGX 自动拓扑服务");
+  if (jobType === "topology" && (!Number.isInteger(processConfig.targetQuads) || processConfig.targetQuads < 1_000 || processConfig.targetQuads > 1_000_000)) throw new Error("TOPOLOGY_TARGET_QUADS 必须在 1,000 到 1,000,000 之间");
   if (jobType === "2d" && run.pipelineType === "image_to_model") {
     processConfig = { ...processConfig, mode: "api", api: settingsStore.imageConfig("image_to_model") };
     if (!run.sourceImagePathInternal || !existsSync(run.sourceImagePathInternal)) {
@@ -994,11 +1129,12 @@ function startJob(runId, jobType) {
   }
   if (jobType === "2d" && processConfig.mode === "api" && !processConfig.api.apiKey) throw new Error("2D API Key 未配置，请在请求设置中填写或配置 Agent API Key");
 
-  const stage = { "2d": 1, qa: 2, "3d": 3, rig: 4 }[jobType];
+  const stage = { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType];
   const messages = {
     "2d": processConfig.mode === "api" ? `正在调用阶跃 ${processConfig.api.model} 生成 2D 概念图` : "正在调用 DGX Qwen Image 生成 2D 概念图",
     qa: "正在调用 DGX SDPose 自动检查 T-Pose",
     "3d": "正在调用 DGX Pixal3D 生成静态 GLB",
+    topology: "正在调用 DGX AutoRemesher 执行自动拓扑与纹理回烘",
     rig: "正在调用 DGX SkinTokens 自动绑骨",
   };
   const now = new Date().toISOString();
@@ -1007,15 +1143,17 @@ function startJob(runId, jobType) {
     if (jobType === "2d") {
       db.prepare(`
         UPDATE runs SET current_stage = 1, status = 'active', qa_status = 'pending',
-          model_path = NULL, rigged_model_path = NULL, qa_score = NULL, qa_summary = '',
+          model_path = NULL, topology_path = NULL, rigged_model_path = NULL, qa_score = NULL, qa_summary = '',
           qa_metrics = '{}', qa_overlay_path = NULL WHERE id = ?
       `).run(runId);
     } else if (jobType === "qa") {
       db.prepare("UPDATE runs SET current_stage = 2, status = 'active', qa_status = 'pending' WHERE id = ?").run(runId);
     } else if (jobType === "3d") {
-      db.prepare("UPDATE runs SET current_stage = 3, status = 'active', model_path = NULL, rigged_model_path = NULL WHERE id = ?").run(runId);
+      db.prepare("UPDATE runs SET current_stage = 3, status = 'active', model_path = NULL, topology_path = NULL, rigged_model_path = NULL WHERE id = ?").run(runId);
+    } else if (jobType === "topology") {
+      db.prepare("UPDATE runs SET current_stage = 4, status = 'active', topology_path = NULL, rigged_model_path = NULL WHERE id = ?").run(runId);
     } else if (jobType === "rig") {
-      db.prepare("UPDATE runs SET current_stage = 4, status = 'active', rigged_model_path = NULL WHERE id = ?").run(runId);
+      db.prepare("UPDATE runs SET current_stage = 5, status = 'active', rigged_model_path = NULL WHERE id = ?").run(runId);
     }
     db.prepare(`
       UPDATE runs SET job_type = ?, generation_status = 'running', generation_message = ?,
@@ -1815,6 +1953,10 @@ const server = createServer(async (req, res) => {
         json(res, 202, startJob(id, "3d"));
         return;
       }
+      if (req.method === "POST" && parts[3] === "retopologize") {
+        json(res, 202, startJob(id, "topology"));
+        return;
+      }
       if (req.method === "POST" && parts[3] === "rig") {
         json(res, 202, startJob(id, "rig"));
         return;
@@ -1833,6 +1975,7 @@ const server = createServer(async (req, res) => {
           source: existing.sourceImagePathInternal,
           image: existing.imagePathInternal,
           model: existing.modelPathInternal,
+          topology: existing.topologyPathInternal,
           rigged: existing.riggedModelPathInternal,
         };
         if (!(parts[4] in paths)) throw new Error("未知产物类型");
@@ -1846,7 +1989,7 @@ const server = createServer(async (req, res) => {
           UPDATE runs SET current_stage = 0, status = 'active', qa_status = 'pending',
             job_type = 'none', generation_status = 'idle', generation_message = '', generation_progress = 0,
             generation_prompt_id = NULL, generation_current_node = NULL, preview_path = NULL,
-            image_path = NULL, model_path = NULL, rigged_model_path = NULL,
+            image_path = NULL, model_path = NULL, topology_path = NULL, rigged_model_path = NULL,
             qa_score = NULL, qa_summary = '', qa_metrics = '{}', qa_overlay_path = NULL, updated_at = ? WHERE id = ?
         `).run(now, id);
         addEvent(id, "reset", 0, "流程和产物引用已重置", now);

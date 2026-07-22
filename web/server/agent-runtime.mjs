@@ -5,7 +5,7 @@ import { extname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { AGENT_CONTEXT_WINDOW, contextStats } from "./conversation-context.mjs";
 
-const STAGE_NAMES = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动绑骨", "资产导出"];
+const STAGE_NAMES = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动拓扑", "自动绑骨", "资产导出"];
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_TOOL_CALLS = 10;
 const MAX_TURNS = 10;
@@ -14,8 +14,9 @@ const PIPELINE_TARGETS = {
   concept_image: { stage: 1, label: "2D 概念图" },
   validated_tpose: { stage: 2, label: "通过质检的 T-Pose" },
   model: { stage: 3, label: "静态 3D 模型" },
-  rigged_model: { stage: 4, label: "带骨骼 3D 模型" },
-  export: { stage: 5, label: "可导出的最终资产" },
+  retopologized_model: { stage: 4, label: "完成自动拓扑的 3D 模型" },
+  rigged_model: { stage: 5, label: "带骨骼 3D 模型" },
+  export: { stage: 6, label: "可导出的最终资产" },
 };
 const REQUIRED_TPOSE_CONSTRAINTS = [
   { label: "单人主体", pattern: /单人|1\s*个|one\s+(person|character|subject)/i },
@@ -481,7 +482,7 @@ export function createAssetAgentRuntime({
     CREATE TABLE IF NOT EXISTS agent_workflow_plans (
       run_id TEXT PRIMARY KEY,
       target TEXT NOT NULL,
-      target_stage INTEGER NOT NULL CHECK(target_stage BETWEEN 1 AND 5),
+      target_stage INTEGER NOT NULL CHECK(target_stage BETWEEN 1 AND 6),
       status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'blocked', 'failed', 'cancelled')),
       message TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
@@ -489,6 +490,38 @@ export function createAssetAgentRuntime({
       FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
     )
   `);
+  const workflowPlanTable = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_workflow_plans'").get();
+  if (/target_stage\s+BETWEEN\s+1\s+AND\s+5/i.test(workflowPlanTable?.sql || "")) {
+    db.exec("PRAGMA foreign_keys = OFF");
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      db.exec(`
+        CREATE TABLE agent_workflow_plans_topology_v2 (
+          run_id TEXT PRIMARY KEY,
+          target TEXT NOT NULL,
+          target_stage INTEGER NOT NULL CHECK(target_stage BETWEEN 1 AND 6),
+          status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'blocked', 'failed', 'cancelled')),
+          message TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
+        );
+        INSERT INTO agent_workflow_plans_topology_v2
+          (run_id, target, target_stage, status, message, created_at, updated_at)
+        SELECT run_id, target, CASE WHEN target_stage >= 4 THEN target_stage + 1 ELSE target_stage END,
+          status, message, created_at, updated_at
+        FROM agent_workflow_plans;
+        DROP TABLE agent_workflow_plans;
+        ALTER TABLE agent_workflow_plans_topology_v2 RENAME TO agent_workflow_plans;
+      `);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    } finally {
+      db.exec("PRAGMA foreign_keys = ON");
+    }
+  }
   db.prepare(`
     UPDATE agent_workflow_plans
     SET status = 'failed', message = '本地服务重启，自动流水线已中断，请重新下达目标', updated_at = ?
@@ -964,13 +997,30 @@ export function createAssetAgentRuntime({
           addMessage(runId, "assistant", "自动流水线已完成：静态 3D 模型已通过结构和资产质量检查。");
           return getWorkflowPlan(runId);
         }
-        advanceWorkflow(runId, "3D 模型通过结构与 Asset Inspector 检查，Agent 自动进入绑骨");
+        advanceWorkflow(runId, "3D 模型通过结构与 Asset Inspector 检查，Agent 自动进入拓扑处理");
+        detail = runStageJob(runId, "retopologize", "Agent 流水线自动启动 AutoRemesher 拓扑处理");
+        updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动进入绑骨前确认`);
+        return getWorkflowPlan(runId);
+      }
+
+      if (run.currentStage === 4) {
+        if (!run.assets.topologyReady) {
+          detail = runStageJob(runId, "retopologize", "Agent 流水线自动启动 AutoRemesher 拓扑处理");
+          updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动进入绑骨前确认`);
+          return getWorkflowPlan(runId);
+        }
+        if (plan.targetStage === 4) {
+          updateWorkflowPlan(runId, "completed", "自动拓扑 GLB 已生成并通过结构硬门禁");
+          addMessage(runId, "assistant", "自动流水线已完成：AutoRemesher 拓扑模型已生成。下游绑骨将使用该拓扑 GLB。");
+          return getWorkflowPlan(runId);
+        }
+        advanceWorkflow(runId, "自动拓扑产物通过 GLB 结构检查，Agent 自动进入绑骨");
         detail = runStageJob(runId, "rig", "Agent 流水线自动启动绑骨");
         updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动核对骨骼`);
         return getWorkflowPlan(runId);
       }
 
-      if (run.currentStage === 4) {
+      if (run.currentStage === 5) {
         if (!run.assets.riggedReady) {
           detail = runStageJob(runId, "rig", "Agent 流水线自动启动绑骨");
           updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；完成后将自动核对骨骼`);
@@ -981,11 +1031,11 @@ export function createAssetAgentRuntime({
         if (!riggingQa) {
           try {
             const report = await reviewRiggingQa(runId, sourceKey);
-            addRunEvent(runId, "rigging_qa_completed", 4, `Rigging QA：${report.summary}`);
+            addRunEvent(runId, "rigging_qa_completed", 5, `Rigging QA：${report.summary}`);
             riggingQa = { status: "succeeded", report, errorMessage: "" };
           } catch (error) {
             const message = error instanceof Error ? error.message : "Rigging QA 调用失败";
-            addRunEvent(runId, "rigging_qa_failed", 4, `Rigging QA 检查失败：${message.slice(0, 500)}`);
+            addRunEvent(runId, "rigging_qa_failed", 5, `Rigging QA 检查失败：${message.slice(0, 500)}`);
             updateWorkflowPlan(runId, "blocked", `Rigging QA 未能完成：${message}`);
             addMessage(runId, "assistant", `自动流水线已暂停：绑骨检查未能完成。${message}`);
             return getWorkflowPlan(runId);
@@ -997,7 +1047,7 @@ export function createAssetAgentRuntime({
           addMessage(runId, "assistant", `自动流水线已暂停：绑骨检查未放行。${reason}`);
           return getWorkflowPlan(runId);
         }
-        if (plan.targetStage === 4) {
+        if (plan.targetStage === 5) {
           updateWorkflowPlan(runId, "completed", "带骨骼 3D 模型已通过 skin/joints 硬门禁与 Rigging QA 检查");
           addMessage(runId, "assistant", "自动流水线已完成：带骨骼 3D 模型已通过骨骼结构检查。");
           return getWorkflowPlan(runId);
@@ -1006,11 +1056,11 @@ export function createAssetAgentRuntime({
         if (!exportReview) {
           try {
             const report = await reviewExportSpecialist(runId, sourceKey);
-            addRunEvent(runId, "export_specialist_completed", 4, `Export Specialist：${report.summary}`);
+            addRunEvent(runId, "export_specialist_completed", 5, `Export Specialist：${report.summary}`);
             exportReview = { status: "succeeded", report, errorMessage: "" };
           } catch (error) {
             const message = error instanceof Error ? error.message : "Export Specialist 调用失败";
-            addRunEvent(runId, "export_specialist_failed", 4, `Export Specialist 检查失败：${message.slice(0, 500)}`);
+            addRunEvent(runId, "export_specialist_failed", 5, `Export Specialist 检查失败：${message.slice(0, 500)}`);
             updateWorkflowPlan(runId, "blocked", `Export Specialist 未能完成：${message}`);
             addMessage(runId, "assistant", `自动流水线已暂停：导出检查未能完成。${message}`);
             return getWorkflowPlan(runId);
@@ -1093,9 +1143,9 @@ export function createAssetAgentRuntime({
       } else if (jobType === "3d") {
         await runRole("asset_inspector", 3, () => reviewAssetInspector(runId, sourceKey));
       } else if (jobType === "rig") {
-        await runRole("rigging_qa", 4, () => reviewRiggingQa(runId, sourceKey));
-        if (getWorkflowPlan(runId)?.targetStage === 5) {
-          await runRole("export_specialist", 4, () => reviewExportSpecialist(runId, sourceKey));
+        await runRole("rigging_qa", 5, () => reviewRiggingQa(runId, sourceKey));
+        if (getWorkflowPlan(runId)?.targetStage === 6) {
+          await runRole("export_specialist", 5, () => reviewExportSpecialist(runId, sourceKey));
         }
       }
     }
@@ -1325,6 +1375,7 @@ export function createAssetAgentRuntime({
             Type.Literal("concept_image"),
             Type.Literal("validated_tpose"),
             Type.Literal("model"),
+            Type.Literal("retopologized_model"),
             Type.Literal("rigged_model"),
             Type.Literal("export"),
           ]),
@@ -1359,7 +1410,7 @@ export function createAssetAgentRuntime({
         label: "回退工作流",
         description: "回退到指定的更早阶段，并清除该阶段之后的产物引用。",
         parameters: Type.Object({
-          targetStage: Type.Integer({ minimum: 0, maximum: 4 }),
+          targetStage: Type.Integer({ minimum: 0, maximum: 5 }),
           reason: Type.String({ minLength: 1, maxLength: 240 }),
         }),
         executionMode: "sequential",
@@ -1374,12 +1425,13 @@ export function createAssetAgentRuntime({
       {
         name: "run_stage_job",
         label: "执行阶段任务",
-        description: "启动当前阶段允许的 2D 生成、T-Pose 检查、3D 生成或自动绑骨任务。",
+        description: "启动当前阶段允许的 2D 生成、T-Pose 检查、3D 生成、自动拓扑或自动绑骨任务。",
         parameters: Type.Object({
           action: Type.Union([
             Type.Literal("generate_2d"),
             Type.Literal("check_tpose"),
             Type.Literal("generate_3d"),
+            Type.Literal("retopologize"),
             Type.Literal("rig"),
           ]),
           reason: Type.String({ minLength: 1, maxLength: 240 }),
@@ -1387,7 +1439,7 @@ export function createAssetAgentRuntime({
         executionMode: "sequential",
         execute: async (_toolCallId, params) => {
           if (execution.jobStarted) throw new Error("本次 Agent 对话已经启动过一个 GPU Job，请等待任务完成");
-          const jobLabels = { generate_2d: "生成 2D / T-Pose 图", check_tpose: "运行 T-Pose 质检", generate_3d: "生成静态 3D 模型", rig: "运行自动绑骨" };
+          const jobLabels = { generate_2d: "生成 2D / T-Pose 图", check_tpose: "运行 T-Pose 质检", generate_3d: "生成静态 3D 模型", retopologize: "运行自动拓扑", rig: "运行自动绑骨" };
           const pending = approvalFor("run_stage_job", jobLabels[params.action] || "执行阶段生成任务", params.reason, params);
           if (pending) return pending;
           const detail = runStageJob(runId, params.action, params.reason);

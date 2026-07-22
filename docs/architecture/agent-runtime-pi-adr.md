@@ -1,5 +1,6 @@
 # Agent Runtime 技术决策：采用 Pi
 
+> 分类：架构与技术决策  
 > 状态：已采纳，Stepfun 兼容性 Spike 已通过
 > 决策日期：2026-07-20  
 > 适用范围：Asset Agent 的对话、工具调用、流式事件与长期 Runtime 演进  
@@ -390,7 +391,7 @@ get_job_status
 - [Hermes Programmatic Integration](https://hermes-agent.nousresearch.com/docs/developer-guide/programmatic-integration)
 - [Claude Agent SDK Overview](https://platform.claude.com/docs/en/agent-sdk/overview)
 - [OpenAI Codex SDK](https://developers.openai.com/codex/sdk)
-- [当前工程基线](./current-project-baseline.md)
+- [当前工程基线](../getting-started/current-project-baseline.md)
 - [技术实现指南](./technical-implementation-guide.md)
 
 Agent 框架仍在快速演进。版本、许可证和服务条款必须在正式发布或商业分发前再次复核，不能只依赖本 ADR 的历史快照。
