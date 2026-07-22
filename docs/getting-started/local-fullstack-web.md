@@ -52,6 +52,23 @@ web/data/runtime-err.log
 
 当前 DGX AutoRemesher 服务运行在受控的 Tailscale 私网中，不要求 Bearer Token。默认服务地址为 `http://100.120.236.113:8190`。
 
+根据 Windows 的网络方式选择服务地址：
+
+| 网络方式 | 拓扑 API 服务地址 |
+| --- | --- |
+| Windows 可以直接访问 DGX Tailscale | `http://100.120.236.113:8190` |
+| 公司电脑通过 ECS SSH 隧道 | `http://127.0.0.1:8190` |
+
+公司电脑不能运行 Tailscale 时，先在独立的 Windows PowerShell 窗口中建立转发并保持窗口运行：
+
+```powershell
+ssh -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N -L 8190:100.120.236.113:8190 root@<ECS-PUBLIC-IP>
+```
+
+然后执行 `curl.exe --noproxy "*" --fail-with-body http://127.0.0.1:8190/healthz`。返回 `ready: true` 后，再把设置面板中的服务地址保存为 `http://127.0.0.1:8190`。
+
+不要配置 Bearer Token。如果拓扑上传在 `uploading_glb` 阶段报告 Windows 错误 `10053`，同时 DGX 日志出现 `HTTP 401`，说明 DGX 仍在运行旧版鉴权服务，需要更新 API 服务；这不是普通的 SSH 隧道故障。
+
 `web/.env.local` 中的 `TOPOLOGY_*` 变量仍可作为首次默认值。设置面板保存过的值优先于环境变量，因此日常切换 DGX 或其他兼容 API 时无需修改文件和重启后端。
 
 ## 3. 严格状态机

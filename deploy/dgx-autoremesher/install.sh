@@ -73,6 +73,15 @@ if [[ ! -f "${SERVICE_ENV}" ]]; then
 fi
 # Remove the legacy token setting when upgrading an existing installation.
 sed -i '/^TOPOLOGY_SERVICE_TOKEN=/d' "${SERVICE_ENV}"
+# Add safe preprocessing defaults when upgrading an older service environment.
+grep -q '^TOPOLOGY_PREPROCESS_MAX_FACES=' "${SERVICE_ENV}" || \
+  printf '\nTOPOLOGY_PREPROCESS_MAX_FACES=150000\n' >> "${SERVICE_ENV}"
+grep -q '^TOPOLOGY_PREPROCESS_MERGE_DISTANCE_RATIO=' "${SERVICE_ENV}" || \
+  printf 'TOPOLOGY_PREPROCESS_MERGE_DISTANCE_RATIO=0.0000001\n' >> "${SERVICE_ENV}"
+grep -q '^TOPOLOGY_PREPROCESS_VOXEL_RESOLUTION=' "${SERVICE_ENV}" || \
+  printf 'TOPOLOGY_PREPROCESS_VOXEL_RESOLUTION=256\n' >> "${SERVICE_ENV}"
+grep -q '^TOPOLOGY_ADAPTIVITY=' "${SERVICE_ENV}" || \
+  printf 'TOPOLOGY_ADAPTIVITY=0.0\n' >> "${SERVICE_ENV}"
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}.service"
 systemctl restart "${SERVICE_NAME}.service"
@@ -82,6 +91,19 @@ HEALTH_PORT="$(awk -F= '$1 == "TOPOLOGY_PORT" { print $2 }' "${SERVICE_ENV}" | t
 [[ -n "${HEALTH_HOST}" ]] || HEALTH_HOST="127.0.0.1"
 [[ "${HEALTH_HOST}" == "0.0.0.0" ]] && HEALTH_HOST="127.0.0.1"
 [[ -n "${HEALTH_PORT}" ]] || HEALTH_PORT="8190"
-curl --fail --silent --show-error "http://${HEALTH_HOST}:${HEALTH_PORT}/healthz"
+HEALTH_URL="http://${HEALTH_HOST}:${HEALTH_PORT}/healthz"
+HEALTHY=false
+for _attempt in $(seq 1 30); do
+  if curl --noproxy '*' --fail --silent --show-error "${HEALTH_URL}"; then
+    HEALTHY=true
+    break
+  fi
+  sleep 1
+done
+if [[ "${HEALTHY}" != true ]]; then
+  echo "AutoRemesher API did not become healthy within 30 seconds: ${HEALTH_URL}" >&2
+  journalctl -u "${SERVICE_NAME}.service" -n 50 --no-pager >&2 || true
+  exit 1
+fi
 printf '\nAutoRemesher API installed as %s.service.\n' "${SERVICE_NAME}"
 printf 'Next: allow trusted private-network clients to reach TCP %s and configure them with this API URL.\n' "${HEALTH_PORT}"

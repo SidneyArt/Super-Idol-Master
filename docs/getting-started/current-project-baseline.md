@@ -31,7 +31,7 @@
 
 ## 3. 已验证的真实结果
 
-原有 Qwen → SDPose → Pixal3D → SkinTokens 全链路已经真实跑通。AutoRemesher 已在 DGX Spark AArch64 上完成编译、独立 API 部署和合成立方体 GLB 端到端冒烟测试；真实角色资产的连续验收仍待完成。原链路固定验证任务：
+原有 Qwen → SDPose → Pixal3D → SkinTokens 全链路已经真实跑通。AutoRemesher 已在 DGX Spark AArch64 上完成编译、独立 API 部署、合成立方体冒烟测试，以及一次真实 Pixal3D 角色 GLB 的本机和正式 HTTP API 回归；真实角色资产的连续三次 API 验收仍待完成。原链路固定验证任务：
 
 ```text
 run_id: 6251e426-c2a2-47c7-9a3c-4607555aba13
@@ -51,7 +51,19 @@ POST /v1/remesh?target_quads=1000: HTTP 200
 Blender 复验: 1,826 vertices / 1,004 faces
 ```
 
-服务通过 Tailscale 私网直接访问，不要求 Bearer Token。正式提交前仍需使用实际生成的角色 GLB 连续验证拓扑质量、UV 和基础色回烘结果。
+同日使用“美式卡通女忍者”的真实 Pixal3D GLB 复现并修复了原生堆损坏。修复后的 DGX 本机完整回归结果：
+
+```text
+输入 GLB: 38,256,380 bytes
+输入网格: 696,639 faces
+体素预处理: 64,424 faces，resolution=256
+AutoRemesher: 40,589 quads / 729 non-quads，12.658 seconds
+输出 GLB: 8,769,252 bytes
+Blender 复验: 1 mesh / 165,520 vertices / 82,952 faces / 1 material / 1 image
+正式 HTTP API: HTTP 200 / 23 seconds / 8,769,252 bytes
+```
+
+服务不要求 Bearer Token。Windows 可以通过 Tailscale 私网直接访问，也已验证可经 ECS SSH 隧道使用本机 `127.0.0.1:8190` 调用。正式提交前仍需在升级后的 HTTP API 上连续三次验证真实角色的拓扑质量、UV、基础色回烘和后续绑骨结果。
 
 完整证据见 [DGX / ComfyUI 全链路对应关系](../deployment/dgx-pipeline-integration.md)。
 

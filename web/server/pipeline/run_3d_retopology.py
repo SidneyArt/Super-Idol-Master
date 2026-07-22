@@ -34,6 +34,16 @@ def validate_glb(path: Path) -> None:
             raise RuntimeError("Topology service did not return a GLB")
 
 
+def response_error_detail(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+        return payload["error"][:2_000].strip()
+    return response.text[:2_000].strip()
+
+
 def run_retopology(
     mesh: Path,
     service_url: str,
@@ -69,7 +79,7 @@ def run_retopology(
             stream=True,
         )
     if not response.ok:
-        detail = response.text[:2_000].strip()
+        detail = response_error_detail(response)
         raise RuntimeError(f"Topology service returned HTTP {response.status_code}: {detail}")
 
     print("[topology] progress=85 message=downloading_glb", file=sys.stderr, flush=True)

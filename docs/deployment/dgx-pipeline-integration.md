@@ -2,7 +2,7 @@
 
 > 分类：部署与远程环境
 
-更新日期：2026-07-18
+更新日期：2026-07-22
 
 ## 1. 一一对应表
 
@@ -15,7 +15,9 @@
 | RIG | `rig` | `run_3d_skinning.py` | `3D_Skin_SkinTokens.json` | 使用拓扑 GLB 作为输入，SkinTokens GLB 已下载 |
 | OUT | 无推理 | Node 下载 API | 本机产物存储 | HTTP 字节数与本地文件一致 |
 
-AutoRemesher 不运行在 ComfyUI 中，而是 DGX 上的独立 HTTP 服务。当前通过 `http://100.120.236.113:8190` 在 Tailscale 私网中调用，不要求 Bearer Token；网站设置面板只需配置服务地址、目标四边面数和请求超时。
+AutoRemesher 不运行在 ComfyUI 中，而是 DGX 上的独立 HTTP 服务。服务不要求 Bearer Token；Windows 可以通过 `http://100.120.236.113:8190` 在 Tailscale 私网中直连，也可以经 ECS SSH 隧道使用 `http://127.0.0.1:8190`。网站设置面板只需配置服务地址、目标四边面数和请求超时。
+
+拓扑服务 `1.1.0` 会先在临时副本上清理并体素重建生成网格，再调用 AutoRemesher；默认使用体素分辨率 `256`、最多 150,000 个输入面和 `adaptivity=0.0`。原始 GLB 保留不变，并继续作为基础色纹理回烘来源。这样可以避免重复半边、孔洞和非流形高密度网格触发 AutoRemesher 原生堆损坏，同时让输出数量尽量接近请求的目标四边面数。
 
 ## 2. 自动 T-Pose 检查
 

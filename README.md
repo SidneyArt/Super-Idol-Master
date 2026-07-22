@@ -120,7 +120,7 @@ DGX ComfyUI：Qwen Image、SDPose、Pixal3D、SkinTokens
 DGX 独立 API：AutoRemesher + Blender
 ```
 
-Windows 后端通过 HTTP、WebSocket 或独立拓扑 API 调用 DGX，并把生成结果下载到本地。AutoRemesher 服务通过受控的 Tailscale 私网直接调用，不要求 Bearer Token；也可以替换成其他兼容 `/v1/remesh` 协议的 API。
+Windows 后端通过 HTTP、WebSocket 或独立拓扑 API 调用 DGX，并把生成结果下载到本地。AutoRemesher 服务不要求 Bearer Token：Windows 可以通过受控的 Tailscale 私网直接调用；公司电脑不能运行 Tailscale 时，也可以经 ECS SSH 隧道把 DGX 的 `8190` 转发到本机 `127.0.0.1:8190`。该服务还可以替换成其他兼容 `/v1/remesh` 协议的 API。
 
 ## 工作流程
 
@@ -242,7 +242,7 @@ npm run local
 - 前端：`http://localhost:3100`
 - API 健康检查：`http://127.0.0.1:8787/api/health`
 - DGX / ComfyUI：`http://100.120.236.113:8188`
-- DGX / AutoRemesher：`http://100.120.236.113:8190`
+- DGX / AutoRemesher：Tailscale 直连使用 `http://100.120.236.113:8190`；ECS SSH 隧道使用 `http://127.0.0.1:8190`
 
 ## 项目结构
 

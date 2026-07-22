@@ -17,17 +17,67 @@ from urllib.parse import parse_qs, urlparse
 
 HOST = os.environ.get("TOPOLOGY_HOST", "0.0.0.0")
 PORT = int(os.environ.get("TOPOLOGY_PORT", "8190"))
+SERVICE_VERSION = "1.1.0"
 AUTOREMESHER = os.environ.get("AUTOREMESHER_BIN", "/opt/autoremesher/autoremesher")
 BLENDER = os.environ.get("BLENDER_BIN", "/usr/bin/blender")
 BRIDGE = Path(os.environ.get("TOPOLOGY_BLENDER_BRIDGE", "/opt/autoremesher-api/blender_bridge.py"))
 MAX_INPUT_BYTES = int(os.environ.get("TOPOLOGY_MAX_INPUT_BYTES", str(512 * 1024 * 1024)))
 TIMEOUT_SECONDS = int(os.environ.get("TOPOLOGY_JOB_TIMEOUT_SECONDS", "3600"))
 TEXTURE_SIZE = int(os.environ.get("TOPOLOGY_TEXTURE_SIZE", "2048"))
+PREPROCESS_MAX_FACES = int(os.environ.get("TOPOLOGY_PREPROCESS_MAX_FACES", "150000"))
+PREPROCESS_MERGE_DISTANCE_RATIO = float(
+    os.environ.get("TOPOLOGY_PREPROCESS_MERGE_DISTANCE_RATIO", "0.0000001")
+)
+PREPROCESS_VOXEL_RESOLUTION = int(
+    os.environ.get("TOPOLOGY_PREPROCESS_VOXEL_RESOLUTION", "256")
+)
 WORK_ROOT = Path(os.environ.get("TOPOLOGY_WORK_ROOT", "/var/tmp/autoremesher-api"))
 JOB_LOCK = threading.Semaphore(max(1, int(os.environ.get("TOPOLOGY_MAX_CONCURRENCY", "1"))))
 
 
-def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:
+class CommandFailure(RuntimeError):
+    def __init__(self, stage: str, returncode: int, output: str):
+        self.stage = stage
+        self.returncode = returncode
+        self.output = output
+        super().__init__(describe_command_failure(stage, returncode, output))
+
+
+def useful_command_output(output: str, limit: int = 5000) -> str:
+    ignored_fragments = (
+        "QComboBox", "QCheckBox", "QProgressBar", "QPushButton", "QLabel", "QSlider",
+        "selection-background-color", "QString::arg:", "Found repeated halfedge:",
+    )
+    useful_lines = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or any(fragment in line for fragment in ignored_fragments):
+            continue
+        if line.endswith("% done.") and line[:-7].isdigit():
+            continue
+        useful_lines.append(line)
+    text = "\n".join(useful_lines)
+    return text[-limit:] if text else "no useful process output"
+
+
+def describe_command_failure(stage: str, returncode: int, output: str) -> str:
+    normalized = output.lower()
+    if returncode in (-6, 134) or "double free or corruption" in normalized:
+        return (
+            f"{stage} failed: AutoRemesher native process crashed with heap corruption "
+            f"(exit 134). The input copy was already voxel-remeshed and limited to "
+            f"{PREPROCESS_MAX_FACES:,} faces; lower TOPOLOGY_PREPROCESS_MAX_FACES "
+            "and retry.\n" + useful_command_output(output)
+        )
+    return f"{stage} failed (exit {returncode}).\n{useful_command_output(output)}"
+
+
+def run(
+    command: list[str],
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    stage: str = "command",
+) -> str:
     result = subprocess.run(
         command,
         cwd=cwd,
@@ -39,7 +89,8 @@ def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> Non
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"Command failed ({result.returncode}): {' '.join(command[:3])}\n{result.stdout[-8000:]}")
+        raise CommandFailure(stage, result.returncode, result.stdout)
+    return result.stdout
 
 
 def validate_glb(path: Path) -> None:
@@ -56,10 +107,16 @@ def remesh(work_dir: Path, input_glb: Path, target_quads: int) -> Path:
     output_glb = work_dir / "retopologized.glb"
     report = work_dir / "autoremesher-report.txt"
 
-    run([
+    export_log = run([
         BLENDER, "--background", "--python", str(BRIDGE), "--",
         "export-obj", "--input", str(input_glb), "--output", str(input_obj),
-    ], work_dir)
+        "--max-faces", str(PREPROCESS_MAX_FACES),
+        "--merge-distance-ratio", str(PREPROCESS_MERGE_DISTANCE_RATIO),
+        "--voxel-resolution", str(PREPROCESS_VOXEL_RESOLUTION),
+    ], work_dir, stage="mesh preprocessing")
+    for line in export_log.splitlines():
+        if line.startswith("[topology] preprocess "):
+            print(line, flush=True)
 
     env = {**os.environ, "QT_QPA_PLATFORM": os.environ.get("QT_QPA_PLATFORM", "offscreen")}
     run([
@@ -71,8 +128,8 @@ def remesh(work_dir: Path, input_glb: Path, target_quads: int) -> Path:
         "--edge-scaling", os.environ.get("TOPOLOGY_EDGE_SCALING", "1.0"),
         "--sharp-edge", os.environ.get("TOPOLOGY_SHARP_EDGE", "90.0"),
         "--smooth-normal", os.environ.get("TOPOLOGY_SMOOTH_NORMAL", "0.0"),
-        "--adaptivity", os.environ.get("TOPOLOGY_ADAPTIVITY", "1.0"),
-    ], work_dir, env)
+        "--adaptivity", os.environ.get("TOPOLOGY_ADAPTIVITY", "0.0"),
+    ], work_dir, env, stage="automatic retopology")
     if not output_obj.is_file() or output_obj.stat().st_size == 0:
         raise RuntimeError("AutoRemesher did not produce an OBJ")
 
@@ -80,13 +137,20 @@ def remesh(work_dir: Path, input_glb: Path, target_quads: int) -> Path:
         BLENDER, "--background", "--python", str(BRIDGE), "--",
         "rebuild-glb", "--source", str(input_glb), "--topology", str(output_obj),
         "--output", str(output_glb), "--texture-size", str(TEXTURE_SIZE),
-    ], work_dir)
+    ], work_dir, stage="texture rebake")
     validate_glb(output_glb)
+    inspect_log = run([
+        BLENDER, "--background", "--python", str(BRIDGE), "--",
+        "inspect-glb", "--input", str(output_glb),
+    ], work_dir, stage="GLB validation")
+    for line in inspect_log.splitlines():
+        if line.startswith("[topology] inspect "):
+            print(line, flush=True)
     return output_glb
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "AutoRemesherAPI/1.0"
+    server_version = f"AutoRemesherAPI/{SERVICE_VERSION}"
 
     def send_json(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -101,8 +165,11 @@ class Handler(BaseHTTPRequestHandler):
             ready = all(Path(item).is_file() for item in (AUTOREMESHER, BLENDER, BRIDGE))
             self.send_json(HTTPStatus.OK if ready else HTTPStatus.SERVICE_UNAVAILABLE, {
                 "ready": ready,
+                "version": SERVICE_VERSION,
                 "architecture": os.uname().machine,
                 "maxConcurrency": int(os.environ.get("TOPOLOGY_MAX_CONCURRENCY", "1")),
+                "preprocessMaxFaces": PREPROCESS_MAX_FACES,
+                "preprocessVoxelResolution": PREPROCESS_VOXEL_RESOLUTION,
             })
             return
         self.send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})

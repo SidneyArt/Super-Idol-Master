@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from run_3d_retopology import run_retopology, service_endpoint
+from run_3d_retopology import response_error_detail, run_retopology, service_endpoint
 
 
 MINIMAL_GLB = b"glTF" + b"\x02\x00\x00\x00" + b"\x14\x00\x00\x00" + b"\x00" * 8
@@ -18,6 +18,15 @@ class FakeResponse:
 
     def iter_content(self, _chunk_size: int):
         yield MINIMAL_GLB
+
+
+class FakeErrorResponse:
+    ok = False
+    status_code = 500
+    text = '{"error":"automatic retopology failed"}'
+
+    def json(self):
+        return {"error": "automatic retopology failed"}
 
 
 class RetopologyClientTests(unittest.TestCase):
@@ -42,6 +51,12 @@ class RetopologyClientTests(unittest.TestCase):
             source.write_bytes(MINIMAL_GLB)
             with self.assertRaisesRegex(ValueError, "target-quads"):
                 run_retopology(source, "http://dgx:8190", Path(temporary) / "output", 999, 60)
+
+    def test_http_error_extracts_service_message_without_json_wrapper(self):
+        self.assertEqual(
+            response_error_detail(FakeErrorResponse()),
+            "automatic retopology failed",
+        )
 
 
 if __name__ == "__main__":

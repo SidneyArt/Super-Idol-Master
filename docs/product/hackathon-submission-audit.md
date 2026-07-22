@@ -12,7 +12,7 @@
 | --- | --- | --- | --- |
 | 项目开源提交 | 完整项目上传至 GitHub、码云等开源平台，以 URL 提交 | Git 远端为 `https://github.com/SidneyArt/Super-Idol-Master.git`；2026-07-22 未登录公网检查返回 `404` | 未完成；需将仓库设为公开、验证 URL，并选择开源许可证 |
 | 项目说明文档 | 600 字以上，说明作品特点、核心亮点、技术实现、架构设计和优化方案 | 根目录 `README.md`、`ARCHITECTURE.md` 和 PRD | 已覆盖 |
-| 部署说明 | 说明如何利用本地算力部署智能体、如何优化大模型 | README、DGX 集成文档、AutoRemesher 独立部署文档 | 已覆盖；ARM64 冒烟测试已完成，正式提交前需补真实角色资产连续验收结果 |
+| 部署说明 | 说明如何利用本地算力部署智能体、如何优化大模型 | README、DGX 集成文档、AutoRemesher 独立部署文档 | 已覆盖；ARM64 冒烟和一次真实角色 HTTP API 回归已完成，正式提交前需补连续三次验收结果 |
 | 技术栈说明 | 列明 NVIDIA SDK、NVIDIA 模型和 StepFun 模型 | 本文第 3 节和 README 的运行位置表 | 部分完成；目前没有直接集成 NVIDIA NIM、TensorRT 或 Nemotron，不应虚报 |
 | 作品演示视频 | 清晰展示功能及核心亮点 | 仓库中没有正式视频 URL | 待团队完成 |
 | 团队资料 | 团队合影 | 仓库中没有团队合影 | 待团队完成 |
@@ -48,7 +48,7 @@
 
 **剩余风险**
 
-- AutoRemesher 已在 DGX Spark AArch64 上完成编译和合成立方体 GLB 的端到端 API 冒烟测试；正式提交前仍需用真实角色 GLB 完成连续验收。
+- AutoRemesher 已在 DGX Spark AArch64 上完成编译、合成立方体 API 冒烟测试，以及一次真实 Pixal3D 角色 GLB 的正式 HTTP API 体素预处理、自动拓扑、基础色回烘和 GLB 结构复验；正式提交前仍需完成连续三次验收。
 - 当前行业价值主要由产品流程说明支持；若要提高可信度，应补充单角色制作耗时、人工操作次数减少量和失败拦截案例。
 
 ### 2.2. 智能体融合与模型优化深度（25%）
@@ -159,7 +159,7 @@
 
 ## 4. 当前不能宣称的能力
 
-- 可以宣称 AutoRemesher 已在 DGX Spark AArch64 上完成部署和合成 GLB 冒烟测试；在真实角色 GLB 连续验收完成前，不能宣称其已经通过生产角色资产验收。
+- 可以宣称 AutoRemesher 已在 DGX Spark AArch64 上完成部署、合成 GLB API 冒烟测试和一次真实角色 HTTP API 完整回归；在完成连续三次真实角色验收前，不能宣称其已经通过生产角色资产验收。
 - 不能宣称已经直接使用 NVIDIA NIM、TensorRT、Nemotron 或 OpenUSD；这些目前只存在于规划文档。
 - 不能宣称所有数据都不离开内网；StepFun Agent 对话和 StepFun 图生图输入会发送到云端 API。
 - 不能宣称 Asset Inspector 看过 3D 多视图或 Rigging QA 验证过动作形变；当前两者主要解释结构指标。

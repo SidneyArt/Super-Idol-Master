@@ -2,7 +2,7 @@
 
 > 分类：部署与远程环境
 
-更新日期：2026-07-18
+更新日期：2026-07-22
 
 ## 1. 网络结论
 
@@ -44,7 +44,25 @@ http://100.120.236.113:8190
 
 SSH 用户名区分大小写。如果上述用户名失败，应让设备所有者在 DGX 上执行 `whoami` 后确认，不要反复猜测账户名。
 
-## 3. 第二台 DGX
+## 3. 公司电脑通过 ECS 访问 AutoRemesher
+
+公司电脑不能运行 Tailscale 时，使用一台已加入 DGX Tailnet 的 ECS 作为 SSH 转发跳板。ECS 不部署 Super Idol Master 或 AutoRemesher。
+
+在 Windows PowerShell 中建立隧道：
+
+```powershell
+ssh -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N -L 8190:100.120.236.113:8190 root@<ECS-PUBLIC-IP>
+```
+
+保持该窗口运行，并在另一个 PowerShell 窗口验证：
+
+```powershell
+curl.exe --noproxy "*" --fail-with-body http://127.0.0.1:8190/healthz
+```
+
+Super Idol Master 的“请求设置 → 拓扑 API”应填写 `http://127.0.0.1:8190`。此时 `127.0.0.1` 表示 Windows 本机的 SSH 转发入口，不是 DGX。
+
+## 4. 第二台 DGX
 
 此前记录的 Tailscale IP：`100.113.24.119`。
 
@@ -56,7 +74,7 @@ ssh sidney@100.113.24.119
 
 第二台的用户名、密钥安装状态和服务端口仍需以设备上的实际配置为准。若希望 Windows 一条命令直连第二台，需要给第二台安装当前电脑的公钥，并配置 `ProxyJump` 或直接开放 Tailnet SSH 权限。
 
-## 4. 当前电脑 SSH 密钥
+## 5. 当前电脑 SSH 密钥
 
 本项目使用的专用公钥文件名：
 
@@ -72,7 +90,7 @@ ssh sidney@100.113.24.119
 
 私钥不得发送给任何人、不得提交 Git。只需要让 DGX 所有者把 `.pub` 公钥内容加入目标用户的 `~/.ssh/authorized_keys`。
 
-## 5. 已知排障记录
+## 6. 已知排障记录
 
 ### 浏览器出现 502
 
@@ -97,7 +115,13 @@ Test-NetConnection 100.120.236.113 -Port 22
 
 Windows 代理环境可能影响 HTTP 客户端。项目的 ComfyUI 客户端已经关闭环境代理继承；不要删除 `session.trust_env = False`，除非确认部署环境必须通过代理。
 
-## 6. 不记录在文档中的信息
+### AutoRemesher 上传时出现 Windows 错误 `10053`
+
+先检查 `http://127.0.0.1:8190/healthz` 和 DGX 的 `autoremesher-api.service` 日志。如果 DGX 日志出现 `POST /v1/remesh ... 401`，说明远端仍是要求 Bearer Token 的旧版服务，应更新 `service.py`，而不是反复重建 SSH 隧道。
+
+当前无 Token 服务收到空文件测试请求时应返回 `HTTP 413`。详细升级和验证步骤见 [DGX Spark AutoRemesher 独立 API 部署指南](./dgx-autoremesher-deployment.md)。
+
+## 7. 不记录在文档中的信息
 
 - SSH 私钥和私钥口令。
 - DGX 登录密码。

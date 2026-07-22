@@ -7,6 +7,7 @@ import math
 import sys
 from pathlib import Path
 
+import bmesh
 import bpy
 from mathutils import Vector
 
@@ -53,10 +54,81 @@ def join_meshes(objects: list[bpy.types.Object]) -> bpy.types.Object:
     return bpy.context.view_layer.objects.active
 
 
+def prepare_for_remesher(
+    target: bpy.types.Object,
+    max_faces: int,
+    merge_distance_ratio: float,
+    voxel_resolution: int,
+) -> tuple[int, int]:
+    """Clean and optionally simplify the temporary mesh sent to AutoRemesher."""
+    mesh = target.data
+    input_faces = len(mesh.polygons)
+    lower, upper = object_bounds([target])
+    diagonal = max((upper - lower).length, 0.001)
+
+    editable = bmesh.new()
+    editable.from_mesh(mesh)
+    loose_vertices = [vertex for vertex in editable.verts if not vertex.link_faces]
+    if loose_vertices:
+        bmesh.ops.delete(editable, geom=loose_vertices, context="VERTS")
+    if merge_distance_ratio > 0:
+        bmesh.ops.remove_doubles(
+            editable,
+            verts=list(editable.verts),
+            dist=diagonal * merge_distance_ratio,
+        )
+    if editable.faces:
+        bmesh.ops.recalc_face_normals(editable, faces=list(editable.faces))
+    editable.to_mesh(mesh)
+    editable.free()
+    mesh.validate(verbose=False, clean_customdata=False)
+    mesh.update()
+
+    cleaned_faces = len(mesh.polygons)
+    voxel_faces = cleaned_faces
+    if voxel_resolution > 0:
+        mesh.remesh_voxel_size = diagonal / voxel_resolution
+        mesh.remesh_voxel_adaptivity = 0.0
+        select_only([target], target)
+        bpy.ops.object.voxel_remesh()
+        mesh = target.data
+        mesh.validate(verbose=False, clean_customdata=False)
+        mesh.update()
+        voxel_faces = len(mesh.polygons)
+
+    if max_faces > 0 and voxel_faces > max_faces:
+        modifier = target.modifiers.new(name="AutoRemesherInputLimit", type="DECIMATE")
+        modifier.decimate_type = "COLLAPSE"
+        modifier.ratio = max_faces / voxel_faces
+        modifier.use_collapse_triangulate = True
+        select_only([target], target)
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+        mesh.validate(verbose=False, clean_customdata=False)
+        mesh.update()
+
+    output_faces = len(mesh.polygons)
+    print(
+        f"[topology] preprocess input_faces={input_faces} "
+        f"cleaned_faces={cleaned_faces} voxel_faces={voxel_faces} "
+        f"output_faces={output_faces} max_faces={max_faces} "
+        f"voxel_resolution={voxel_resolution}",
+        flush=True,
+    )
+    if output_faces == 0:
+        raise RuntimeError("Mesh preprocessing removed every face")
+    return input_faces, output_faces
+
+
 def command_export_obj(args: argparse.Namespace) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=str(args.input))
     target = join_meshes(mesh_objects())
+    prepare_for_remesher(
+        target,
+        args.max_faces,
+        args.merge_distance_ratio,
+        args.voxel_resolution,
+    )
     select_only([target], target)
     export_obj(args.output)
 
@@ -131,6 +203,22 @@ def command_rebuild_glb(args: argparse.Namespace) -> None:
     )
 
 
+def command_inspect_glb(args: argparse.Namespace) -> None:
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    bpy.ops.import_scene.gltf(filepath=str(args.input))
+    objects = mesh_objects()
+    vertices = sum(len(item.data.vertices) for item in objects)
+    faces = sum(len(item.data.polygons) for item in objects)
+    materials = sum(len(item.data.materials) for item in objects)
+    if not objects or vertices == 0 or faces == 0:
+        raise RuntimeError("GLB inspection found no usable mesh")
+    print(
+        f"[topology] inspect mesh_objects={len(objects)} vertices={vertices} "
+        f"faces={faces} materials={materials} images={len(bpy.data.images)}",
+        flush=True,
+    )
+
+
 def parse_args() -> argparse.Namespace:
     raw = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     parser = argparse.ArgumentParser()
@@ -138,16 +226,23 @@ def parse_args() -> argparse.Namespace:
     export = subparsers.add_parser("export-obj")
     export.add_argument("--input", type=Path, required=True)
     export.add_argument("--output", type=Path, required=True)
+    export.add_argument("--max-faces", type=int, default=150_000)
+    export.add_argument("--merge-distance-ratio", type=float, default=0.0000001)
+    export.add_argument("--voxel-resolution", type=int, default=256)
     rebuild = subparsers.add_parser("rebuild-glb")
     rebuild.add_argument("--source", type=Path, required=True)
     rebuild.add_argument("--topology", type=Path, required=True)
     rebuild.add_argument("--output", type=Path, required=True)
     rebuild.add_argument("--texture-size", type=int, default=2048)
+    inspect = subparsers.add_parser("inspect-glb")
+    inspect.add_argument("--input", type=Path, required=True)
     return parser.parse_args(raw)
 
 
 arguments = parse_args()
 if arguments.command == "export-obj":
     command_export_obj(arguments)
-else:
+elif arguments.command == "rebuild-glb":
     command_rebuild_glb(arguments)
+else:
+    command_inspect_glb(arguments)
