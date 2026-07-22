@@ -23,6 +23,7 @@ import { loadEnvFile } from "node:process";
 import { createAssetAgentRuntime } from "./agent-runtime.mjs";
 import { createApprovalRuntime } from "./approval-runtime.mjs";
 import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
+import { jobStartMessage } from "./job-messages.mjs";
 import { createSettingsStore, PROCESS_KINDS } from "./settings.mjs";
 
 const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -1130,13 +1131,7 @@ function startJob(runId, jobType) {
   if (jobType === "2d" && processConfig.mode === "api" && !processConfig.api.apiKey) throw new Error("2D API Key 未配置，请在请求设置中填写或配置 Agent API Key");
 
   const stage = { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType];
-  const messages = {
-    "2d": processConfig.mode === "api" ? `正在调用图片 API ${processConfig.api.model} 生成 2D 概念图` : "正在调用 DGX Qwen Image 生成 2D 概念图",
-    qa: "正在调用 DGX SDPose 自动检查 T-Pose",
-    "3d": "正在调用 DGX Pixal3D 生成静态 GLB",
-    topology: "正在调用 DGX AutoRemesher 执行自动拓扑与纹理回烘",
-    rig: "正在调用 DGX SkinTokens 自动绑骨",
-  };
+  const message = jobStartMessage(jobType, processConfig);
   const now = new Date().toISOString();
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -1159,8 +1154,8 @@ function startJob(runId, jobType) {
       UPDATE runs SET job_type = ?, generation_status = 'running', generation_message = ?,
         generation_progress = 1, generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ?
       WHERE id = ?
-    `).run(jobType, messages[jobType], now, runId);
-    addEvent(runId, `${jobType}_started`, stage, `启动${messages[jobType].replace("正在调用 ", "")}`, now);
+    `).run(jobType, message, now, runId);
+    addEvent(runId, `${jobType}_started`, stage, `启动${message.replace("正在调用 ", "")}`, now);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
