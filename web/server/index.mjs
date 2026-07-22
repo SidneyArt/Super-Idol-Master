@@ -26,7 +26,9 @@ import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
 import { jobStartMessage } from "./job-messages.mjs";
 import { createSettingsStore, PROCESS_KINDS } from "./settings.mjs";
 
-const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const serverEntry = fileURLToPath(import.meta.url);
+const serverSourceMtimeMs = Math.trunc(statSync(serverEntry).mtimeMs);
+const webRoot = join(dirname(serverEntry), "..");
 const repoRoot = resolve(webRoot, "..");
 const localEnvPath = join(webRoot, ".env.local");
 if (existsSync(localEnvPath)) loadEnvFile(localEnvPath);
@@ -2105,7 +2107,8 @@ const server = createServer(async (req, res) => {
         ok: true,
         database: "sqlite",
         databasePath: dbPath,
-        capabilities: ["workspace-assets-v1", "mixamo-animation-library-v1"],
+        sourceMtimeMs: serverSourceMtimeMs,
+        capabilities: ["workspace-assets-v1", "workspace-delete-v1", "mixamo-animation-library-v1"],
         agent: assetAgent.status(),
       });
       return;

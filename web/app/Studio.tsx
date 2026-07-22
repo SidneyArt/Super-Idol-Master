@@ -290,8 +290,10 @@ function buildDispatcherTimeline(
   });
   const approvalsByAssistant = new Map<number, ApprovalRequest[]>();
   const batchesByAssistant = new Map<number, DispatcherTaskBatch[]>();
+  const generationsByAssistant = new Map<number, DispatcherGeneration[]>();
   const unanchoredApprovals: ApprovalRequest[] = [];
   const unanchoredBatches: DispatcherTaskBatch[] = [];
+  const unanchoredGenerations: DispatcherGeneration[] = [];
 
   const followingAssistant = (createdAt: string) => {
     const itemTime = dispatcherTimelineTime(createdAt);
@@ -331,9 +333,22 @@ function buildDispatcherTimeline(
       batchesByAssistant.set(assistant.id, anchored);
     });
 
+  [...generations]
+    .sort((left, right) => dispatcherTimelineTime(left.createdAt) - dispatcherTimelineTime(right.createdAt))
+    .forEach((generation) => {
+      const assistant = followingAssistant(generation.createdAt);
+      if (!assistant) {
+        unanchoredGenerations.push(generation);
+        return;
+      }
+      const anchored = generationsByAssistant.get(assistant.id) || [];
+      anchored.push(generation);
+      generationsByAssistant.set(assistant.id, anchored);
+    });
+
   const baseTimeline: DispatcherTimelineItem[] = [
     ...messages.map((item) => ({ kind: "message" as const, createdAt: item.createdAt, item })),
-    ...generations.map((item) => ({ kind: "generation" as const, createdAt: item.createdAt, item })),
+    ...unanchoredGenerations.map((item) => ({ kind: "generation" as const, createdAt: item.createdAt, item })),
     ...unanchoredBatches.map((item) => ({ kind: "taskBatch" as const, createdAt: item.createdAt, item })),
     ...unanchoredApprovals.map((item) => ({ kind: "approval" as const, createdAt: item.createdAt, item })),
   ].sort(compareDispatcherTimelineItems);
@@ -342,10 +357,12 @@ function buildDispatcherTimeline(
     if (entry.kind !== "message" || entry.item.role !== "assistant") return [entry];
     const anchored = approvalsByAssistant.get(entry.item.id) || [];
     const anchoredBatches = batchesByAssistant.get(entry.item.id) || [];
+    const anchoredGenerations = generationsByAssistant.get(entry.item.id) || [];
     return [
       entry,
       ...anchored.map((item) => ({ kind: "approval" as const, createdAt: item.createdAt, item })),
       ...anchoredBatches.map((item) => ({ kind: "taskBatch" as const, createdAt: item.createdAt, item })),
+      ...anchoredGenerations.map((item) => ({ kind: "generation" as const, createdAt: item.createdAt, item })),
     ];
   });
 }
@@ -2484,7 +2501,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             <div className="workspace-list">
               {workspaces.map((workspace) => (
                 <div className={`workspace-group ${workspace.id === selectedWorkspaceId ? "selected" : ""} ${expandedWorkspaceIds.has(workspace.id) ? "expanded" : ""}`} key={workspace.id}>
-                  <div className="workspace-item">
+                  <div className={`workspace-item ${workspace.id === "default" ? "workspace-item-default" : ""}`}>
                     <button type="button" className="workspace-select-button" onClick={() => {
                       selectWorkspace(workspace.id);
                       setForm((current) => ({ ...current, workspaceId: workspace.id }));
@@ -2504,9 +2521,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     >
                       <Library size={15} />
                     </button>
-                    {workspace.id === "default" ? (
-                      <span className="workspace-delete-spacer" aria-hidden="true" />
-                    ) : (
+                    {workspace.id !== "default" && (
                       <button
                         type="button"
                         className="workspace-delete-button"

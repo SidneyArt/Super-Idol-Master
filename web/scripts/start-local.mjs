@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { createConnection } from "node:net";
 import { join, resolve } from "node:path";
 
@@ -7,6 +8,7 @@ const pipelineDir = join(root, "server", "pipeline");
 const backendUrl = "http://127.0.0.1:8787/api/health";
 const frontendUrl = "http://localhost:3100";
 const expectedDatabasePath = resolve(root, "data", "super-idol-master.db");
+const expectedBackendSourceMtimeMs = Math.trunc(statSync(join(root, "server", "index.mjs")).mtimeMs);
 const children = [];
 let stopping = false;
 
@@ -23,7 +25,11 @@ async function getBackendState() {
     const currentProject = health?.ok === true && normalizePath(health.databasePath) === normalizePath(expectedDatabasePath);
     return {
       currentProject,
-      compatible: currentProject && Array.isArray(health.capabilities) && health.capabilities.includes("workspace-assets-v1"),
+      compatible: currentProject
+        && Array.isArray(health.capabilities)
+        && health.capabilities.includes("workspace-assets-v1")
+        && health.capabilities.includes("workspace-delete-v1")
+        && health.sourceMtimeMs === expectedBackendSourceMtimeMs,
     };
   } catch {
     return { currentProject: false, compatible: false };
