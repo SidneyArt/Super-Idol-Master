@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import uuid
 from pathlib import Path
 
 import requests
@@ -48,7 +49,13 @@ def resolve_server_mesh_path(
 ) -> str:
     local_path = Path(value).expanduser()
     if local_path.is_file():
-        uploaded = client.upload_file(local_path.resolve())
+        # AutoRemesher outputs are commonly all named retopologized.glb. A
+        # shared ComfyUI input filename lets a nearby/concurrent rig job
+        # overwrite the file and makes ComfyUI reuse the wrong cached graph.
+        # Give every rig input a unique remote identity so SkinTokens always
+        # reads and evaluates this task's actual topology asset.
+        remote_name = f"skin-input-{uuid.uuid4().hex}{local_path.suffix.lower()}"
+        uploaded = client.upload_file(local_path.resolve(), remote_name=remote_name)
         return server_path_for_artifact(uploaded, comfyui_root)
     if value.startswith("/"):
         return value

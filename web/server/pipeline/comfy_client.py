@@ -90,11 +90,14 @@ class ComfyUIClient:
         )
         response.json()
 
-    def upload_file(self, file_path: Path) -> RemoteArtifact:
+    def upload_file(self, file_path: Path, remote_name: str | None = None) -> RemoteArtifact:
+        upload_name = PurePosixPath(remote_name or file_path.name).name
+        if not upload_name or upload_name in {".", ".."}:
+            raise ValueError("ComfyUI upload filename is invalid")
         with file_path.open("rb") as input_file:
             response = self.session.post(
                 self._url("upload/image"),
-                files={"image": (file_path.name, input_file)},
+                files={"image": (upload_name, input_file)},
                 data={"overwrite": "true", "type": "input"},
                 timeout=120,
             )
@@ -102,7 +105,7 @@ class ComfyUIClient:
         payload = response.json()
         return RemoteArtifact(
             node_id="upload",
-            filename=str(payload.get("name") or file_path.name),
+            filename=str(payload.get("name") or upload_name),
             subfolder=str(payload.get("subfolder") or ""),
             file_type=str(payload.get("type") or "input"),
         )
