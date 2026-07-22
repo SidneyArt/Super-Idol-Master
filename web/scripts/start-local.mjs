@@ -15,14 +15,18 @@ function normalizePath(value) {
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-async function isCurrentBackendRunning() {
+async function getBackendState() {
   try {
     const response = await fetch(backendUrl, { signal: AbortSignal.timeout(1500) });
-    if (!response.ok) return false;
+    if (!response.ok) return { currentProject: false, compatible: false };
     const health = await response.json();
-    return health?.ok === true && normalizePath(health.databasePath) === normalizePath(expectedDatabasePath);
+    const currentProject = health?.ok === true && normalizePath(health.databasePath) === normalizePath(expectedDatabasePath);
+    return {
+      currentProject,
+      compatible: currentProject && Array.isArray(health.capabilities) && health.capabilities.includes("workspace-assets-v1"),
+    };
   } catch {
-    return false;
+    return { currentProject: false, compatible: false };
   }
 }
 
@@ -55,6 +59,33 @@ function canConnect(host, port) {
 async function isPortInUse(port) {
   if (await canConnect("127.0.0.1", port)) return true;
   return canConnect("::1", port);
+}
+
+async function waitForPortToClose(port, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!await isPortInUse(port)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`等待旧服务释放端口 ${port} 超时`);
+}
+
+async function stopStaleProjectBackend() {
+  if (process.platform !== "win32") {
+    throw new Error("检测到当前项目的旧版后端，请先停止旧服务后重新启动");
+  }
+  const script = [
+    "$owners = Get-NetTCPConnection -State Listen -LocalPort 8787 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique",
+    "if (-not $owners) { exit 0 }",
+    "$owners | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction Stop }",
+  ].join("; ");
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  if (result.status !== 0) throw new Error("无法停止当前项目的旧版后端，请关闭旧启动窗口后重试");
+  await waitForPortToClose(8787);
+  await new Promise((resolve) => setTimeout(resolve, 750));
 }
 
 function launch(label, command, args, env = {}) {
@@ -127,10 +158,18 @@ function syncPythonEnvironment() {
 console.log("\nSuper Idol Master 本地系统正在启动…\n");
 
 try {
-  const [reuseBackend, reuseFrontend] = await Promise.all([
-    isCurrentBackendRunning(),
+  const [backendState, initialFrontendRunning] = await Promise.all([
+    getBackendState(),
     isCurrentFrontendRunning(),
   ]);
+  let reuseBackend = backendState.compatible;
+  let reuseFrontend = initialFrontendRunning;
+  if (backendState.currentProject && !backendState.compatible) {
+    console.log("检测到当前项目的旧版后端，正在重启以加载最新接口…");
+    await stopStaleProjectBackend();
+    reuseBackend = false;
+    reuseFrontend = await isCurrentFrontendRunning();
+  }
   if (!reuseBackend && await isPortInUse(8787)) {
     throw new Error("端口 8787 已被其他程序占用；请关闭占用程序，或为后端配置其他 API_PORT");
   }

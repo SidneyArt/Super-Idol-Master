@@ -178,7 +178,7 @@ type WorkspaceAsset = {
   downloadUrl: string;
   previewUrl: string;
   filename: string;
-  size: number;
+  size: number | null;
   createdAt: string;
   rigged: boolean;
 };
@@ -548,12 +548,48 @@ function formatMemory(value: number | null | undefined) {
   return `${(Number(value) / (1024 ** 3)).toFixed(1)} GB`;
 }
 
-function formatFileSize(value: number) {
+function formatFileSize(value: number | null) {
+  if (value === null) return "大小未知";
   if (!Number.isFinite(value) || value < 1) return "0 B";
   if (value < 1024) return `${value} B`;
   if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
   if (value < 1024 ** 3) return `${(value / (1024 ** 2)).toFixed(1)} MB`;
   return `${(value / (1024 ** 3)).toFixed(1)} GB`;
+}
+
+function workspaceAssetsFromRuns(items: Run[], workspaceId: string): WorkspaceAsset[] {
+  const definitions: Array<{
+    kind: WorkspaceAssetKind;
+    label: string;
+    ready: keyof Pick<Assets, "imageReady" | "modelReady" | "topologyReady" | "riggedReady">;
+    download: keyof Pick<Assets, "imageDownloadUrl" | "modelDownloadUrl" | "topologyDownloadUrl" | "riggedDownloadUrl">;
+    rigged: boolean;
+  }> = [
+    { kind: "image", label: "2D 概念图", ready: "imageReady", download: "imageDownloadUrl", rigged: false },
+    { kind: "model", label: "静态 GLB", ready: "modelReady", download: "modelDownloadUrl", rigged: false },
+    { kind: "topology", label: "拓扑 GLB", ready: "topologyReady", download: "topologyDownloadUrl", rigged: false },
+    { kind: "rigged", label: "绑定 GLB", ready: "riggedReady", download: "riggedDownloadUrl", rigged: true },
+  ];
+  return items.filter((run) => run.workspaceId === workspaceId).flatMap((run) => definitions.flatMap((definition) => {
+    const downloadUrl = run.assets[definition.download];
+    if (!run.assets[definition.ready] || !downloadUrl) return [];
+    const group = definition.kind === "image" ? "2d" : "3d";
+    return [{
+      id: `${run.id}:${definition.kind}`,
+      workspaceId,
+      runId: run.id,
+      runName: run.name,
+      kind: definition.kind,
+      group,
+      label: definition.label,
+      downloadUrl,
+      previewUrl: definition.kind === "image" && run.previewPath ? run.previewPath : downloadUrl,
+      filename: `${run.name}.${definition.kind === "image" ? "png" : "glb"}`,
+      size: null,
+      createdAt: run.updatedAt,
+      rigged: definition.rigged,
+    } satisfies WorkspaceAsset];
+  }));
 }
 
 function jobName(type: JobType) {
@@ -961,8 +997,15 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       setWorkspaceAssets(data.assets);
       setSelectedWorkspaceAssetId(data.assets[0]?.id || null);
     } catch (reason) {
-      setAssetLibraryWorkspaceId(null);
-      setError(reason instanceof Error ? reason.message : "资产库加载失败");
+      try {
+        const data = await api<{ runs: Run[] }>(`/api/runs?workspaceId=${encodeURIComponent(workspaceId)}`);
+        const fallbackAssets = workspaceAssetsFromRuns(data.runs, workspaceId);
+        setWorkspaceAssets(fallbackAssets);
+        setSelectedWorkspaceAssetId(fallbackAssets[0]?.id || null);
+      } catch (fallbackReason) {
+        setAssetLibraryWorkspaceId(null);
+        setError(fallbackReason instanceof Error ? fallbackReason.message : reason instanceof Error ? reason.message : "资产库加载失败");
+      }
     } finally {
       setWorkspaceAssetsLoading(false);
     }
@@ -1487,6 +1530,10 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
 
   function downloadUrl(value: string | null) {
     return value ? `${API_BASE}${value}` : "#";
+  }
+
+  function workspaceAssetPreviewUrl(value: string) {
+    return value.startsWith("/generated/") ? value : downloadUrl(value);
   }
 
   function toggleTheme() {
@@ -2625,6 +2672,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   <p><span className="pipeline-type-badge">{run.pipelineType === "image_to_model" ? "图生模型" : "文生模型"}</span>更新于 {formatTime(run.updatedAt)} · {progress}% 完成</p>
                 </div>
                 <div className="workspace-actions">
+                  <button className="secondary-button workspace-asset-library-button" type="button" onClick={() => void openAssetLibrary(run.workspaceId)}><Library size={16} />资产库</button>
                   <button className="icon-button" type="button" onClick={resetRun} disabled={busy || run.jobStatus === "running"} title="重置任务" aria-label="重置任务"><RotateCcw size={17} /></button>
                   <button className="icon-button danger" type="button" onClick={deleteRun} disabled={busy || run.jobStatus === "running"} title="删除任务" aria-label="删除任务"><Trash2 size={17} /></button>
                 </div>
@@ -3287,7 +3335,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     <button type="button" className={`asset-library-card ${selectedWorkspaceAsset?.id === asset.id ? "selected" : ""}`} key={asset.id} onClick={() => setSelectedWorkspaceAssetId(asset.id)}>
                       <span className={`asset-library-thumb ${asset.group}`}>
                         {asset.group === "2d"
-                          ? <Image src={downloadUrl(asset.previewUrl)} alt={asset.runName} width={160} height={100} unoptimized />
+                          ? <Image src={workspaceAssetPreviewUrl(asset.previewUrl)} alt={asset.runName} width={160} height={100} unoptimized />
                           : <Box size={24} />}
                         <small>{asset.kind === "image" ? "PNG" : "GLB"}</small>
                       </span>
@@ -3301,19 +3349,19 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 {selectedWorkspaceAsset ? (
                   <>
                     <header className="asset-library-detail-header">
-                      <div><span>{selectedWorkspaceAsset.label}</span><h3>{selectedWorkspaceAsset.runName}</h3><p>{selectedWorkspaceAsset.filename} · {formatFileSize(selectedWorkspaceAsset.size)}</p></div>
+                      <div><span>{selectedWorkspaceAsset.label}</span><h3>{selectedWorkspaceAsset.runName}</h3><p>{selectedWorkspaceAsset.filename} · {formatFileSize(selectedWorkspaceAsset.size)}{selectedWorkspaceAsset.size === null ? " · 重启本地服务后可管理删除" : ""}</p></div>
                       <div>
                         <button className="secondary-button" type="button" onClick={() => openTask(selectedWorkspaceAsset.runId)}>打开任务</button>
                         <a className="secondary-button" href={downloadUrl(selectedWorkspaceAsset.downloadUrl)} download><Download size={15} />下载</a>
-                        <button className="danger-button" type="button" onClick={() => requestDeleteWorkspaceAsset(selectedWorkspaceAsset)}><Trash2 size={15} />删除</button>
+                        <button className="danger-button" type="button" disabled={selectedWorkspaceAsset.size === null} title={selectedWorkspaceAsset.size === null ? "后端尚未重启，当前仅支持预览和下载" : "删除资产"} onClick={() => requestDeleteWorkspaceAsset(selectedWorkspaceAsset)}><Trash2 size={15} />删除</button>
                       </div>
                     </header>
                     <div className={`asset-library-preview-frame preview-frame ${selectedWorkspaceAsset.group === "3d" ? "model-preview" : ""}`}>
                       {selectedWorkspaceAsset.group === "2d" ? (
-                        <Image className="asset-preview-image" src={downloadUrl(selectedWorkspaceAsset.previewUrl)} alt={`${selectedWorkspaceAsset.runName} ${selectedWorkspaceAsset.label}`} width={1600} height={1600} unoptimized />
+                        <Image className="asset-preview-image" src={workspaceAssetPreviewUrl(selectedWorkspaceAsset.previewUrl)} alt={`${selectedWorkspaceAsset.runName} ${selectedWorkspaceAsset.label}`} width={1600} height={1600} unoptimized />
                       ) : (
                         <Suspense fallback={<div className="model-loading"><LoaderCircle className="spinning" size={24} /><span>正在加载 3D 资产…</span></div>}>
-                          <ModelViewer src={downloadUrl(selectedWorkspaceAsset.previewUrl)} label={`${selectedWorkspaceAsset.runName} ${selectedWorkspaceAsset.label}`} rigged={selectedWorkspaceAsset.rigged} />
+                          <ModelViewer src={workspaceAssetPreviewUrl(selectedWorkspaceAsset.previewUrl)} label={`${selectedWorkspaceAsset.runName} ${selectedWorkspaceAsset.label}`} rigged={selectedWorkspaceAsset.rigged} />
                         </Suspense>
                       )}
                     </div>

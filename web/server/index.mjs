@@ -1878,7 +1878,13 @@ const server = createServer(async (req, res) => {
 
   try {
     if (req.method === "GET" && url.pathname === "/api/health") {
-      json(res, 200, { ok: true, database: "sqlite", databasePath: dbPath, agent: assetAgent.status() });
+      json(res, 200, {
+        ok: true,
+        database: "sqlite",
+        databasePath: dbPath,
+        capabilities: ["workspace-assets-v1"],
+        agent: assetAgent.status(),
+      });
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/system") {
