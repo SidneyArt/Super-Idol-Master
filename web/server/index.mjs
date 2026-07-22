@@ -1004,6 +1004,7 @@ function launchJob(run, jobType, processConfig) {
           ...jobArguments(run, jobType),
           "--service-url", processConfig.url,
           "--target-quads", String(processConfig.targetQuads),
+          "--timeout", String(processConfig.timeoutSeconds),
         ]
       : [
         scripts[jobType],
@@ -1020,6 +1021,7 @@ function launchJob(run, jobType, processConfig) {
         ...process.env,
         PYTHONUTF8: "1",
         ...(usesImageApi ? { STEPFUN_IMAGE_API_KEY: processConfig.api.apiKey } : {}),
+        ...(usesTopologyApi ? { TOPOLOGY_SERVICE_TOKEN: processConfig.token } : {}),
       },
     });
   } catch (error) {
@@ -1112,14 +1114,9 @@ function startJob(runId, jobType) {
   if (jobType === "topology" && (!run.modelPathInternal || !existsSync(run.modelPathInternal))) throw new Error("静态 GLB 不存在，不能执行自动拓扑");
   if (jobType === "rig" && (!run.topologyPathInternal || !existsSync(run.topologyPathInternal))) throw new Error("拓扑 GLB 不存在，不能绑骨");
   let processConfig = jobType === "topology"
-    ? {
-        mode: "api",
-        url: process.env.TOPOLOGY_SERVICE_URL?.trim() || "",
-        token: process.env.TOPOLOGY_SERVICE_TOKEN?.trim() || "",
-        targetQuads: Number(process.env.TOPOLOGY_TARGET_QUADS || 50_000),
-      }
+    ? { mode: "api", ...settingsStore.topologyConfig() }
     : settingsStore.processConfig(jobType);
-  if (jobType === "topology" && !processConfig.url) throw new Error("TOPOLOGY_SERVICE_URL 未配置，无法连接 DGX 自动拓扑服务");
+  if (jobType === "topology" && !processConfig.url) throw new Error("拓扑 API 未配置，请在“请求设置 → 拓扑 API”中填写服务地址");
   if (jobType === "topology" && (!Number.isInteger(processConfig.targetQuads) || processConfig.targetQuads < 1_000 || processConfig.targetQuads > 1_000_000)) throw new Error("TOPOLOGY_TARGET_QUADS 必须在 1,000 到 1,000,000 之间");
   if (jobType === "2d" && run.pipelineType === "image_to_model") {
     processConfig = { ...processConfig, mode: "api", api: settingsStore.imageConfig("image_to_model") };

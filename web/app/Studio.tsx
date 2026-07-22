@@ -378,9 +378,19 @@ type AgentApiSettings = {
   defaultModel: string;
   defaultReasoningEffort: ReasoningEffort;
 };
+type TopologyApiSettings = {
+  url: string;
+  tokenConfigured: boolean;
+  targetQuads: number;
+  timeoutSeconds: number;
+  defaultUrl: string;
+  defaultTargetQuads: number;
+  defaultTimeoutSeconds: number;
+};
 type AppSettings = {
   processes: Record<ProcessKind, ProcessSettings>;
   agent: AgentApiSettings;
+  topology: TopologyApiSettings;
   imageModels: {
     textToImage: ImageModelSettings;
     imageToImage: ImageModelSettings;
@@ -402,6 +412,7 @@ type ImageModelSettings = {
 };
 type ImageModelDraft = { baseUrl: string; model: string; apiKey: string; clearApiKey: boolean };
 type AgentApiDraft = { baseUrl: string; model: string; reasoningEffort: ReasoningEffort; apiKey: string; clearApiKey: boolean };
+type TopologyApiDraft = { url: string; token: string; clearToken: boolean; targetQuads: number; timeoutSeconds: number };
 type SettingsDraft = {
   processes: Record<ProcessKind, {
     mode: "comfyui" | "api";
@@ -411,6 +422,7 @@ type SettingsDraft = {
     api?: { baseUrl: string; model: string; apiKey: string };
   }>;
   agent: AgentApiDraft;
+  topology: TopologyApiDraft;
   imageModels: { textToImage: ImageModelDraft; imageToImage: ImageModelDraft };
   coordinator: {
     agent: AgentApiDraft;
@@ -455,6 +467,13 @@ function settingsDraft(settings: AppSettings): SettingsDraft {
       reasoningEffort: settings.agent.reasoningEffort,
       apiKey: "",
       clearApiKey: false,
+    },
+    topology: {
+      url: settings.topology.url,
+      token: "",
+      clearToken: false,
+      targetQuads: settings.topology.targetQuads,
+      timeoutSeconds: settings.topology.timeoutSeconds,
     },
     imageModels: {
       textToImage: { baseUrl: settings.imageModels.textToImage.baseUrl, model: settings.imageModels.textToImage.model, apiKey: "", clearApiKey: false },
@@ -634,7 +653,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsForm, setSettingsForm] = useState<SettingsDraft | null>(null);
-  const [settingsTab, setSettingsTab] = useState<ProcessKind | "agent" | "coordinator">("2d");
+  const [settingsTab, setSettingsTab] = useState<ProcessKind | "topology" | "agent" | "coordinator">("2d");
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [agentModelsLoading, setAgentModelsLoading] = useState(false);
@@ -1348,6 +1367,21 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     });
   }
 
+  function updateTopologySettings(patch: Partial<TopologyApiDraft>) {
+    setSettingsForm((current) => current ? { ...current, topology: { ...current.topology, ...patch } } : current);
+  }
+
+  function restoreTopologyDefaults() {
+    if (!settings) return;
+    updateTopologySettings({
+      url: settings.topology.defaultUrl,
+      token: "",
+      clearToken: false,
+      targetQuads: settings.topology.defaultTargetQuads,
+      timeoutSeconds: settings.topology.defaultTimeoutSeconds,
+    });
+  }
+
   function updateImageModelSettings(scope: "agent" | "coordinator", key: "textToImage" | "imageToImage", patch: Partial<ImageModelDraft>) {
     setSettingsForm((current) => {
       if (!current) return current;
@@ -1531,7 +1565,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     try {
       const data = await api<AppSettings>("/api/settings", {
         method: "PUT",
-        body: JSON.stringify({ processes, agent: settingsForm.agent, imageModels: settingsForm.imageModels, coordinator: settingsForm.coordinator }),
+        body: JSON.stringify({ processes, topology: settingsForm.topology, agent: settingsForm.agent, imageModels: settingsForm.imageModels, coordinator: settingsForm.coordinator }),
       });
       setSettings(data);
       setSettingsForm(settingsDraft(data));
@@ -2768,12 +2802,44 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                       {kind === "qa" ? "QA" : kind.toUpperCase()}
                     </button>
                   ))}
+                  <button type="button" role="tab" aria-selected={settingsTab === "topology"} className={settingsTab === "topology" ? "active" : ""} onClick={() => { setSettingsTab("topology"); setWorkflowPreviewOpen(false); }}>拓扑 API</button>
                   <button type="button" role="tab" aria-selected={settingsTab === "agent"} className={settingsTab === "agent" ? "active" : ""} onClick={() => { setSettingsTab("agent"); setWorkflowPreviewOpen(false); }}>任务 Agent</button>
                   <button type="button" role="tab" aria-selected={settingsTab === "coordinator"} className={settingsTab === "coordinator" ? "active" : ""} onClick={() => { setSettingsTab("coordinator"); setWorkflowPreviewOpen(false); }}>总调度 Agent</button>
                 </div>
 
                 <div className="settings-content">
-                  {settingsTab !== "agent" && settingsTab !== "coordinator" ? (
+                  {settingsTab === "topology" ? (
+                    <section className="process-settings" aria-label="自动拓扑 API 配置">
+                      <div className="settings-section-heading">
+                        <div><span>External Service</span><h3>自动拓扑 API</h3></div>
+                        <button className="text-icon-button" type="button" onClick={restoreTopologyDefaults}><RotateCcw size={15} />恢复默认</button>
+                      </div>
+                      <div className="agent-scope-note"><ShieldCheck size={15} /><span>配置保存在本机后端。可以连接 DGX AutoRemesher，也可以替换为兼容相同请求协议的其他服务。</span></div>
+                      <div className="api-mode-status">
+                        <span className={`config-state ${settings.topology.url && settings.topology.tokenConfigured ? "configured" : ""}`}><i />{settings.topology.url ? settings.topology.tokenConfigured ? "地址与 Token 已配置" : "地址已配置，Token 未配置" : "服务地址未配置"}</span>
+                      </div>
+                      <label className="settings-field">
+                        <span>服务地址</span>
+                        <input type="url" value={settingsForm.topology.url} placeholder="http://100.120.236.113:8190" onChange={(event) => updateTopologySettings({ url: event.target.value })} />
+                        <small className="settings-field-note">可填写 API Base URL，也可填写以 /v1/remesh 结尾的完整地址。</small>
+                      </label>
+                      <label className="settings-field">
+                        <span>Bearer Token</span>
+                        <input type="password" autoComplete="off" maxLength={1000} disabled={settingsForm.topology.clearToken} value={settingsForm.topology.token} placeholder={settings.topology.tokenConfigured ? "留空以保留当前 Token" : "输入服务 Token；无鉴权服务可留空"} onChange={(event) => updateTopologySettings({ token: event.target.value })} />
+                      </label>
+                      {settings.topology.tokenConfigured && <label className="clear-key-control"><input type="checkbox" checked={settingsForm.topology.clearToken} onChange={(event) => updateTopologySettings({ clearToken: event.target.checked, token: event.target.checked ? "" : settingsForm.topology.token })} /><span>清除已保存的服务 Token</span></label>}
+                      <label className="settings-field">
+                        <span>目标四边面数</span>
+                        <input type="number" required min={1000} max={1000000} step={1000} value={settingsForm.topology.targetQuads} onChange={(event) => updateTopologySettings({ targetQuads: Number(event.target.value) })} />
+                        <small className="settings-field-note">允许范围为 1,000 到 1,000,000；默认 50,000。</small>
+                      </label>
+                      <label className="settings-field">
+                        <span>请求超时（秒）</span>
+                        <input type="number" required min={30} max={86400} step={30} value={settingsForm.topology.timeoutSeconds} onChange={(event) => updateTopologySettings({ timeoutSeconds: Number(event.target.value) })} />
+                        <small className="settings-field-note">允许范围为 30 到 86,400 秒；复杂模型建议至少 3,600 秒。</small>
+                      </label>
+                    </section>
+                  ) : settingsTab !== "agent" && settingsTab !== "coordinator" ? (
                     <section className="process-settings" aria-label={`${settings.processes[settingsTab].label}配置`}>
                       <div className="settings-section-heading">
                         <div><span>{settingsTab === "2d" && settingsForm.processes["2d"].mode === "api" ? "API" : "ComfyUI"}</span><h3>{settings.processes[settingsTab].label}</h3></div>

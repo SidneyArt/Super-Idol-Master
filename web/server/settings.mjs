@@ -42,6 +42,24 @@ function normalizeUrl(value, field) {
   return text;
 }
 
+function normalizeOptionalUrl(value, field) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text ? normalizeUrl(text, field) : "";
+}
+
+function validateInteger(value, field, minimum, maximum) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < minimum || number > maximum) {
+    throw new Error(`${field}必须在 ${minimum.toLocaleString("en-US")} 到 ${maximum.toLocaleString("en-US")} 之间`);
+  }
+  return number;
+}
+
+function integerOrFallback(value, minimum, maximum, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= minimum && number <= maximum ? number : fallback;
+}
+
 function normalizeReasoningEffort(value, fallback = "high") {
   const effort = typeof value === "string" ? value.trim().toLowerCase() : "";
   return REASONING_EFFORTS.has(effort) ? effort : fallback;
@@ -122,6 +140,12 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       model: process.env.STEPFUN_IMAGE_EDIT_MODEL?.trim() || process.env.STEPFUN_IMAGE_MODEL?.trim() || DEFAULT_IMAGE_API_MODEL,
       apiKey: process.env.STEPFUN_IMAGE_EDIT_API_KEY?.trim() || process.env.STEPFUN_IMAGE_API_KEY?.trim() || "",
     },
+  };
+  const topologyDefaults = {
+    url: normalizeOptionalUrl(process.env.TOPOLOGY_SERVICE_URL, "拓扑 API 地址"),
+    token: process.env.TOPOLOGY_SERVICE_TOKEN?.trim() || "",
+    targetQuads: integerOrFallback(process.env.TOPOLOGY_TARGET_QUADS, 1_000, 1_000_000, 50_000),
+    timeoutSeconds: integerOrFallback(process.env.TOPOLOGY_TIMEOUT_SECONDS, 30, 86_400, 3_600),
   };
 
   const findSetting = db.prepare("SELECT setting_value AS value FROM app_settings WHERE setting_key = ?");
@@ -263,6 +287,17 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     };
   }
 
+  function topologyConfig() {
+    const storedTargetQuads = Number(read("topology.target_quads", String(topologyDefaults.targetQuads)));
+    const storedTimeoutSeconds = Number(read("topology.timeout_seconds", String(topologyDefaults.timeoutSeconds)));
+    return {
+      url: normalizeOptionalUrl(read("topology.url", topologyDefaults.url), "拓扑 API 地址"),
+      token: read("topology.token", topologyDefaults.token).trim(),
+      targetQuads: integerOrFallback(storedTargetQuads, 1_000, 1_000_000, topologyDefaults.targetQuads),
+      timeoutSeconds: integerOrFallback(storedTimeoutSeconds, 30, 86_400, topologyDefaults.timeoutSeconds),
+    };
+  }
+
   function seedCoordinatorSettings() {
     if (findSetting.get("coordinator.agent.base_url")) return;
     const now = new Date().toISOString();
@@ -342,6 +377,7 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
   }
 
   function publicSettings() {
+    const topology = topologyConfig();
     return {
       processes: Object.fromEntries(PROCESS_KINDS.map((kind) => {
         const records = workflowRecords(kind);
@@ -392,6 +428,15 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
           defaultBaseUrl: imageApiDefaults.imageToImage.baseUrl,
           defaultModel: imageApiDefaults.imageToImage.model,
         },
+      },
+      topology: {
+        url: topology.url,
+        tokenConfigured: Boolean(topology.token),
+        targetQuads: topology.targetQuads,
+        timeoutSeconds: topology.timeoutSeconds,
+        defaultUrl: topologyDefaults.url,
+        defaultTargetQuads: topologyDefaults.targetQuads,
+        defaultTimeoutSeconds: topologyDefaults.timeoutSeconds,
       },
       coordinator: {
         agent: {
@@ -525,6 +570,18 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
       imageToImage: normalizeCoordinatorImageModel("imageToImage", "image_to_model"),
     };
 
+    const currentTopology = topologyConfig();
+    const topologyInput = input.topology && typeof input.topology === "object" ? input.topology : {};
+    const nextTopology = {
+      url: normalizeOptionalUrl(topologyInput.url ?? currentTopology.url, "拓扑 API 地址"),
+      token: currentTopology.token,
+      targetQuads: validateInteger(topologyInput.targetQuads ?? currentTopology.targetQuads, "目标四边面数", 1_000, 1_000_000),
+      timeoutSeconds: validateInteger(topologyInput.timeoutSeconds ?? currentTopology.timeoutSeconds, "拓扑 API 超时秒数", 30, 86_400),
+    };
+    if (topologyInput.clearToken === true) nextTopology.token = "";
+    else if (typeof topologyInput.token === "string" && topologyInput.token.trim()) nextTopology.token = topologyInput.token.trim();
+    if (nextTopology.token.length > 1_000) throw new Error("拓扑 API Token 不能超过 1,000 个字符");
+
     const now = new Date().toISOString();
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -556,6 +613,10 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
         saveSetting.run(`${prefix}.model`, value.model, now);
         saveSetting.run(`${prefix}.api_key`, value.apiKey, now);
       }
+      saveSetting.run("topology.url", nextTopology.url, now);
+      saveSetting.run("topology.token", nextTopology.token, now);
+      saveSetting.run("topology.target_quads", String(nextTopology.targetQuads), now);
+      saveSetting.run("topology.timeout_seconds", String(nextTopology.timeoutSeconds), now);
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
@@ -588,5 +649,5 @@ export function createSettingsStore({ db, workflowFiles, defaultComfyUrl }) {
     return publicSettings();
   }
 
-  return { processConfig, imageConfig, agentConfig, coordinatorAgentConfig, coordinatorImageConfig, publicSettings, getWorkflow, fetchAgentModels, update, uploadWorkflow, removeWorkflow };
+  return { processConfig, imageConfig, agentConfig, coordinatorAgentConfig, coordinatorImageConfig, topologyConfig, publicSettings, getWorkflow, fetchAgentModels, update, uploadWorkflow, removeWorkflow };
 }

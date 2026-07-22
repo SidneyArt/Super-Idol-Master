@@ -223,7 +223,16 @@ unset AUTOREMESHER_API_TOKEN
 
 这一节只配置运行 Super Idol Master 后端的机器，不在 DGX 上部署该项目。
 
-在调用方的 `web/.env.local` 中配置：
+推荐在网站右上角打开“请求设置”，进入“拓扑 API”页签，填写：
+
+- 服务地址：`http://100.120.236.113:8190`；
+- Bearer Token：与 DGX `/etc/autoremesher-api.env` 中的 Token 一致；
+- 目标四边面数：默认 `50000`；
+- 请求超时：默认 `3600` 秒。
+
+配置保存在调用方的 SQLite 数据库中，Token 不会通过设置查询接口返回给前端。服务地址可以替换为其他兼容 `/v1/remesh` 请求协议的 API。
+
+也可以使用 `web/.env.local` 提供首次默认值：
 
 ```dotenv
 TOPOLOGY_SERVICE_URL=http://100.120.236.113:8190
@@ -232,7 +241,7 @@ TOPOLOGY_TARGET_QUADS=50000
 TOPOLOGY_TIMEOUT_SECONDS=3600
 ```
 
-重启调用方的 Node.js 后端后，流程将变为：
+设置面板保存值优先于环境变量；修改 `.env.local` 后需要重启 Node.js 后端。配置完成后，流程将变为：
 
 ```text
 3D 模型生成
