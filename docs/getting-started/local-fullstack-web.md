@@ -129,6 +129,10 @@ IDEA
 | `GET` | `/api/runs/:id/download/rigged` | 下载真实绑骨 GLB |
 | `POST` | `/api/runs/:id/reset` | 清除任务产物引用并回到 IDEA |
 | `DELETE` | `/api/runs/:id` | 删除任务和事件 |
+| `GET` | `/api/animations` | 获取本机 Mixamo 动画库 |
+| `POST` | `/api/animations` | 导入并检查 Mixamo FBX 动画 |
+| `GET` | `/api/animations/:id/file` | 读取动画 FBX 文件 |
+| `DELETE` | `/api/animations/:id` | 删除动画记录和本地 FBX 文件 |
 
 所有生成接口只运行仓库内固定 Python 脚本。用户提示词只作为脚本参数，不会作为 Shell 命令执行。
 
@@ -215,8 +219,29 @@ Vinext 本地环境已关闭图片优化，避免缺少 Cloudflare `ASSETS/IMAGE
 - 左键旋转、滚轮缩放、右键平移；
 - 材质 / 拓扑线框一键切换，线框按 GLB 中实际保存的三角面显示；
 - 自动旋转开关和重置视角；
-- 绑骨模型的骨骼显示开关；
+- 绑骨模型默认显示骨骼，可点击骨骼并使用旋转环临时摆姿态；
+- Mixamo FBX 动画导入、骨骼重定向、播放、暂停、重播、时间轴、循环、速度和原地移动预览；
 - 实时展示 Mesh、Bone、顶点和三角面数量；
 - 模型加载中和加载失败的明确状态提示。
 
 查看阶段卡片只改变展示内容，不会推进或回退数据库中的状态机。
+
+### 9.1 导入并预览 Mixamo 动画
+
+从 Mixamo 下载动画时，建议选择以下参数：
+
+- `Format`：`FBX Binary`；
+- `Skin`：`Without Skin`；
+- `Frames per Second`：`30`；
+- 原地行走或跑步动作：下载前开启 Mixamo 的 `In Place`；即使源动画带水平位移，查看器也会默认启用“原地移动”。
+
+使用步骤：
+
+1. 打开任意已绑定 GLB 的预览界面。
+2. 点击胶片图标“Mixamo 动画预览”。
+3. 点击“导入 FBX”，选择不超过 15 MB 的动画文件。
+4. 系统解析动画并检查 Mixamo 核心骨骼。导入成功后，该动画会出现在所有工作空间和绑定角色的动画列表中。
+5. 选择动画并点击“播放”。播放期间可暂停、拖动时间轴、调整速度，以及切换循环和原地移动。
+6. 点击“恢复静态姿态”，回到模型原始绑定姿态并重新启用手动选骨功能。
+
+动画库保存在 Windows 本地 `web/data/mixamo-animations/`，索引存放在 SQLite 的 `animation_assets` 表中。动画重定向和播放都在浏览器内完成，不调用 Mixamo 在线服务，不依赖 DGX，也不会把动作写回或导出到原始 GLB。删除动画时会同时删除 SQLite 记录和对应的本地 FBX 文件。

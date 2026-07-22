@@ -16,7 +16,8 @@ Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生�
   - `角色原画 → T-Pose 图 → T-Pose QA → 3D → 自动拓扑 → 自动绑骨 → 导出`。
 - 通过 ComfyUI HTTP API 和 WebSocket 调用 DGX，展示真实队列、节点进度和执行结果。
 - 文生图支持 StepFun 云端 API 与 DGX Qwen Image 两种接入方式；图生图使用 StepFun 云端 API，并分别提供模型、Base URL 与 API Key 配置。
-- 静态与绑骨 GLB 的交互式 3D 预览，包括材质、线框、骨骼和自动旋转。
+- 静态与绑骨 GLB 的交互式 3D 预览，包括材质、线框、骨骼、临时摆姿态和自动旋转。
+- Mixamo 动画预览：导入一次 FBX 动画后可供所有绑定角色复用，支持播放、暂停、时间轴、循环、速度和原地移动；预览姿态不会写回 GLB。
 - SQLite 持久化任务、阶段、事件、配置、Agent 对话和质检报告。
 - Pi 驱动的分层多 Agent 协作：一个跨任务 `Coordinator`、每个任务一个 `Supervisor`，再按阶段调用七个只读专业 Agent；角色、工具和结构化输出互相隔离。
 - 目标驱动的持续执行。用户说“帮我一路生成到模型”后，系统会自动执行后续阶段，不再逐步等待人工确认；只有质量门禁失败或外部任务异常时才暂停。
@@ -98,6 +99,7 @@ Super Idol Master 不是全部部署在 DGX 上，也不是全部依赖云端模
 | 图片转静态 3D | Pixal3D | DGX ComfyUI | 自部署 |
 | 自动拓扑与基础色回烘 | AutoRemesher、Blender | DGX 独立 HTTP API | 自部署 |
 | 自动绑骨 | SkinTokens | DGX ComfyUI | 自部署 |
+| Mixamo 动画解析、骨骼重定向与播放 | Three.js、FBXLoader | Windows 本地 Web 应用 | 本地部署 |
 | SQLite、PNG、GLB 与质检报告 | 本地文件系统 | Windows 本地 | 本地存储 |
 
 ### StepFun 云端能力

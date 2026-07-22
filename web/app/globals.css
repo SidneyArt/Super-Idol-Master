@@ -1165,6 +1165,35 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .viewer-pose-axes input { width: 100%; min-width: 0; accent-color: #6da0ff; cursor: pointer; }
 .viewer-pose-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-top: 9px; border-top: 1px solid rgba(190,199,211,.2); }
 .viewer-options .viewer-pose-actions button { min-width: 0; justify-content: center; padding-inline: 7px; border: 1px solid rgba(190,199,211,.18); font-size: 10px; }
+.viewer-pose-locked { margin: 0; padding: 8px 9px; border: 1px solid rgba(245,178,75,.28); border-radius: 5px; background: rgba(245,178,75,.08); color: #d9bd8b; font-size: 10px; line-height: 1.45; }
+.viewer-pose-panel select:disabled, .viewer-pose-panel input:disabled, .viewer-pose-panel button:disabled { opacity: .48; cursor: not-allowed; }
+.viewer-animation-panel { width: min(370px, calc(100vw - 24px)); gap: 11px; padding: 12px; color: #d4dae2; }
+.viewer-animation-panel button svg { flex: 0 0 auto; opacity: 1; }
+.viewer-animation-panel button:disabled { opacity: .45; cursor: not-allowed; }
+.viewer-animation-meta { display: grid; gap: 5px; padding: 9px; border: 1px solid rgba(190,199,211,.18); border-radius: 5px; background: rgba(255,255,255,.035); }
+.viewer-animation-meta > span { width: fit-content; padding: 3px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; }
+.viewer-animation-meta > span.compatible { background: rgba(61,211,146,.13); color: #6ce2ac; }
+.viewer-animation-meta > span.incompatible { background: rgba(242,109,120,.14); color: #ff98a1; }
+.viewer-animation-meta small { color: #8f99a6; font-size: 10px; }
+.viewer-animation-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.viewer-animation-controls button:last-child { grid-column: 1 / -1; }
+.viewer-options .viewer-animation-controls button, .viewer-options .viewer-animation-library-actions button, .viewer-options .viewer-animation-empty button { min-width: 0; justify-content: center; padding-inline: 8px; border: 1px solid rgba(190,199,211,.2); background: rgba(255,255,255,.035); }
+.viewer-options .viewer-animation-controls button.primary { border-color: rgba(79,140,255,.6); background: #4f8cff; color: #fff; }
+.viewer-options .viewer-animation-controls button.primary:hover { background: #6a9cff; }
+.viewer-animation-timeline { display: grid; gap: 5px; }
+.viewer-animation-timeline > span { display: flex; justify-content: space-between; color: #aeb7c2; font-size: 10px; font-variant-numeric: tabular-nums; }
+.viewer-animation-timeline input { width: 100%; min-width: 0; margin: 0; accent-color: #6da0ff; cursor: pointer; }
+.viewer-animation-timeline input:disabled { opacity: .45; cursor: not-allowed; }
+.viewer-animation-options { display: grid; grid-template-columns: 1fr 1fr auto; align-items: center; gap: 7px; padding: 9px 0; border-block: 1px solid rgba(190,199,211,.16); }
+.viewer-animation-options label { min-width: 0; display: flex; align-items: center; gap: 6px; color: #b9c1cb; font-size: 10px; white-space: nowrap; }
+.viewer-animation-options input { margin: 0; accent-color: #6da0ff; }
+.viewer-animation-options select { height: 27px; padding: 0 5px; border: 1px solid rgba(190,199,211,.24); border-radius: 4px; background: #181d25; color: #f0f3f7; font-size: 10px; }
+.viewer-animation-library-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.viewer-options .viewer-animation-library-actions button.confirm-delete { border-color: rgba(242,109,120,.55); background: rgba(242,109,120,.15); color: #ff9aa2; }
+.viewer-animation-empty { min-height: 126px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 14px; border: 1px dashed rgba(190,199,211,.24); border-radius: 6px; color: #99a3af; text-align: center; font-size: 11px; }
+.viewer-animation-empty strong { color: #eef1f5; font-size: 12px; }
+.viewer-animation-empty span { max-width: 250px; line-height: 1.45; }
+.viewer-animation-error { padding: 8px 9px; border: 1px solid rgba(242,109,120,.3); border-radius: 5px; background: rgba(242,109,120,.09); color: #ff9ba3; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
 .model-viewer-lighting { position: absolute; z-index: 3; top: 12px; right: 12px; }
 .viewer-lighting-panel { position: absolute; top: 40px; right: 0; width: min(310px, calc(100vw - 24px)); display: grid; gap: 13px; padding: 13px; border: 1px solid rgba(190,199,211,.3); border-radius: 6px; background: rgba(13,17,23,.96); color: #d4dae2; box-shadow: 0 14px 36px rgba(0,0,0,.38); backdrop-filter: blur(14px); }
 .viewer-lighting-heading { min-height: 24px; display: flex; align-items: center; gap: 8px; padding-bottom: 9px; border-bottom: 1px solid rgba(190,199,211,.2); }

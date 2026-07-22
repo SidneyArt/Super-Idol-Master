@@ -2774,7 +2774,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                         </div>
                       ) : modelPreviewUrl ? (
                         <Suspense fallback={<div className="stage-empty"><LoaderCircle className="spin" size={24} /><span>正在加载 3D 查看器</span></div>}>
-                          <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : useTopologyPreview ? "拓扑 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} />
+                          <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : useTopologyPreview ? "拓扑 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} animationApiBase={API_BASE} />
                         </Suspense>
                       ) : hasQaComparison ? (
                         <div className="qa-blend-preview">
@@ -3361,7 +3361,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                         <Image className="asset-preview-image" src={workspaceAssetPreviewUrl(selectedWorkspaceAsset.previewUrl)} alt={`${selectedWorkspaceAsset.runName} ${selectedWorkspaceAsset.label}`} width={1600} height={1600} unoptimized />
                       ) : (
                         <Suspense fallback={<div className="model-loading"><LoaderCircle className="spinning" size={24} /><span>正在加载 3D 资产…</span></div>}>
-                          <ModelViewer src={workspaceAssetPreviewUrl(selectedWorkspaceAsset.previewUrl)} label={`${selectedWorkspaceAsset.runName} ${selectedWorkspaceAsset.label}`} rigged={selectedWorkspaceAsset.rigged} />
+                          <ModelViewer src={workspaceAssetPreviewUrl(selectedWorkspaceAsset.previewUrl)} label={`${selectedWorkspaceAsset.runName} ${selectedWorkspaceAsset.label}`} rigged={selectedWorkspaceAsset.rigged} animationApiBase={API_BASE} />
                         </Suspense>
                       )}
                     </div>

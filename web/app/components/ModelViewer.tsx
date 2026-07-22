@@ -1,8 +1,9 @@
 "use client";
 
-import { Bone, Check, CloudSun, Focus, Grid3X3, Lightbulb, Orbit, Palette, RotateCcw, SunMedium, Triangle } from "lucide-react";
+import { Bone, Check, CloudSun, Film, Focus, Grid3X3, Lightbulb, LoaderCircle, Orbit, Palette, Pause, Play, RotateCcw, SunMedium, Trash2, Triangle, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
@@ -11,6 +12,7 @@ type ModelViewerProps = {
   src: string;
   label: string;
   rigged?: boolean;
+  animationApiBase?: string;
 };
 
 type ModelStats = {
@@ -20,18 +22,33 @@ type ModelStats = {
   triangles: number;
 };
 
-type ViewerPanel = "render" | "rotation" | "skeleton" | "grid" | "view" | "lighting";
+type ViewerPanel = "render" | "rotation" | "skeleton" | "animation" | "grid" | "view" | "lighting";
 type CameraView = "default" | "front" | "back" | "left" | "right";
 type PoseAxis = "x" | "y" | "z";
 type PoseRotation = Record<PoseAxis, number>;
 type PoseBoneOption = { id: string; name: string };
-type PoseBoneRuntime = { bone: THREE.Bone; restQuaternion: THREE.Quaternion };
+type PoseBoneRuntime = { bone: THREE.Bone; restPosition: THREE.Vector3; restQuaternion: THREE.Quaternion };
 type BonePickerRuntime = {
   mesh: THREE.Mesh;
   bone: THREE.Bone;
   parentBone: THREE.Bone | null;
   kind: "joint" | "segment";
 };
+type AnimationAsset = {
+  id: string;
+  name: string;
+  filename: string;
+  size: number;
+  duration: number;
+  trackCount: number;
+  boneCount: number;
+  mappedBoneCount: number;
+  compatible: boolean;
+  boneNames: string[];
+  fileUrl: string;
+  createdAt: string;
+};
+type RetargetedClip = { clip: THREE.AnimationClip; mappedBoneCount: number };
 
 const EMPTY_POSE_ROTATION: PoseRotation = { x: 0, y: 0, z: 0 };
 
@@ -42,6 +59,162 @@ function rotationFromRestPose(runtime: PoseBoneRuntime): PoseRotation {
   return { x: degrees(euler.x), y: degrees(euler.y), z: degrees(euler.z) };
 }
 
+function normalizeMixamoBoneName(value: string) {
+  return value.replace(/^mixamorig[:_]?/i, "");
+}
+
+function boneDepth(bone: THREE.Bone) {
+  let depth = 0;
+  let parent = bone.parent;
+  while (parent) {
+    if (parent instanceof THREE.Bone) depth += 1;
+    parent = parent.parent;
+  }
+  return depth;
+}
+
+function skeletonHeight(bones: THREE.Bone[]) {
+  const position = new THREE.Vector3();
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const bone of bones) {
+    bone.getWorldPosition(position);
+    minY = Math.min(minY, position.y);
+    maxY = Math.max(maxY, position.y);
+  }
+  return Number.isFinite(minY) && Number.isFinite(maxY) ? Math.max(maxY - minY, 0.0001) : 1;
+}
+
+function retargetMixamoClip(
+  source: THREE.Group,
+  sourceClip: THREE.AnimationClip,
+  targetBones: Map<string, PoseBoneRuntime>,
+  inPlace: boolean,
+): RetargetedClip {
+  const sourceBones = new Map<string, THREE.Bone>();
+  source.traverse((object) => {
+    if (object instanceof THREE.Bone) sourceBones.set(normalizeMixamoBoneName(object.name), object);
+  });
+  const targetByName = new Map([...targetBones.values()].map((runtime) => [runtime.bone.name, runtime]));
+  const targets = [...targetBones.values()]
+    .filter(({ bone }) => sourceBones.has(bone.name))
+    .sort((left, right) => boneDepth(left.bone) - boneDepth(right.bone));
+  if (!targets.length) throw new Error("动画骨骼与当前模型不匹配");
+
+  source.updateMatrixWorld(true);
+  const sourceRestWorld = new Map<string, THREE.Quaternion>();
+  for (const [name, bone] of sourceBones) sourceRestWorld.set(name, bone.getWorldQuaternion(new THREE.Quaternion()));
+  const targetRestWorld = new Map<string, THREE.Quaternion>();
+  for (const { bone } of targetBones.values()) targetRestWorld.set(bone.uuid, bone.getWorldQuaternion(new THREE.Quaternion()));
+
+  const sourceHeight = skeletonHeight([...sourceBones.values()]);
+  const targetHeight = skeletonHeight([...targetBones.values()].map(({ bone }) => bone));
+  const movementScale = targetHeight / sourceHeight;
+  const fps = 30;
+  const frameCount = Math.max(2, Math.ceil(sourceClip.duration * fps) + 1);
+  const times = new Float32Array(frameCount);
+  const rotations = new Map<string, Float32Array>();
+  for (const { bone } of targets) rotations.set(bone.uuid, new Float32Array(frameCount * 4));
+
+  const sourceMixer = new THREE.AnimationMixer(source);
+  const sourceAction = sourceMixer.clipAction(sourceClip);
+  sourceAction.setLoop(THREE.LoopOnce, 1);
+  sourceAction.clampWhenFinished = true;
+  sourceAction.play();
+
+  const sourceHip = sourceBones.get("Hips");
+  const targetHipRuntime = targetByName.get("Hips");
+  const targetHip = targetHipRuntime?.bone;
+  const hipPositions = sourceHip && targetHip ? new Float32Array(frameCount * 3) : null;
+  const sourceHipOrigin = new THREE.Vector3();
+  const sourceHipPosition = new THREE.Vector3();
+  const movement = new THREE.Vector3();
+  const parentWorldQuaternion = new THREE.Quaternion();
+  const parentWorldScale = new THREE.Vector3(1, 1, 1);
+  const sourceAnimated = new THREE.Quaternion();
+  const motionDelta = new THREE.Quaternion();
+  const desiredWorld = new THREE.Quaternion();
+  const localRotation = new THREE.Quaternion();
+  const desiredWorldRotations = new Map<string, THREE.Quaternion>();
+
+  sourceMixer.setTime(0);
+  source.updateMatrixWorld(true);
+  sourceHip?.getWorldPosition(sourceHipOrigin);
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    const time = Math.min((frame / (frameCount - 1)) * sourceClip.duration, Math.max(sourceClip.duration - 0.000001, 0));
+    times[frame] = (frame / (frameCount - 1)) * sourceClip.duration;
+    sourceMixer.setTime(time);
+    source.updateMatrixWorld(true);
+    desiredWorldRotations.clear();
+
+    for (const { bone } of targets) {
+      const sourceBone = sourceBones.get(bone.name)!;
+      sourceBone.getWorldQuaternion(sourceAnimated);
+      motionDelta.copy(sourceAnimated).multiply(sourceRestWorld.get(bone.name)!.clone().invert()).normalize();
+      desiredWorld.copy(motionDelta).multiply(targetRestWorld.get(bone.uuid)!).normalize();
+      const parentBone = bone.parent instanceof THREE.Bone ? bone.parent : null;
+      const parentDesired = parentBone
+        ? desiredWorldRotations.get(parentBone.uuid) || targetRestWorld.get(parentBone.uuid) || parentBone.getWorldQuaternion(new THREE.Quaternion())
+        : bone.parent?.getWorldQuaternion(parentWorldQuaternion) || parentWorldQuaternion.identity();
+      localRotation.copy(parentDesired).invert().multiply(desiredWorld).normalize();
+      desiredWorldRotations.set(bone.uuid, desiredWorld.clone());
+      const values = rotations.get(bone.uuid)!;
+      if (frame > 0) {
+        const previous = new THREE.Quaternion().fromArray(values, (frame - 1) * 4);
+        if (previous.dot(localRotation) < 0) localRotation.set(-localRotation.x, -localRotation.y, -localRotation.z, -localRotation.w);
+      }
+      localRotation.toArray(values, frame * 4);
+    }
+
+    if (hipPositions && sourceHip && targetHip) {
+      sourceHip.getWorldPosition(sourceHipPosition);
+      movement.subVectors(sourceHipPosition, sourceHipOrigin).multiplyScalar(movementScale);
+      if (inPlace) {
+        movement.x = 0;
+        movement.z = 0;
+      }
+      const parent = targetHip.parent;
+      if (parent) {
+        parent.getWorldQuaternion(parentWorldQuaternion).invert();
+        parent.getWorldScale(parentWorldScale);
+        movement.applyQuaternion(parentWorldQuaternion);
+        movement.set(
+          movement.x / Math.max(Math.abs(parentWorldScale.x), 0.0001),
+          movement.y / Math.max(Math.abs(parentWorldScale.y), 0.0001),
+          movement.z / Math.max(Math.abs(parentWorldScale.z), 0.0001),
+        );
+      }
+      movement.add(targetHipRuntime!.restPosition).toArray(hipPositions, frame * 3);
+    }
+  }
+  sourceAction.stop();
+  sourceMixer.uncacheRoot(source);
+
+  const tracks: THREE.KeyframeTrack[] = targets.map(({ bone }) => new THREE.QuaternionKeyframeTrack(
+    `${bone.name}.quaternion`,
+    times,
+    rotations.get(bone.uuid)!,
+  ));
+  if (hipPositions && targetHip) tracks.push(new THREE.VectorKeyframeTrack(`${targetHip.name}.position`, times, hipPositions));
+  return { clip: new THREE.AnimationClip(sourceClip.name || "Mixamo", sourceClip.duration, tracks), mappedBoneCount: targets.length };
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+  }
+  return btoa(binary);
+}
+
+function formatClipTime(value: number) {
+  if (!Number.isFinite(value) || value < 0) return "0:00.0";
+  const minutes = Math.floor(value / 60);
+  const seconds = (value % 60).toFixed(1).padStart(4, "0");
+  return `${minutes}:${seconds}`;
+}
+
 function disposeMaterial(material: THREE.Material) {
   for (const value of Object.values(material)) {
     if (value instanceof THREE.Texture) value.dispose();
@@ -49,8 +222,9 @@ function disposeMaterial(material: THREE.Material) {
   material.dispose();
 }
 
-export default function ModelViewer({ src, label, rigged = false }: ModelViewerProps) {
+export default function ModelViewer({ src, label, rigged = false, animationApiBase = "" }: ModelViewerProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const animationFileRef = useRef<HTMLInputElement>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const gridRef = useRef<THREE.GridHelper | null>(null);
@@ -65,6 +239,14 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   const poseRotationsRef = useRef<Map<string, PoseRotation>>(new Map());
   const selectedPoseBoneIdRef = useRef("");
   const transformControlsRef = useRef<TransformControls | null>(null);
+  const modelRef = useRef<THREE.Group | null>(null);
+  const animationMixerRef = useRef<THREE.AnimationMixer | null>(null);
+  const animationActionRef = useRef<THREE.AnimationAction | null>(null);
+  const animationClipRef = useRef<THREE.AnimationClip | null>(null);
+  const animationPlayingRef = useRef(false);
+  const animationLoopRef = useRef(true);
+  const animationSpeedRef = useRef(1);
+  const animationActiveRef = useRef(false);
   const resetViewRef = useRef<() => void>(() => undefined);
   const setCameraViewRef = useRef<(view: CameraView) => void>(() => undefined);
   const autoRotateRef = useRef(false);
@@ -92,6 +274,19 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   const [poseBones, setPoseBones] = useState<PoseBoneOption[]>([]);
   const [selectedPoseBoneId, setSelectedPoseBoneId] = useState("");
   const [selectedPoseRotation, setSelectedPoseRotation] = useState<PoseRotation>(EMPTY_POSE_ROTATION);
+  const [animations, setAnimations] = useState<AnimationAsset[]>([]);
+  const [animationsLoading, setAnimationsLoading] = useState(rigged && Boolean(animationApiBase));
+  const [animationBusy, setAnimationBusy] = useState(false);
+  const [animationError, setAnimationError] = useState("");
+  const [selectedAnimationId, setSelectedAnimationId] = useState("");
+  const [loadedAnimationId, setLoadedAnimationId] = useState("");
+  const [animationPlaying, setAnimationPlaying] = useState(false);
+  const [animationLoop, setAnimationLoop] = useState(true);
+  const [animationInPlace, setAnimationInPlace] = useState(true);
+  const [animationSpeed, setAnimationSpeed] = useState(1);
+  const [animationTime, setAnimationTime] = useState(0);
+  const [animationDuration, setAnimationDuration] = useState(0);
+  const [pendingAnimationDeleteId, setPendingAnimationDeleteId] = useState("");
   const [openPanel, setOpenPanel] = useState<ViewerPanel | null>(null);
 
   useEffect(() => {
@@ -113,17 +308,55 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   }, [openPanel]);
 
   useEffect(() => {
+    if (!rigged || !animationApiBase) return;
+    const controller = new AbortController();
+    fetch(`${animationApiBase}/api/animations`, { signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "动画库读取失败");
+        const items = Array.isArray(data.animations) ? data.animations as AnimationAsset[] : [];
+        setAnimations(items);
+        setSelectedAnimationId((current) => current && items.some((item) => item.id === current) ? current : items[0]?.id || "");
+      })
+      .catch((reason) => {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        setAnimationError(reason instanceof Error ? reason.message : "动画库读取失败");
+      })
+      .finally(() => setAnimationsLoading(false));
+    return () => controller.abort();
+  }, [rigged, animationApiBase]);
+
+  useEffect(() => {
     autoRotateRef.current = autoRotate;
     if (controlsRef.current) controlsRef.current.autoRotate = autoRotate;
   }, [autoRotate]);
+
+  useEffect(() => {
+    animationPlayingRef.current = animationPlaying;
+    if (animationActionRef.current) animationActionRef.current.paused = !animationPlaying;
+  }, [animationPlaying]);
+
+  useEffect(() => {
+    animationLoopRef.current = animationLoop;
+    const action = animationActionRef.current;
+    if (action) {
+      action.setLoop(animationLoop ? THREE.LoopRepeat : THREE.LoopOnce, animationLoop ? Infinity : 1);
+      action.clampWhenFinished = !animationLoop;
+    }
+  }, [animationLoop]);
+
+  useEffect(() => {
+    animationSpeedRef.current = animationSpeed;
+    if (animationMixerRef.current) animationMixerRef.current.timeScale = animationSpeed;
+  }, [animationSpeed]);
 
   useEffect(() => {
     skeletonVisibleRef.current = showSkeleton;
     if (skeletonRef.current) skeletonRef.current.visible = showSkeleton;
     const transformControls = transformControlsRef.current;
     if (transformControls) {
-      transformControls.enabled = showSkeleton;
-      transformControls.getHelper().visible = showSkeleton && Boolean(selectedPoseBoneIdRef.current);
+      transformControls.enabled = showSkeleton && !animationActiveRef.current;
+      transformControls.getHelper().visible = showSkeleton && !animationActiveRef.current && Boolean(selectedPoseBoneIdRef.current);
     }
   }, [showSkeleton]);
 
@@ -174,14 +407,15 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     const transformControls = transformControlsRef.current;
     if (runtime && transformControls) {
       transformControls.attach(runtime.bone);
-      transformControls.enabled = skeletonVisibleRef.current;
-      transformControls.getHelper().visible = skeletonVisibleRef.current;
+      transformControls.enabled = skeletonVisibleRef.current && !animationActiveRef.current;
+      transformControls.getHelper().visible = skeletonVisibleRef.current && !animationActiveRef.current;
     } else {
       transformControls?.detach();
     }
   }
 
   function updatePoseRotation(axis: PoseAxis, value: number) {
+    if (animationActiveRef.current) return;
     const runtime = poseBonesRef.current.get(selectedPoseBoneId);
     if (!runtime) return;
     const current = poseRotationsRef.current.get(selectedPoseBoneId) || EMPTY_POSE_ROTATION;
@@ -199,8 +433,10 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   }
 
   function resetSelectedPoseBone() {
+    if (animationActiveRef.current) return;
     const runtime = poseBonesRef.current.get(selectedPoseBoneId);
     if (!runtime) return;
+    runtime.bone.position.copy(runtime.restPosition);
     runtime.bone.quaternion.copy(runtime.restQuaternion);
     runtime.bone.updateMatrixWorld(true);
     poseRotationsRef.current.set(selectedPoseBoneId, { ...EMPTY_POSE_ROTATION });
@@ -209,11 +445,191 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
 
   function resetEntirePose() {
     for (const [id, runtime] of poseBonesRef.current) {
+      runtime.bone.position.copy(runtime.restPosition);
       runtime.bone.quaternion.copy(runtime.restQuaternion);
       runtime.bone.updateMatrixWorld(true);
       poseRotationsRef.current.set(id, { ...EMPTY_POSE_ROTATION });
     }
     setSelectedPoseRotation({ ...EMPTY_POSE_ROTATION });
+  }
+
+  function clearAnimationPreview() {
+    const mixer = animationMixerRef.current;
+    const clip = animationClipRef.current;
+    const model = modelRef.current;
+    mixer?.stopAllAction();
+    if (mixer && clip) mixer.uncacheClip(clip);
+    if (mixer && model) mixer.uncacheRoot(model);
+    animationMixerRef.current = null;
+    animationActionRef.current = null;
+    animationClipRef.current = null;
+    animationActiveRef.current = false;
+    animationPlayingRef.current = false;
+    setLoadedAnimationId("");
+    setAnimationPlaying(false);
+    setAnimationTime(0);
+    setAnimationDuration(0);
+    resetEntirePose();
+    model?.updateMatrixWorld(true);
+    const transformControls = transformControlsRef.current;
+    if (transformControls) {
+      transformControls.enabled = skeletonVisibleRef.current;
+      transformControls.getHelper().visible = skeletonVisibleRef.current && Boolean(selectedPoseBoneIdRef.current);
+    }
+  }
+
+  async function loadSelectedAnimation() {
+    const asset = animations.find((item) => item.id === selectedAnimationId);
+    const model = modelRef.current;
+    if (!asset || !model) throw new Error(asset ? "绑定模型尚未加载完成" : "请先选择动画");
+    if (loadedAnimationId === asset.id && animationActionRef.current) return animationActionRef.current;
+    clearAnimationPreview();
+    setAnimationBusy(true);
+    setAnimationError("");
+    try {
+      const fileUrl = asset.fileUrl.startsWith("http") ? asset.fileUrl : `${animationApiBase}${asset.fileUrl}`;
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        let message = "动画文件读取失败";
+        try { message = (await response.json()).error || message; } catch { /* binary response */ }
+        throw new Error(message);
+      }
+      const source = new FBXLoader().parse(await response.arrayBuffer(), fileUrl.slice(0, fileUrl.lastIndexOf("/") + 1));
+      const sourceClip = source.animations?.[0];
+      if (!sourceClip) throw new Error("FBX 中没有动画片段");
+      resetEntirePose();
+      model.updateMatrixWorld(true);
+      const { clip, mappedBoneCount } = retargetMixamoClip(source, sourceClip, poseBonesRef.current, animationInPlace);
+      source.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        object.geometry.dispose();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.forEach(disposeMaterial);
+      });
+      if (mappedBoneCount < 15) throw new Error(`仅匹配 ${mappedBoneCount} 根骨骼，无法安全播放`);
+      const mixer = new THREE.AnimationMixer(model);
+      mixer.timeScale = animationSpeedRef.current;
+      const action = mixer.clipAction(clip);
+      action.setLoop(animationLoopRef.current ? THREE.LoopRepeat : THREE.LoopOnce, animationLoopRef.current ? Infinity : 1);
+      action.clampWhenFinished = !animationLoopRef.current;
+      action.play();
+      action.paused = true;
+      animationMixerRef.current = mixer;
+      animationActionRef.current = action;
+      animationClipRef.current = clip;
+      animationActiveRef.current = true;
+      setLoadedAnimationId(asset.id);
+      setAnimationDuration(clip.duration);
+      setAnimationTime(0);
+      const transformControls = transformControlsRef.current;
+      if (transformControls) {
+        transformControls.enabled = false;
+        transformControls.getHelper().visible = false;
+      }
+      return action;
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "动画加载失败";
+      setAnimationError(message);
+      throw reason;
+    } finally {
+      setAnimationBusy(false);
+    }
+  }
+
+  async function toggleAnimationPlayback() {
+    if (animationBusy) return;
+    try {
+      const action = await loadSelectedAnimation();
+      if (animationPlayingRef.current) {
+        action.paused = true;
+        setAnimationPlaying(false);
+        return;
+      }
+      if (!animationLoopRef.current && action.time >= Math.max(action.getClip().duration - 0.01, 0)) action.reset().play();
+      action.paused = false;
+      setAnimationPlaying(true);
+    } catch {
+      // loadSelectedAnimation 已显示错误。
+    }
+  }
+
+  async function restartAnimation() {
+    if (animationBusy) return;
+    try {
+      const action = await loadSelectedAnimation();
+      action.reset().play();
+      action.paused = false;
+      setAnimationTime(0);
+      setAnimationPlaying(true);
+    } catch {
+      // loadSelectedAnimation 已显示错误。
+    }
+  }
+
+  function scrubAnimation(value: number) {
+    const action = animationActionRef.current;
+    const mixer = animationMixerRef.current;
+    if (!action || !mixer) return;
+    action.time = Math.max(0, Math.min(value, action.getClip().duration));
+    mixer.update(0);
+    setAnimationTime(action.time);
+  }
+
+  async function uploadAnimation(file: File) {
+    if (!animationApiBase) return;
+    if (!file.name.toLowerCase().endsWith(".fbx")) {
+      setAnimationError("只支持 Mixamo FBX 动画文件");
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      setAnimationError("动画 FBX 不能超过 15 MB");
+      return;
+    }
+    setAnimationBusy(true);
+    setAnimationError("");
+    try {
+      const response = await fetch(`${animationApiBase}/api/animations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, name: file.name.replace(/\.fbx$/i, ""), data: arrayBufferToBase64(await file.arrayBuffer()) }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "动画上传失败");
+      const items = Array.isArray(data.animations) ? data.animations as AnimationAsset[] : [];
+      clearAnimationPreview();
+      setAnimations(items);
+      setSelectedAnimationId(data.animation?.id || items[0]?.id || "");
+      setPendingAnimationDeleteId("");
+    } catch (reason) {
+      setAnimationError(reason instanceof Error ? reason.message : "动画上传失败");
+    } finally {
+      setAnimationBusy(false);
+    }
+  }
+
+  async function deleteSelectedAnimation() {
+    const asset = animations.find((item) => item.id === selectedAnimationId);
+    if (!asset || !animationApiBase) return;
+    if (pendingAnimationDeleteId !== asset.id) {
+      setPendingAnimationDeleteId(asset.id);
+      return;
+    }
+    setAnimationBusy(true);
+    setAnimationError("");
+    try {
+      const response = await fetch(`${animationApiBase}/api/animations/${encodeURIComponent(asset.id)}`, { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "动画删除失败");
+      const items = Array.isArray(data.animations) ? data.animations as AnimationAsset[] : [];
+      clearAnimationPreview();
+      setAnimations(items);
+      setSelectedAnimationId(items[0]?.id || "");
+      setPendingAnimationDeleteId("");
+    } catch (reason) {
+      setAnimationError(reason instanceof Error ? reason.message : "动画删除失败");
+    } finally {
+      setAnimationBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -222,6 +638,8 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
 
     let disposed = false;
     let frameId = 0;
+    let previousFrameAt = 0;
+    let animationUiUpdatedAt = 0;
     setLoading(true);
     setError("");
     setStats(null);
@@ -233,6 +651,17 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     setSelectedPoseRotation({ ...EMPTY_POSE_ROTATION });
     poseBonesRef.current = new Map();
     poseRotationsRef.current = new Map();
+    animationMixerRef.current?.stopAllAction();
+    animationMixerRef.current = null;
+    animationActionRef.current = null;
+    animationClipRef.current = null;
+    animationActiveRef.current = false;
+    animationPlayingRef.current = false;
+    modelRef.current = null;
+    setLoadedAnimationId("");
+    setAnimationPlaying(false);
+    setAnimationTime(0);
+    setAnimationDuration(0);
     wireframeOverlaysRef.current = new Set();
 
     const scene = new THREE.Scene();
@@ -357,7 +786,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     };
 
     const handleBonePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0 || !skeletonVisibleRef.current || transformControls.dragging || transformControls.axis) return;
+      if (event.button !== 0 || !skeletonVisibleRef.current || animationActiveRef.current || transformControls.dragging || transformControls.axis) return;
       const bounds = renderer.domElement.getBoundingClientRect();
       pointer.set(
         ((event.clientX - bounds.left) / Math.max(bounds.width, 1)) * 2 - 1,
@@ -415,7 +844,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
             bones += 1;
             const id = object.uuid;
             poseBoneOptions.push({ id, name: object.name || `Bone ${bones}` });
-            poseBonesRef.current.set(id, { bone: object, restQuaternion: object.quaternion.clone() });
+            poseBonesRef.current.set(id, { bone: object, restPosition: object.position.clone(), restQuaternion: object.quaternion.clone() });
             poseRotationsRef.current.set(id, { ...EMPTY_POSE_ROTATION });
           }
         });
@@ -425,6 +854,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
         }
 
         scene.add(model);
+        modelRef.current = model;
         const bounds = new THREE.Box3().setFromObject(model);
         const size = bounds.getSize(new THREE.Vector3());
         const center = bounds.getCenter(new THREE.Vector3());
@@ -497,7 +927,25 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
 
     const animate = () => {
       frameId = window.requestAnimationFrame(animate);
+      const now = performance.now();
+      const delta = previousFrameAt ? Math.min(Math.max((now - previousFrameAt) / 1000, 0), 0.1) : 0;
+      previousFrameAt = now;
       controls.update();
+      const mixer = animationMixerRef.current;
+      const action = animationActionRef.current;
+      if (mixer && action) {
+        mixer.update(delta);
+        if (now - animationUiUpdatedAt >= 80) {
+          animationUiUpdatedAt = now;
+          setAnimationTime(action.time);
+        }
+        if (!animationLoopRef.current && animationPlayingRef.current && action.time >= Math.max(action.getClip().duration - 0.001, 0)) {
+          action.paused = true;
+          animationPlayingRef.current = false;
+          setAnimationPlaying(false);
+          setAnimationTime(action.getClip().duration);
+        }
+      }
       updateBonePickers();
       renderer.render(scene, camera);
     };
@@ -518,6 +966,13 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
       transformControls.dispose();
       scene.remove(transformHelper);
       transformControlsRef.current = null;
+      animationMixerRef.current?.stopAllAction();
+      animationMixerRef.current = null;
+      animationActionRef.current = null;
+      animationClipRef.current = null;
+      animationActiveRef.current = false;
+      animationPlayingRef.current = false;
+      modelRef.current = null;
       scene.remove(bonePickerGroup);
       bonePickerSphereGeometry.dispose();
       bonePickerSegmentGeometry.dispose();
@@ -561,6 +1016,10 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     setOpenPanel(null);
   }
 
+  const selectedAnimation = animations.find((item) => item.id === selectedAnimationId) || null;
+  const poseLockedByAnimation = Boolean(loadedAnimationId);
+  const timelineDuration = animationDuration || selectedAnimation?.duration || 0;
+
   return (
     <div className="model-viewer-shell">
       <div ref={hostRef} className="model-viewer-canvas" aria-label={`${label} 交互式三维预览`} />
@@ -594,7 +1053,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
               <button className={`viewer-pose-visibility ${showSkeleton ? "active" : ""}`} onClick={() => setShowSkeleton((value) => !value)} type="button"><Check size={14} />{showSkeleton ? "隐藏骨骼线" : "显示骨骼线"}</button>
               <label className="viewer-pose-bone-select">
                 <span>选择骨骼</span>
-                <select value={selectedPoseBoneId} onChange={(event) => selectPoseBone(event.target.value)}>
+                <select value={selectedPoseBoneId} disabled={poseLockedByAnimation} onChange={(event) => selectPoseBone(event.target.value)}>
                   {poseBones.map((bone) => <option value={bone.id} key={bone.id}>{bone.name}</option>)}
                 </select>
               </label>
@@ -602,14 +1061,63 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
                 {(["x", "y", "z"] as const).map((axis) => (
                   <label key={axis}>
                     <span><b>{axis.toUpperCase()}</b> 旋转<output>{selectedPoseRotation[axis]}°</output></span>
-                    <input type="range" min="-180" max="180" step="1" value={selectedPoseRotation[axis]} onChange={(event) => updatePoseRotation(axis, Number(event.target.value))} aria-label={`${axis.toUpperCase()} 轴旋转`} />
+                    <input type="range" min="-180" max="180" step="1" disabled={poseLockedByAnimation} value={selectedPoseRotation[axis]} onChange={(event) => updatePoseRotation(axis, Number(event.target.value))} aria-label={`${axis.toUpperCase()} 轴旋转`} />
                   </label>
                 ))}
               </div>
               <div className="viewer-pose-actions">
-                <button type="button" onClick={resetSelectedPoseBone}><RotateCcw size={13} />复位当前骨骼</button>
-                <button type="button" onClick={resetEntirePose}><RotateCcw size={13} />复位全部姿态</button>
+                <button type="button" disabled={poseLockedByAnimation} onClick={resetSelectedPoseBone}><RotateCcw size={13} />复位当前骨骼</button>
+                <button type="button" disabled={poseLockedByAnimation} onClick={resetEntirePose}><RotateCcw size={13} />复位全部姿态</button>
               </div>
+              {poseLockedByAnimation && <p className="viewer-pose-locked">动画预览占用骨骼。点击动画面板中的“恢复静态姿态”后可继续手动摆姿态。</p>}
+            </div>}
+          </div>
+        )}
+        {rigged && stats && stats.bones > 0 && (
+          <div className="model-viewer-menu">
+            <button className={`viewer-tool-button ${animationPlaying || openPanel === "animation" ? "active" : ""}`} onClick={() => togglePanel("animation")} type="button" title="Mixamo 动画预览" aria-label="Mixamo 动画预览" aria-expanded={openPanel === "animation"} aria-haspopup="dialog">
+              <Film size={16} />
+            </button>
+            {openPanel === "animation" && <div className="viewer-options viewer-animation-panel" role="dialog" aria-label="Mixamo 动画预览器">
+              <div className="viewer-pose-heading"><span><Film size={15} />Mixamo 动画预览</span><small>动画库可供所有绑定角色复用，播放结果不会写入 GLB</small></div>
+              <input ref={animationFileRef} hidden type="file" accept=".fbx,application/octet-stream" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadAnimation(file); event.currentTarget.value = ""; }} />
+              {animationsLoading ? (
+                <div className="viewer-animation-empty"><LoaderCircle className="spinning" size={18} />正在读取动画库…</div>
+              ) : animations.length ? (
+                <>
+                  <label className="viewer-pose-bone-select">
+                    <span>动画片段</span>
+                    <select value={selectedAnimationId} disabled={animationBusy} onChange={(event) => { clearAnimationPreview(); setSelectedAnimationId(event.target.value); setPendingAnimationDeleteId(""); setAnimationError(""); }}>
+                      {animations.map((animation) => <option value={animation.id} key={animation.id}>{animation.name}</option>)}
+                    </select>
+                  </label>
+                  {selectedAnimation && <div className="viewer-animation-meta">
+                    <span className={selectedAnimation.compatible ? "compatible" : "incompatible"}>{selectedAnimation.compatible ? "Mixamo 骨骼已匹配" : "骨骼不完整"}</span>
+                    <small>{selectedAnimation.duration.toFixed(2)} 秒 · {selectedAnimation.trackCount} 条轨道 · {selectedAnimation.mappedBoneCount} 根目标骨骼</small>
+                  </div>}
+                  <div className="viewer-animation-controls">
+                    <button className="primary" type="button" disabled={animationBusy || !selectedAnimation?.compatible} onClick={() => void toggleAnimationPlayback()}>{animationBusy ? <LoaderCircle className="spinning" size={14} /> : animationPlaying ? <Pause size={14} /> : <Play size={14} />}{animationBusy ? "处理中" : animationPlaying ? "暂停" : "播放"}</button>
+                    <button type="button" disabled={animationBusy || !selectedAnimation?.compatible} onClick={() => void restartAnimation()}><RotateCcw size={14} />重播</button>
+                    <button type="button" disabled={!poseLockedByAnimation} onClick={clearAnimationPreview}><Bone size={14} />恢复静态姿态</button>
+                  </div>
+                  <label className="viewer-animation-timeline">
+                    <span><output>{formatClipTime(animationTime)}</output><output>{formatClipTime(timelineDuration)}</output></span>
+                    <input aria-label="动画播放进度" type="range" min="0" max={Math.max(timelineDuration, 0.01)} step="0.01" disabled={!poseLockedByAnimation} value={Math.min(animationTime, Math.max(timelineDuration, 0.01))} onChange={(event) => scrubAnimation(Number(event.target.value))} />
+                  </label>
+                  <div className="viewer-animation-options">
+                    <label><input type="checkbox" checked={animationLoop} onChange={(event) => setAnimationLoop(event.target.checked)} />循环播放</label>
+                    <label><input type="checkbox" checked={animationInPlace} onChange={(event) => { clearAnimationPreview(); setAnimationInPlace(event.target.checked); }} />原地移动</label>
+                    <label><span>速度</span><select value={animationSpeed} onChange={(event) => setAnimationSpeed(Number(event.target.value))}><option value="0.5">0.5x</option><option value="0.75">0.75x</option><option value="1">1.0x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2">2.0x</option></select></label>
+                  </div>
+                  <div className="viewer-animation-library-actions">
+                    <button type="button" disabled={animationBusy} onClick={() => animationFileRef.current?.click()}><Upload size={14} />导入 FBX</button>
+                    <button className={pendingAnimationDeleteId === selectedAnimationId ? "confirm-delete" : ""} type="button" disabled={animationBusy || !selectedAnimation} onClick={() => void deleteSelectedAnimation()}><Trash2 size={14} />{pendingAnimationDeleteId === selectedAnimationId ? "确认删除" : "删除动画"}</button>
+                  </div>
+                </>
+              ) : (
+                <div className="viewer-animation-empty"><Film size={20} /><strong>动画库为空</strong><span>导入 Mixamo 的 FBX Binary／Without Skin 文件。</span><button type="button" onClick={() => animationFileRef.current?.click()}><Upload size={14} />导入第一个动画</button></div>
+              )}
+              {animationError && <div className="viewer-animation-error">{animationError}</div>}
             </div>}
           </div>
         )}
@@ -657,7 +1165,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
         </div>}
       </div>
 
-      <div className="model-viewer-help">{showSkeleton && rigged ? "点击骨骼选择 · 拖动彩色旋转环摆姿态 · 不会保存" : wireframe ? "拓扑模式：原材质 + 白色线框" : "左键旋转 · 滚轮缩放 · 右键平移"}</div>
+      <div className="model-viewer-help">{animationPlaying ? "正在播放 Mixamo 动画 · 仅用于预览" : poseLockedByAnimation ? "动画已暂停 · 可拖动时间轴检查蒙皮" : showSkeleton && rigged ? "点击骨骼选择 · 拖动彩色旋转环摆姿态 · 不会保存" : wireframe ? "拓扑模式：原材质 + 白色线框" : "左键旋转 · 滚轮缩放 · 右键平移"}</div>
       {stats && (
         <div className="model-viewer-stats">
           <span>{stats.meshes} MESH</span>

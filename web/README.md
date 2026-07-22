@@ -46,13 +46,14 @@ npm run agent:verify
 - 总调度 Agent 可分析多角色合集原画、裁切单体角色、批量建任务并委派给专属 Asset Agent；
 - 总调度与任务 Agent 可分别选择请求批准或 `Auto` 模式；
 - 右上角通知中心展示待审批、生成完成和流程完成提醒，并支持 `View` 跳转；
-- IDEA → 2D → 自动 T-Pose QA → 3D → 自动绑骨 → 导出的严格状态机；
-- 原画 → T-Pose 图 → 自动 T-Pose QA → 3D → 自动绑骨 → 导出的图生模型工作流；
+- IDEA → 2D → 自动 T-Pose QA → 3D → 自动拓扑 → 自动绑骨 → 导出的严格状态机；
+- 原画 → T-Pose 图 → 自动 T-Pose QA → 3D → 自动拓扑 → 自动绑骨 → 导出的图生模型工作流；
 - 文生图与图生图模型可独立配置；
 - 调用 DGX 上真实的 Qwen Image、SDPose、Pixal3D 和 SkinTokens 工作流；
 - ComfyUI WebSocket 真实进度与任务事件记录；
 - 静态和绑骨 GLB 的交互式 3D 预览；
-- 材质、拓扑线框、骨骼显示、自动旋转和视角控制；
+- 材质、拓扑线框、骨骼显示、临时摆姿态、自动旋转和视角控制；
+- 可复用的 Mixamo FBX 动画库，以及播放、暂停、时间轴、循环、速度和原地移动预览；
 - SQLite 持久化任务、产物路径和执行历史。
 - Pi 驱动的 Asset Agent，可完善提示词、推进或回退流程、重新生成并分析参考图片。
 - Pi 多角色协作：Supervisor 在提示词、T-Pose、静态 3D、绑骨、导出和失败诊断节点调用对应的受控专业 Agent。
@@ -73,6 +74,7 @@ npm run agent:verify
 
 - `node_modules/` 和构建目录；
 - `data/` 中的 SQLite 数据库和运行日志；
+- `data/mixamo-animations/` 中用户导入的 Mixamo FBX 动画；
 - `public/generated/` 中的任务预览图片；
 - 本地环境变量和 DGX 生成产物。
 

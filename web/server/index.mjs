@@ -38,6 +38,7 @@ const outputRoot = resolve(repoRoot, "output");
 const generatedDir = join(webRoot, "public", "generated");
 const dataDir = join(webRoot, "data");
 const runtimeWorkflowDir = join(dataDir, "runtime-workflows");
+const animationDir = join(dataDir, "mixamo-animations");
 const dbPath = process.env.DATABASE_PATH || join(dataDir, "super-idol-master.db");
 const pipelineDir = join(webRoot, "server", "pipeline");
 const managedPython = process.platform === "win32"
@@ -68,6 +69,7 @@ const workflowFiles = {
 mkdirSync(dataDir, { recursive: true });
 mkdirSync(generatedDir, { recursive: true });
 mkdirSync(runtimeWorkflowDir, { recursive: true });
+mkdirSync(animationDir, { recursive: true });
 
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL");
@@ -135,6 +137,23 @@ db.exec(`
   )
 `);
 db.exec("CREATE INDEX IF NOT EXISTS run_events_run_id_idx ON run_events(run_id, id DESC)");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS animation_assets (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    duration REAL NOT NULL,
+    track_count INTEGER NOT NULL,
+    bone_count INTEGER NOT NULL,
+    mapped_bone_count INTEGER NOT NULL,
+    compatible INTEGER NOT NULL DEFAULT 0,
+    bone_names TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`);
 
 function addColumn(name, definition) {
   const columns = db.prepare("PRAGMA table_info(runs)").all();
@@ -600,6 +619,8 @@ function json(res, status, body) {
 function setCors(req, res) {
   const origin = req.headers.origin;
   const allowed = new Set([
+    "http://127.0.0.1:3000",
+    "http://localhost:3000",
     "http://127.0.0.1:3100",
     "http://localhost:3100",
     "http://127.0.0.1:3101",
@@ -629,6 +650,139 @@ function cleanText(value, maxLength, field, required = false) {
   if (required && !text) throw new Error(`${field}不能为空`);
   if (text.length > maxLength) throw new Error(`${field}不能超过 ${maxLength} 个字符`);
   return text;
+}
+
+const MIXAMO_TARGET_BONES = new Set([
+  "Hips", "Spine", "Spine1", "Spine2", "Neck", "Head",
+  "LeftShoulder", "LeftArm", "LeftForeArm", "LeftHand",
+  "RightShoulder", "RightArm", "RightForeArm", "RightHand",
+  "LeftHandThumb1", "LeftHandThumb2", "LeftHandThumb3",
+  "LeftHandIndex1", "LeftHandIndex2", "LeftHandIndex3",
+  "LeftHandMiddle1", "LeftHandMiddle2", "LeftHandMiddle3",
+  "LeftHandRing1", "LeftHandRing2", "LeftHandRing3",
+  "RightHandThumb1", "RightHandThumb2", "RightHandThumb3",
+  "RightHandIndex1", "RightHandIndex2", "RightHandIndex3",
+  "RightHandMiddle1", "RightHandMiddle2", "RightHandMiddle3",
+  "RightHandRing1", "RightHandRing2", "RightHandRing3",
+  "LeftUpLeg", "LeftLeg", "LeftFoot", "LeftToeBase",
+  "RightUpLeg", "RightLeg", "RightFoot", "RightToeBase",
+]);
+const MIXAMO_REQUIRED_BONES = new Set([
+  "Hips", "Spine", "Head",
+  "LeftArm", "LeftForeArm", "LeftHand",
+  "RightArm", "RightForeArm", "RightHand",
+  "LeftUpLeg", "LeftLeg", "LeftFoot",
+  "RightUpLeg", "RightLeg", "RightFoot",
+]);
+
+function normalizeMixamoBoneName(value) {
+  return String(value || "").replace(/^mixamorig[:_]?/i, "");
+}
+
+async function inspectAnimationFbx(buffer) {
+  if (!buffer.length || buffer.length > 15 * 1024 * 1024) throw new Error("动画 FBX 不能为空且不能超过 15 MB");
+  if (!globalThis.self) globalThis.self = globalThis;
+  const { FBXLoader } = await import("three/examples/jsm/loaders/FBXLoader.js");
+  const bytes = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  let object;
+  try {
+    object = new FBXLoader().parse(bytes, "");
+  } catch (error) {
+    throw new Error(`FBX 解析失败：${error instanceof Error ? error.message : "文件格式不受支持"}`);
+  }
+  const clip = object.animations?.[0];
+  if (!clip || !clip.tracks.length || !(clip.duration > 0)) throw new Error("FBX 中没有可播放的动画片段");
+  const boneNames = [...new Set(clip.tracks.map((track) => normalizeMixamoBoneName(track.name.split(".")[0])).filter(Boolean))];
+  const mappedBoneCount = boneNames.filter((name) => MIXAMO_TARGET_BONES.has(name)).length;
+  const compatible = [...MIXAMO_REQUIRED_BONES].every((name) => boneNames.includes(name));
+  return {
+    clipName: clip.name || "mixamo.com",
+    duration: Number(clip.duration.toFixed(4)),
+    trackCount: clip.tracks.length,
+    boneCount: boneNames.length,
+    mappedBoneCount,
+    compatible,
+    boneNames,
+  };
+}
+
+const animationSelect = `
+  SELECT id, name, filename, file_path AS filePath, size, duration,
+    track_count AS trackCount, bone_count AS boneCount, mapped_bone_count AS mappedBoneCount,
+    compatible, bone_names AS boneNamesJson, created_at AS createdAt, updated_at AS updatedAt
+  FROM animation_assets
+`;
+
+function serializeAnimationAsset(row) {
+  if (!row) return null;
+  let boneNames = [];
+  try {
+    boneNames = JSON.parse(row.boneNamesJson || "[]");
+  } catch {
+    boneNames = [];
+  }
+  const publicRow = { ...row };
+  delete publicRow.filePath;
+  delete publicRow.boneNamesJson;
+  return {
+    ...publicRow,
+    compatible: Boolean(row.compatible),
+    boneNames,
+    fileUrl: `/api/animations/${encodeURIComponent(row.id)}/file`,
+  };
+}
+
+function getAnimationAsset(id) {
+  return db.prepare(`${animationSelect} WHERE id = ?`).get(id);
+}
+
+function listAnimationAssets() {
+  return db.prepare(`${animationSelect} ORDER BY created_at ASC`).all()
+    .filter((row) => row.filePath && existsSync(row.filePath) && statSync(row.filePath).isFile())
+    .map(serializeAnimationAsset);
+}
+
+async function createAnimationAsset(input = {}) {
+  const filename = basename(cleanText(input.filename, 180, "动画文件名", true));
+  if (extname(filename).toLowerCase() !== ".fbx") throw new Error("只支持 Mixamo FBX 动画文件");
+  const encoded = typeof input.data === "string" ? input.data.replace(/^data:[^,]+,/, "").replace(/\s+/g, "") : "";
+  if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error("动画文件内容无效");
+  const buffer = Buffer.from(encoded, "base64");
+  const inspection = await inspectAnimationFbx(buffer);
+  const id = randomUUID();
+  const filePath = join(animationDir, `${id}.fbx`);
+  const now = new Date().toISOString();
+  const name = cleanText(input.name, 80, "动画名称") || basename(filename, extname(filename));
+  writeFileSync(filePath, buffer, { flag: "wx" });
+  try {
+    db.prepare(`
+      INSERT INTO animation_assets (
+        id, name, filename, file_path, size, duration, track_count, bone_count,
+        mapped_bone_count, compatible, bone_names, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, name, filename, filePath, buffer.length, inspection.duration, inspection.trackCount,
+      inspection.boneCount, inspection.mappedBoneCount, inspection.compatible ? 1 : 0,
+      JSON.stringify(inspection.boneNames), now, now,
+    );
+  } catch (error) {
+    if (existsSync(filePath)) unlinkSync(filePath);
+    throw error;
+  }
+  return serializeAnimationAsset(getAnimationAsset(id));
+}
+
+function deleteAnimationAsset(id) {
+  const row = getAnimationAsset(id);
+  if (!row) throw new Error("动画不存在");
+  const candidate = resolve(row.filePath);
+  const root = resolve(animationDir);
+  const normalized = process.platform === "win32" ? candidate.toLowerCase() : candidate;
+  const normalizedRoot = process.platform === "win32" ? root.toLowerCase() : root;
+  if (!(normalized === normalizedRoot || normalized.startsWith(`${normalizedRoot}${sep}`))) throw new Error("拒绝删除动画目录之外的文件");
+  if (existsSync(candidate) && statSync(candidate).isFile()) unlinkSync(candidate);
+  db.prepare("DELETE FROM animation_assets WHERE id = ?").run(id);
+  return { ok: true, animations: listAnimationAssets() };
 }
 
 function pipelineType(value) {
@@ -1795,6 +1949,7 @@ function streamAssetPreview(res, filePath) {
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
     ".glb": "model/gltf-binary",
+    ".fbx": "application/octet-stream",
   };
   res.writeHead(200, {
     "Content-Type": contentTypes[extname(filePath).toLowerCase()] || "application/octet-stream",
@@ -1882,7 +2037,7 @@ const server = createServer(async (req, res) => {
         ok: true,
         database: "sqlite",
         databasePath: dbPath,
-        capabilities: ["workspace-assets-v1"],
+        capabilities: ["workspace-assets-v1", "mixamo-animation-library-v1"],
         agent: assetAgent.status(),
       });
       return;
@@ -2054,6 +2209,33 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       json(res, 201, createWorkspaceRecord(body));
       return;
+    }
+    if (parts[0] === "api" && parts[1] === "animations") {
+      if (req.method === "GET" && parts.length === 2) {
+        json(res, 200, { animations: listAnimationAssets() });
+        return;
+      }
+      if (req.method === "POST" && parts.length === 2) {
+        const body = await readBody(req, 22_000_000);
+        json(res, 201, { animation: await createAnimationAsset(body), animations: listAnimationAssets() });
+        return;
+      }
+      if (parts[2]) {
+        const animationId = decodeURIComponent(parts[2]);
+        const animation = getAnimationAsset(animationId);
+        if (!animation) {
+          json(res, 404, { error: "动画不存在" });
+          return;
+        }
+        if (req.method === "GET" && parts[3] === "file" && parts.length === 4) {
+          streamAssetPreview(res, animation.filePath);
+          return;
+        }
+        if (req.method === "DELETE" && parts.length === 3) {
+          json(res, 200, deleteAnimationAsset(animationId));
+          return;
+        }
+      }
     }
     if (parts[0] === "api" && parts[1] === "workspaces" && parts[2] && parts[3] === "assets") {
       const workspaceId = decodeURIComponent(parts[2]);
