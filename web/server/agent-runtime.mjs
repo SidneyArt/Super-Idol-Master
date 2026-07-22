@@ -1325,6 +1325,32 @@ export function createAssetAgentRuntime({
     return getConversation(runId);
   }
 
+  function deleteSession(runId, sessionId) {
+    if (activeAgents.has(runId)) throw new Error("Agent 正在处理消息，暂时不能删除会话");
+    const currentSessionId = ensureSession(runId);
+    const exists = db.prepare("SELECT 1 FROM agent_conversations WHERE run_id = ? AND id = ? LIMIT 1").get(runId, sessionId);
+    if (!exists) throw new Error("会话不存在");
+    const fallback = sessionId === currentSessionId
+      ? db.prepare("SELECT id FROM agent_conversations WHERE run_id = ? AND id <> ? ORDER BY updated_at DESC LIMIT 1").get(runId, sessionId)
+      : { id: currentSessionId };
+    const nextSessionId = fallback?.id || randomUUID();
+    const now = new Date().toISOString();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (!fallback?.id) {
+        db.prepare("INSERT INTO agent_conversations (id, run_id, title, created_at, updated_at) VALUES (?, ?, '新会话', ?, ?)").run(nextSessionId, runId, now, now);
+      }
+      db.prepare("DELETE FROM agent_messages WHERE run_id = ? AND session_id = ?").run(runId, sessionId);
+      db.prepare("DELETE FROM agent_conversations WHERE run_id = ? AND id = ?").run(runId, sessionId);
+      db.prepare("UPDATE agent_conversation_state SET current_session_id = ?, updated_at = ? WHERE run_id = ?").run(nextSessionId, now, runId);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    return getConversation(runId);
+  }
+
   function createTools(runId, execution) {
     const currentContext = () => compactRunContext(getRunDetail(runId));
     const approvalFor = (operation, title, description, payload) => {
@@ -1582,6 +1608,7 @@ export function createAssetAgentRuntime({
     getConversation,
     startSession,
     activateSession,
+    deleteSession,
     getRoleRuns,
     getWorkflowPlan,
     scheduleWorkflowPlan,

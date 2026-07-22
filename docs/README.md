@@ -30,7 +30,7 @@ docs/
 
 - [DGX 环境与访问](./deployment/dgx-access-and-network.md)：Tailscale、SSH、两台 DGX 的访问关系和网络排障。
 - [DGX / ComfyUI 全链路对应关系](./deployment/dgx-pipeline-integration.md)：Qwen Image、SDPose、Pixal3D、AutoRemesher、SkinTokens 和产物门禁。
-- [DGX Spark AutoRemesher 独立 API 部署指南](./deployment/dgx-autoremesher-deployment.md)：仅上传 API 安装包，并完成令牌、端口、调用和真实 GLB 验收。
+- [DGX Spark AutoRemesher 独立 API 部署指南](./deployment/dgx-autoremesher-deployment.md)：仅上传 API 安装包，通过 Tailscale 私网完成端口、调用和真实 GLB 验收，无需部署整站或配置 Token。
 - [独立 API 安装包说明](../deploy/dgx-autoremesher/README.md)：部署目录内文件职责与安全边界。
 
 ## 架构与技术决策

@@ -1889,6 +1889,13 @@ const server = createServer(async (req, res) => {
       ));
       return;
     }
+    if (req.method === "DELETE" && parts[0] === "api" && parts[1] === "dispatcher" && parts[2] === "sessions" && parts[3]) {
+      json(res, 200, coordinatorAgent.deleteSession(
+        cleanText(url.searchParams.get("workspaceId"), 80, "工作空间 ID", true),
+        cleanText(decodeURIComponent(parts[3]), 80, "会话 ID", true),
+      ));
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/dispatcher/generations") {
       const workspaceId = url.searchParams.get("workspaceId") || "default";
       const sessionId = url.searchParams.get("sessionId") || "";
@@ -1970,6 +1977,10 @@ const server = createServer(async (req, res) => {
       if (req.method === "PUT" && parts[3] === "agent" && parts[4] === "sessions" && parts[5] === "current") {
         const body = await readBody(req);
         json(res, 200, assetAgent.activateSession(id, cleanText(body.sessionId, 80, "会话 ID", true)));
+        return;
+      }
+      if (req.method === "DELETE" && parts[3] === "agent" && parts[4] === "sessions" && parts[5]) {
+        json(res, 200, assetAgent.deleteSession(id, cleanText(decodeURIComponent(parts[5]), 80, "会话 ID", true)));
         return;
       }
       if (req.method === "POST" && parts[3] === "start") {

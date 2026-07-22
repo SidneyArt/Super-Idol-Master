@@ -291,6 +291,42 @@ export function createCoordinatorRuntime({
     return getConversation(workspaceId);
   }
 
+  function deleteSession(workspaceId, sessionId) {
+    if (activeAgent) throw new Error("总调度 Agent 正在处理消息，暂时不能删除会话");
+    const currentSessionId = ensureSession(workspaceId);
+    const exists = db.prepare("SELECT 1 FROM dispatcher_conversations WHERE workspace_id = ? AND id = ? LIMIT 1").get(workspaceId, sessionId);
+    if (!exists) throw new Error("会话不存在");
+    const hasTable = (name) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
+    const hasColumn = (table, column) => hasTable(table) && db.prepare(`PRAGMA table_info(${table})`).all().some((item) => item.name === column);
+    if (hasColumn("dispatcher_generations", "status") && db.prepare("SELECT 1 FROM dispatcher_generations WHERE workspace_id = ? AND session_id = ? AND status = 'running' LIMIT 1").get(workspaceId, sessionId)) {
+      throw new Error("该会话仍有图片生成任务在运行，完成或失败后才能删除");
+    }
+    if (hasTable("approval_requests") && db.prepare("SELECT 1 FROM approval_requests WHERE workspace_id = ? AND status IN ('pending', 'executing') AND json_extract(payload, '$.sessionId') = ? LIMIT 1").get(workspaceId, sessionId)) {
+      throw new Error("该会话仍有待处理审批，请先批准或拒绝后再删除");
+    }
+    const fallback = sessionId === currentSessionId
+      ? db.prepare("SELECT id FROM dispatcher_conversations WHERE workspace_id = ? AND id <> ? ORDER BY updated_at DESC LIMIT 1").get(workspaceId, sessionId)
+      : { id: currentSessionId };
+    const nextSessionId = fallback?.id || randomUUID();
+    const now = new Date().toISOString();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (!fallback?.id) {
+        db.prepare("INSERT INTO dispatcher_conversations (id, workspace_id, title, created_at, updated_at) VALUES (?, ?, '新会话', ?, ?)").run(nextSessionId, workspaceId, now, now);
+      }
+      db.prepare("DELETE FROM dispatcher_messages WHERE workspace_id = ? AND session_id = ?").run(workspaceId, sessionId);
+      if (hasTable("dispatcher_generations")) db.prepare("DELETE FROM dispatcher_generations WHERE workspace_id = ? AND session_id = ?").run(workspaceId, sessionId);
+      if (hasTable("dispatcher_task_batches")) db.prepare("DELETE FROM dispatcher_task_batches WHERE workspace_id = ? AND session_id = ?").run(workspaceId, sessionId);
+      db.prepare("DELETE FROM dispatcher_conversations WHERE workspace_id = ? AND id = ?").run(workspaceId, sessionId);
+      db.prepare("UPDATE dispatcher_conversation_state SET current_session_id = ?, updated_at = ? WHERE workspace_id = ?").run(nextSessionId, now, workspaceId);
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+    return getConversation(workspaceId);
+  }
+
   function systemPrompt(workspaceId, history, imageContext = null) {
     const workspaces = getWorkspaces();
     const current = workspaces.find((item) => item.id === workspaceId) || null;
@@ -659,5 +695,5 @@ ${transcript.slice(-12000)}
     return true;
   }
 
-  return { run, cancel, getMessages, getConversation, startSession, activateSession, status: () => ({ running: Boolean(activeAgent) }) };
+  return { run, cancel, getMessages, getConversation, startSession, activateSession, deleteSession, status: () => ({ running: Boolean(activeAgent) }) };
 }

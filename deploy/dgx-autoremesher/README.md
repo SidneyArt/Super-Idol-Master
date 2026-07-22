@@ -32,17 +32,17 @@ cd ~/autoremesher-api-installer
 sudo bash install.sh
 ```
 
-脚本会自行下载并编译上游 AutoRemesher、安装 Blender 和运行依赖、生成 API Token，并启动 `autoremesher-api.service`。
+AutoRemesher 已经编译安装、只需更新 API 服务时，可以跳过依赖安装和重新编译：
+
+```bash
+sudo bash install.sh --service-only
+```
+
+脚本会自行下载并编译上游 AutoRemesher、安装 Blender 和运行依赖，并启动 `autoremesher-api.service`。
 
 DGX Spark 使用 AArch64。安装脚本会自动移除上游的 x86 编译参数，并修补内置 Geogram 1.8.3 将 Linux ARM64 误判为 x86、生成 `pause` 和 `lock` 汇编指令的问题。
 
 如果旧版脚本已经因 `unknown mnemonic 'pause'` 失败，从 Windows PowerShell 上传新版 `install.sh` 和 `arm64-geogram.patch`，再在 DGX 中重新执行安装脚本即可；不需要清理已有编译目录。
-
-查看 Token：
-
-```bash
-sudo grep '^TOPOLOGY_SERVICE_TOKEN=' /etc/autoremesher-api.env
-```
 
 检查服务：
 
@@ -58,7 +58,6 @@ sudo systemctl status autoremesher-api
 ```http
 GET /healthz
 POST /v1/remesh?target_quads=50000
-Authorization: Bearer <token>
 Content-Type: model/gltf-binary
 ```
 
@@ -66,4 +65,4 @@ Content-Type: model/gltf-binary
 
 ## 安全边界
 
-不要把端口 `8190` 无保护地暴露到公网。建议使用 Tailscale ACL、云防火墙或反向代理，只允许可信后端访问，并始终携带 Bearer Token。
+服务默认不鉴权，只应在 Tailscale 等私有网络中使用。不要把端口 `8190` 直接暴露到公网；通过 Tailscale ACL 或防火墙只允许可信调用方访问。

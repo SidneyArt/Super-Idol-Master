@@ -12,7 +12,7 @@
 
 - 当前电脑加入相同 Tailnet 且 ACL 放行后，可以访问 DGX。
 - 公网用户不能直接通过 `100.x` 地址访问。
-- ComfyUI 建议继续保持 Tailscale 私有访问。
+- ComfyUI 和 AutoRemesher API 建议继续保持 Tailscale 私有访问。
 - 如将来需要域名，应使用 Cloudflare Tunnel、Tailscale Funnel 或独立反向代理，并增加身份验证；不要直接暴露 `8188`。
 
 ## 2. 第一台 DGX
@@ -21,7 +21,8 @@
 - 用户提供的 SSH 登录名：`Sidney`
 - SSH：端口 `22`
 - ComfyUI：端口 `8188`
-- 已知允许端口：`22`、`3000`、`8000`、`8188`
+- AutoRemesher API：端口 `8190`，无应用层 Token，仅允许受信任的 Tailnet 客户端访问
+- 已知使用端口：`22`、`3000`、`8000`、`8188`、`8190`
 
 Windows PowerShell 登录命令：
 
@@ -33,6 +34,12 @@ ComfyUI：
 
 ```text
 http://100.120.236.113:8188
+```
+
+AutoRemesher API：
+
+```text
+http://100.120.236.113:8190
 ```
 
 SSH 用户名区分大小写。如果上述用户名失败，应让设备所有者在 DGX 上执行 `whoami` 后确认，不要反复猜测账户名。

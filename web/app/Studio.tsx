@@ -611,6 +611,81 @@ function StyledSelect({ value, options, onChange, ariaLabel, placement = "down",
   );
 }
 
+function formatSessionTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "时间未知";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function ConversationSessionManager({
+  sessions,
+  sessionId,
+  label,
+  disabled,
+  onActivate,
+  onCreate,
+  onDelete,
+}: {
+  sessions: ConversationSession[];
+  sessionId: string;
+  label: string;
+  disabled: boolean;
+  onActivate: (sessionId: string) => void;
+  onCreate: () => void;
+  onDelete: (session: ConversationSession) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const current = sessions.find((session) => session.id === sessionId) || sessions[0] || null;
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+  return (
+    <div className={`conversation-manager ${open ? "open" : ""}`} ref={rootRef}>
+      <button type="button" className="conversation-manager-trigger" disabled={disabled} onClick={() => setOpen((value) => !value)} aria-haspopup="dialog" aria-expanded={open} title={`${label}：${current?.title || "新会话"}`}>
+        <MessageSquare size={14} />
+        <span><strong>{current?.title || "新会话"}</strong><small>{current ? `${current.messageCount} 条消息` : "正在创建"}</small></span>
+        <ChevronDown size={13} />
+      </button>
+      <button type="button" className="conversation-create-button" disabled={disabled} onClick={() => { setOpen(false); onCreate(); }} title="新建会话" aria-label={`新建${label}`}><Plus size={15} /></button>
+      {open && !disabled && (
+        <section className="conversation-menu" role="dialog" aria-label={`${label}列表`}>
+          <header><div><strong>会话记录</strong><small>{sessions.length} 个会话</small></div><button type="button" onClick={() => { setOpen(false); onCreate(); }}><Plus size={14} />新对话</button></header>
+          <div className="conversation-list">
+            {sessions.map((session) => (
+              <div className={`conversation-list-row ${session.id === sessionId ? "current" : ""}`} key={session.id}>
+                <button type="button" className="conversation-list-main" onClick={() => { setOpen(false); onActivate(session.id); }}>
+                  <span><MessageSquare size={14} /></span>
+                  <div><strong>{session.title.replace(/\s+/g, " ")}</strong><small>{session.messageCount} 条消息 · {formatSessionTime(session.updatedAt)}</small></div>
+                  {session.id === sessionId && <Check size={14} />}
+                </button>
+                <button type="button" className="conversation-delete-button" onClick={() => { setOpen(false); onDelete(session); }} title={`删除会话：${session.title}`} aria-label={`删除会话：${session.title}`}><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function ContextUsage({ context, compact = false }: { context: ConversationContext | null; compact?: boolean }) {
   const used = context?.estimatedTokens || 0;
   const limit = context?.contextWindow || 131_072;
@@ -1828,6 +1903,36 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     }
   }
 
+  function requestDeleteDispatcherSession(session: ConversationSession) {
+    if (dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId) return;
+    const workspaceId = selectedWorkspaceId;
+    const deletingCurrent = session.id === dispatcherSessionId;
+    setUiConfirmation({
+      title: `删除“${session.title}”？`,
+      description: "该会话的消息和总调度时间线会被永久删除；工作空间、已经创建的角色任务和模型资产不会被删除。",
+      confirmLabel: "删除会话",
+      tone: "danger",
+      action: async () => {
+        setDispatcherSessionBusy(true);
+        setError("");
+        try {
+          const data = await api<ConversationPayload>(`/api/dispatcher/sessions/${encodeURIComponent(session.id)}?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "DELETE" });
+          if (selectedWorkspaceIdRef.current !== workspaceId) return;
+          applyDispatcherConversation(data);
+          if (deletingCurrent) {
+            setDispatcherInput("");
+            setDispatcherAttachment(null);
+          }
+          await refreshActivity(false);
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "删除总调度会话失败");
+        } finally {
+          setDispatcherSessionBusy(false);
+        }
+      },
+    });
+  }
+
   async function changeAgentMode(scopeType: "coordinator" | "task", mode: ApprovalMode) {
     if (scopeType === "task" && !selectedIdRef.current) return;
     setError("");
@@ -2052,6 +2157,35 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     }
   }
 
+  function requestDeleteTaskSession(session: ConversationSession) {
+    const runId = selectedIdRef.current;
+    if (!runId || agentBusy || agentQueue.length || chatSessionBusy) return;
+    const deletingCurrent = session.id === chatSessionId;
+    setUiConfirmation({
+      title: `删除“${session.title}”？`,
+      description: "该会话中的用户消息和 Agent 回复会被永久删除；角色任务、流程进度、质检记录和模型资产不会被删除。",
+      confirmLabel: "删除会话",
+      tone: "danger",
+      action: async () => {
+        setChatSessionBusy(true);
+        setError("");
+        try {
+          const data = await api<ConversationPayload>(`/api/runs/${runId}/agent/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+          if (selectedIdRef.current !== runId) return;
+          applyTaskConversation(data);
+          if (deletingCurrent) {
+            setChatInput("");
+            setAgentAttachment(null);
+          }
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "删除任务 Agent 会话失败");
+        } finally {
+          setChatSessionBusy(false);
+        }
+      },
+    });
+  }
+
   function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
@@ -2230,10 +2364,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             <header className="dispatcher-header">
               <div className="dispatcher-title"><span><Bot size={22} /></span><div><small>总调度中心</small><h1>{selectedWorkspace?.name || "创建工作空间后开始调度"}</h1></div></div>
               <div className="dispatcher-actions">
-                <div className="conversation-session-control dispatcher-session-control">
-                  <StyledSelect value={dispatcherSessionId} options={dispatcherSessions.map((session) => ({ value: session.id, label: `${session.title.replace(/\s+/g, " ")} · ${session.messageCount} 条` }))} onChange={(value) => void activateDispatcherSession(value)} ariaLabel="总调度 Agent 会话" disabled={dispatcherBusy || dispatcherSessionBusy} />
-                  <button className="icon-button" type="button" onClick={() => void startDispatcherSession()} disabled={dispatcherBusy || dispatcherSessionBusy} title="新建总调度会话" aria-label="新建总调度会话"><Plus size={17} /></button>
-                </div>
                 <button className="secondary-button" type="button" onClick={() => { setForm({ name: "", workspaceId: selectedWorkspaceId, pipelineType: "text_to_model" }); setShowCreate(true); }}><Plus size={16} />新建任务</button>
                 <button className="secondary-button" type="button" onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Settings size={16} />模型配置</button>
               </div>
@@ -2314,7 +2444,13 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
               <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
-              <div><AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" /><input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} /><ContextUsage context={dispatcherContext} /><span className="dispatcher-composer-actions">{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()} title="停止调度" aria-label="停止调度"><X size={16} /></button>}<button className="primary-button dispatcher-send-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false} title="发送调度" aria-label="发送调度"><Send size={16} /></button></span></div>
+              <div className="dispatcher-composer-footer">
+                <ConversationSessionManager sessions={dispatcherSessions} sessionId={dispatcherSessionId} label="总调度 Agent 会话" disabled={dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId} onActivate={(value) => void activateDispatcherSession(value)} onCreate={() => void startDispatcherSession()} onDelete={requestDeleteDispatcherSession} />
+                <AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" />
+                <input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} />
+                <ContextUsage context={dispatcherContext} />
+                <span className="dispatcher-composer-actions">{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()} title="停止调度" aria-label="停止调度"><X size={16} /></button>}<button className="primary-button dispatcher-send-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false} title="发送调度" aria-label="发送调度"><Send size={16} /></button></span>
+              </div>
             </form>
             {dispatcherDragging && <div className="dispatcher-drop"><ImageIcon size={34} /><strong>松开以分析合集原画</strong><span>支持最多 12 MB 的 PNG、JPEG 或 WebP</span></div>}
           </section>
@@ -2667,13 +2803,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             </div>
           </div>
           <div className="agent-summary">
-            <div className="agent-conversation-toolbar">
-              <span>会话</span>
-              <div className="conversation-session-control task-session-control">
-                <StyledSelect value={chatSessionId} options={chatSessions.map((session) => ({ value: session.id, label: `${session.title.replace(/\s+/g, " ")} · ${session.messageCount} 条` }))} onChange={(value) => void activateTaskSession(value)} ariaLabel="Asset Agent 会话" disabled={!run || agentBusy || agentQueue.length > 0 || chatSessionBusy} />
-                <button className="icon-button" type="button" onClick={() => void startTaskSession()} disabled={!run || agentBusy || agentQueue.length > 0 || chatSessionBusy} title="新建 Asset Agent 会话" aria-label="新建 Asset Agent 会话"><Plus size={16} /></button>
-              </div>
-            </div>
             <div className="agent-context">
               <span>任务上下文</span>
               <strong>{run?.name || "未选择任务"}</strong>
@@ -2781,8 +2910,8 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             <textarea value={chatInput} onChange={(event) => setChatInput(event.target.value)} onKeyDown={handleComposerKeyDown} rows={3} placeholder={agentBusy ? "继续输入，消息将进入待发送队列…" : "给 Agent 下达资产生成任务…"} />
             <div className="composer-footer">
               <div className="composer-meta">
+                <ConversationSessionManager sessions={chatSessions} sessionId={chatSessionId} label="Asset Agent 会话" disabled={!run || agentBusy || agentQueue.length > 0 || chatSessionBusy} onActivate={(value) => void activateTaskSession(value)} onCreate={() => void startTaskSession()} onDelete={requestDeleteTaskSession} />
                 {run && <AgentPermissionMenu mode={taskAgentMode} onChange={(mode) => void changeAgentMode("task", mode)} title="选择当前任务 Agent 的变更审批方式" />}
-                <span><MessageSquare size={15} />{system?.agent.model || "当前会话"}</span>
                 <ContextUsage context={chatContext} compact />
               </div>
               <div className="composer-actions">
@@ -2844,18 +2973,13 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                       </div>
                       <div className="agent-scope-note"><ShieldCheck size={15} /><span>配置保存在本机后端。可以连接 DGX AutoRemesher，也可以替换为兼容相同请求协议的其他服务。</span></div>
                       <div className="api-mode-status">
-                        <span className={`config-state ${settings.topology.url && settings.topology.tokenConfigured ? "configured" : ""}`}><i />{settings.topology.url ? settings.topology.tokenConfigured ? "地址与 Token 已配置" : "地址已配置，Token 未配置" : "服务地址未配置"}</span>
+                        <span className={`config-state ${settings.topology.url ? "configured" : ""}`}><i />{settings.topology.url ? "服务地址已配置" : "服务地址未配置"}</span>
                       </div>
                       <label className="settings-field">
                         <span>服务地址</span>
                         <input type="url" value={settingsForm.topology.url} placeholder="http://100.120.236.113:8190" onChange={(event) => updateTopologySettings({ url: event.target.value })} />
                         <small className="settings-field-note">可填写 API Base URL，也可填写以 /v1/remesh 结尾的完整地址。</small>
                       </label>
-                      <label className="settings-field">
-                        <span>Bearer Token</span>
-                        <input type="password" autoComplete="off" maxLength={1000} disabled={settingsForm.topology.clearToken} value={settingsForm.topology.token} placeholder={settings.topology.tokenConfigured ? "留空以保留当前 Token" : "输入服务 Token；无鉴权服务可留空"} onChange={(event) => updateTopologySettings({ token: event.target.value })} />
-                      </label>
-                      {settings.topology.tokenConfigured && <label className="clear-key-control"><input type="checkbox" checked={settingsForm.topology.clearToken} onChange={(event) => updateTopologySettings({ clearToken: event.target.checked, token: event.target.checked ? "" : settingsForm.topology.token })} /><span>清除已保存的服务 Token</span></label>}
                       <label className="settings-field">
                         <span>目标四边面数</span>
                         <input type="number" required min={1000} max={1000000} step={1000} value={settingsForm.topology.targetQuads} onChange={(event) => updateTopologySettings({ targetQuads: Number(event.target.value) })} />

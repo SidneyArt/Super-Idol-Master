@@ -2,11 +2,10 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { ASSET_AGENT_ROLES, createAssetAgentRuntime, normalizeVisualQaReport } from "./agent-runtime.mjs";
+import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
 
-test("asset agent status exposes every implemented role", () => {
-  const db = new DatabaseSync(":memory:");
-  db.exec("CREATE TABLE runs (id TEXT PRIMARY KEY, current_stage INTEGER NOT NULL DEFAULT 0)");
-  const runtime = createAssetAgentRuntime({
+function createAssetRuntime(db) {
+  return createAssetAgentRuntime({
     db,
     getRunDetail: () => ({ run: { currentStage: 0 } }),
     updatePrompts: () => {},
@@ -21,6 +20,12 @@ test("asset agent status exposes every implemented role", () => {
     getPermissionMode: () => "request",
     requestApproval: () => {},
   });
+}
+
+test("asset agent status exposes every implemented role", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE runs (id TEXT PRIMARY KEY, current_stage INTEGER NOT NULL DEFAULT 0)");
+  const runtime = createAssetRuntime(db);
 
   assert.deepEqual(runtime.status().roles, ASSET_AGENT_ROLES);
   assert.deepEqual(ASSET_AGENT_ROLES, [
@@ -33,6 +38,60 @@ test("asset agent status exposes every implemented role", () => {
     "export_specialist",
     "workflow_doctor",
   ]);
+  db.close();
+});
+
+test("asset agent session deletion selects a fallback and recreates the final empty session", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE runs (id TEXT PRIMARY KEY, current_stage INTEGER NOT NULL DEFAULT 0); INSERT INTO runs (id) VALUES ('run-1')");
+  const runtime = createAssetRuntime(db);
+  const first = runtime.getConversation("run-1");
+  const second = runtime.startSession("run-1");
+
+  assert.equal(second.sessions.length, 2);
+  const afterCurrentDelete = runtime.deleteSession("run-1", second.sessionId);
+  assert.equal(afterCurrentDelete.sessionId, first.sessionId);
+  assert.equal(afterCurrentDelete.sessions.length, 1);
+
+  const afterFinalDelete = runtime.deleteSession("run-1", first.sessionId);
+  assert.notEqual(afterFinalDelete.sessionId, first.sessionId);
+  assert.equal(afterFinalDelete.sessions.length, 1);
+  assert.equal(afterFinalDelete.sessions[0].messageCount, 0);
+  db.close();
+});
+
+test("coordinator session deletion removes its timeline metadata without deleting workspace", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+    INSERT INTO workspaces (id) VALUES ('workspace-1');
+    CREATE TABLE dispatcher_generations (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, session_id TEXT NOT NULL);
+    CREATE TABLE dispatcher_task_batches (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, session_id TEXT NOT NULL);
+  `);
+  const runtime = createCoordinatorRuntime({
+    db,
+    getAgentConfig: () => ({ apiKey: "", model: "step-3.7-flash" }),
+    getWorkspaces: () => [{ id: "workspace-1", name: "测试空间" }],
+    createWorkspace: () => {},
+    createCharacterTasks: () => {},
+    delegateTask: () => {},
+    generateCharacterSheet: () => {},
+    getLatestGeneratedImage: () => null,
+    getLatestCharacterSheetRequest: () => null,
+    getLatestTaskBatch: () => null,
+    getImageModelStatus: () => ({}),
+    getPermissionMode: () => "request",
+    requestApproval: () => {},
+  });
+  const first = runtime.getConversation("workspace-1");
+  db.prepare("INSERT INTO dispatcher_generations (id, workspace_id, session_id) VALUES ('generation-1', 'workspace-1', ?)").run(first.sessionId);
+  db.prepare("INSERT INTO dispatcher_task_batches (id, workspace_id, session_id) VALUES ('batch-1', 'workspace-1', ?)").run(first.sessionId);
+
+  const result = runtime.deleteSession("workspace-1", first.sessionId);
+  assert.notEqual(result.sessionId, first.sessionId);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM dispatcher_generations").get().count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM dispatcher_task_batches").get().count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM workspaces").get().count, 1);
   db.close();
 });
 

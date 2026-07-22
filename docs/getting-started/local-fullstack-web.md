@@ -48,7 +48,9 @@ web/data/runtime-err.log
 
 ### 2.1 配置自动拓扑 API
 
-在网站右上角打开“请求设置”，选择“拓扑 API”，即可配置服务地址、Bearer Token、目标四边面数和请求超时。配置保存在本机 SQLite 中，设置查询接口只返回 Token 是否已配置，不返回 Token 内容。
+在网站右上角打开“请求设置”，选择“拓扑 API”，即可配置服务地址、目标四边面数和请求超时。配置保存在本机 SQLite 中。
+
+当前 DGX AutoRemesher 服务运行在受控的 Tailscale 私网中，不要求 Bearer Token。默认服务地址为 `http://100.120.236.113:8190`。
 
 `web/.env.local` 中的 `TOPOLOGY_*` 变量仍可作为首次默认值。设置面板保存过的值优先于环境变量，因此日常切换 DGX 或其他兼容 API 时无需修改文件和重启后端。
 

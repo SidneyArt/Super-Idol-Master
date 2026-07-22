@@ -6,7 +6,7 @@
 
 ## 1. 一一对应表
 
-| 网站阶段 | 后端 Job | Python 脚本 | ComfyUI 工作流/模型 | 成功证据 |
+| 网站阶段 | 后端 Job | Python 脚本 | DGX 服务／工作流 | 成功证据 |
 | --- | --- | --- | --- | --- |
 | 2D | `2d` | `run_2d_generation.py` | `2D_Gen_QwenImage2512.json` / Qwen Image | 节点 60 PNG 已下载 |
 | QA | `qa` | `run_tpose_qa.py` | SDPose Wholebody | 关键点 JSON、覆盖图、评分 |
@@ -14,6 +14,8 @@
 | TOPOLOGY | `topology` | `run_3d_retopology.py` | AutoRemesher HTTP 服务 | 四边面拓扑 GLB，纹理经 Blender 回烘 |
 | RIG | `rig` | `run_3d_skinning.py` | `3D_Skin_SkinTokens.json` | 使用拓扑 GLB 作为输入，SkinTokens GLB 已下载 |
 | OUT | 无推理 | Node 下载 API | 本机产物存储 | HTTP 字节数与本地文件一致 |
+
+AutoRemesher 不运行在 ComfyUI 中，而是 DGX 上的独立 HTTP 服务。当前通过 `http://100.120.236.113:8190` 在 Tailscale 私网中调用，不要求 Bearer Token；网站设置面板只需配置服务地址、目标四边面数和请求超时。
 
 ## 2. 自动 T-Pose 检查
 

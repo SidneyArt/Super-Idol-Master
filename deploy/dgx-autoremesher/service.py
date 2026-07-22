@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small authenticated HTTP service around Blender and AutoRemesher."""
+"""Small private-network HTTP service around Blender and AutoRemesher."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from urllib.parse import parse_qs, urlparse
 
 HOST = os.environ.get("TOPOLOGY_HOST", "0.0.0.0")
 PORT = int(os.environ.get("TOPOLOGY_PORT", "8190"))
-TOKEN = os.environ.get("TOPOLOGY_SERVICE_TOKEN", "")
 AUTOREMESHER = os.environ.get("AUTOREMESHER_BIN", "/opt/autoremesher/autoremesher")
 BLENDER = os.environ.get("BLENDER_BIN", "/usr/bin/blender")
 BRIDGE = Path(os.environ.get("TOPOLOGY_BLENDER_BRIDGE", "/opt/autoremesher-api/blender_bridge.py"))
@@ -113,9 +112,6 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path != "/v1/remesh":
             self.send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
-        if TOKEN and self.headers.get("Authorization") != f"Bearer {TOKEN}":
-            self.send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
-            return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             target_quads = int(parse_qs(parsed.query).get("target_quads", ["50000"])[0])
@@ -167,7 +163,5 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    if not TOKEN:
-        raise RuntimeError("TOPOLOGY_SERVICE_TOKEN must not be empty")
     WORK_ROOT.mkdir(parents=True, exist_ok=True)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

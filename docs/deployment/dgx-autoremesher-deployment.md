@@ -32,7 +32,7 @@ API 与调用方完全解耦。只要能够发送 HTTP 请求和接收二进制 
 sudo bash install.sh
 ```
 
-但执行它之前，必须先把本项目中的 `deploy/dgx-autoremesher` 目录单独上传到 DGX。执行后还需要允许调用方访问服务端口，并把 API 地址和 Token 配置到调用方。
+但执行它之前，必须先把本项目中的 `deploy/dgx-autoremesher` 目录单独上传到 DGX。执行后还需要允许调用方访问服务端口，并把 API 地址配置到调用方。
 
 不需要把整个 Super Idol Master 仓库复制到 DGX。
 
@@ -94,9 +94,8 @@ sudo bash install.sh
 4. 修补内置 Geogram 1.8.3 将 Linux ARM64 误判为 x86、生成 `pause` 和 `lock` 汇编指令的问题；
 5. 在 DGX Spark 上原生编译 AutoRemesher；
 6. 安装独立 HTTP API 到 `/opt/autoremesher-api`；
-7. 首次安装时自动生成随机 API Token；
-8. 启用并启动 `autoremesher-api.service`；
-9. 调用本机 `/healthz` 检查服务状态。
+7. 启用并启动 `autoremesher-api.service`；
+8. 调用本机 `/healthz` 检查服务状态。
 
 AutoRemesher 的源代码和二进制默认位于：
 
@@ -138,13 +137,7 @@ sudo bash install.sh
 
 不需要删除 `/opt/autoremesher-src`。脚本会修补已有源码，并在现有编译结果上继续构建。
 
-## 6. 获取 Token 并配置监听地址
-
-查看自动生成的 Token：
-
-```bash
-sudo grep '^TOPOLOGY_SERVICE_TOKEN=' /etc/autoremesher-api.env
-```
+## 6. 配置监听地址
 
 配置文件默认监听 `0.0.0.0:8190`。如需只绑定 DGX 的 Tailscale 地址，执行：
 
@@ -157,7 +150,6 @@ sudoedit /etc/autoremesher-api.env
 ```dotenv
 TOPOLOGY_HOST=100.120.236.113
 TOPOLOGY_PORT=8190
-TOPOLOGY_SERVICE_TOKEN=<自动生成或自行轮换的长随机令牌>
 TOPOLOGY_MAX_CONCURRENCY=1
 TOPOLOGY_JOB_TIMEOUT_SECONDS=3600
 TOPOLOGY_TEXTURE_SIZE=2048
@@ -174,8 +166,6 @@ sudo systemctl restart autoremesher-api
 sudo systemctl --no-pager --full status autoremesher-api
 ```
 
-如需轮换 Token，可以使用 `openssl rand -hex 32` 生成新值。调用方也必须同步更新，否则会收到 `HTTP 401`。
-
 ## 7. 配置网络访问
 
 建议通过 Tailscale 地址访问 DGX，并在 Tailnet ACL 或防火墙中只允许调用方的后端机器访问 TCP `8190`。
@@ -187,7 +177,7 @@ Test-NetConnection 100.120.236.113 -Port 8190
 Invoke-RestMethod http://100.120.236.113:8190/healthz
 ```
 
-不要将没有额外访问控制的 AutoRemesher API 直接暴露到公网。Bearer Token 应保存在后端环境变量或密钥管理服务中，不应放入前端代码或提交到 Git。
+AutoRemesher API 默认不鉴权，只适合运行在受控的 Tailscale 私有网络中。不要把端口 `8190` 直接暴露到公网，并使用 Tailnet ACL 或防火墙只允许可信调用方访问。
 
 ## 8. API 调用方法
 
@@ -211,7 +201,6 @@ GET /healthz
 
 ```http
 POST /v1/remesh?target_quads=50000
-Authorization: Bearer <token>
 Content-Type: model/gltf-binary
 ```
 
@@ -221,17 +210,12 @@ Content-Type: model/gltf-binary
 
 ```bash
 export AUTOREMESHER_API_URL=http://100.120.236.113:8190
-read -rsp 'AutoRemesher API token: ' AUTOREMESHER_API_TOKEN
-echo
 
 curl --fail-with-body \
-  -H "Authorization: Bearer ${AUTOREMESHER_API_TOKEN}" \
   -H "Content-Type: model/gltf-binary" \
   --data-binary @character.glb \
   "${AUTOREMESHER_API_URL}/v1/remesh?target_quads=50000" \
   --output character-retopologized.glb
-
-unset AUTOREMESHER_API_TOKEN
 ```
 
 主要状态码：
@@ -240,7 +224,6 @@ unset AUTOREMESHER_API_TOKEN
 | --- | --- |
 | `200` | 成功，响应体为 GLB |
 | `400` | 参数无效 |
-| `401` | Token 缺失或不一致 |
 | `413` | 输入文件为空或超过大小限制 |
 | `429` | 当前拓扑 Worker 正忙 |
 | `500` | Blender、AutoRemesher 或文件转换失败 |
@@ -254,17 +237,15 @@ unset AUTOREMESHER_API_TOKEN
 推荐在网站右上角打开“请求设置”，进入“拓扑 API”页签，填写：
 
 - 服务地址：`http://100.120.236.113:8190`；
-- Bearer Token：与 DGX `/etc/autoremesher-api.env` 中的 Token 一致；
 - 目标四边面数：默认 `50000`；
 - 请求超时：默认 `3600` 秒。
 
-配置保存在调用方的 SQLite 数据库中，Token 不会通过设置查询接口返回给前端。服务地址可以替换为其他兼容 `/v1/remesh` 请求协议的 API。
+配置保存在调用方的 SQLite 数据库中。服务地址可以替换为其他兼容 `/v1/remesh` 请求协议的 API。
 
 也可以使用 `web/.env.local` 提供首次默认值：
 
 ```dotenv
 TOPOLOGY_SERVICE_URL=http://100.120.236.113:8190
-TOPOLOGY_SERVICE_TOKEN=<与-DGX-API-一致的令牌>
 TOPOLOGY_TARGET_QUADS=50000
 TOPOLOGY_TIMEOUT_SECONDS=3600
 ```
@@ -308,7 +289,25 @@ cd ~/autoremesher-api-installer-new
 sudo bash install.sh
 ```
 
-已有的 `/etc/autoremesher-api.env` 和 Token 不会被覆盖。
+如果 AutoRemesher 已经编译成功，仅更新 API 服务、配置或 systemd 单元，可跳过依赖安装和重新编译：
+
+```bash
+sudo bash install.sh --service-only
+```
+
+已有的 `/etc/autoremesher-api.env` 会保留其他运行参数；旧版留下的 `TOPOLOGY_SERVICE_TOKEN` 会在升级时删除。
+
+### 10.1 DGX Spark 实测记录
+
+2026-07-22 已在 DGX Spark AArch64 环境完成以下验证：
+
+- AutoRemesher 与 Geogram ARM64 补丁编译成功；
+- systemd 服务监听 TCP `8190`，`/healthz` 返回 `ready: true`；
+- 无 Token 版本能够在 Tailscale 私网中启动并响应；
+- 728 字节的合成立方体 GLB 以 `target_quads=1000` 调用成功，API 返回 `HTTP 200`；
+- 输出为 69,020 字节的有效 GLB，Blender 复验得到 1,826 个顶点和 1,004 个面。
+
+以上记录证明 ARM64 部署和 API 处理链路可用，不替代真实角色资产验收。正式使用前仍应选取实际生成的角色 GLB，检查拓扑质量、UV、基础色回烘和后续 SkinTokens 绑骨结果。
 
 ## 11. 限制说明
 
@@ -325,6 +324,6 @@ sudo bash install.sh
 - [ ] `autoremesher-api.service` 为 `active (running)`；
 - [ ] DGX 本机 `/healthz` 返回 `ready: true`；
 - [ ] 调用方能够访问 DGX 的 TCP `8190`；
-- [ ] Token 未提交到 Git，且客户端与 DGX 配置一致；
+- [ ] TCP `8190` 仅能从受信任的 Tailnet 客户端访问；
 - [ ] 真实 GLB 能够通过 API 生成有效的拓扑 GLB；
 - [ ] 调用方能够把返回文件交给后续绑骨流程。

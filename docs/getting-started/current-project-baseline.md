@@ -31,7 +31,7 @@
 
 ## 3. 已验证的真实结果
 
-原有 Qwen → SDPose → Pixal3D → SkinTokens 全链路已经真实跑通。AutoRemesher 阶段的代码、状态机和部署脚本已经接入，但仍需在 DGX Spark 上完成 ARM64 构建与真实角色资产验收。原链路固定验证任务：
+原有 Qwen → SDPose → Pixal3D → SkinTokens 全链路已经真实跑通。AutoRemesher 已在 DGX Spark AArch64 上完成编译、独立 API 部署和合成立方体 GLB 端到端冒烟测试；真实角色资产的连续验收仍待完成。原链路固定验证任务：
 
 ```text
 run_id: 6251e426-c2a2-47c7-9a3c-4607555aba13
@@ -39,6 +39,19 @@ SDPose: 94 分，Prompt 2a4bb12f-2f32-4a35-b739-31acf492f681
 Pixal3D: 36,807,352 bytes，Prompt 2bbe05b5-583a-45be-bae8-66ea66b88772
 SkinTokens: 45,726,624 bytes，1 skin / 49 joints，Prompt bc87f335-023d-4d2f-8f18-7074a532568b
 ```
+
+2026-07-22 的 AutoRemesher DGX 冒烟测试证据：
+
+```text
+DGX architecture: aarch64
+GET /healthz: ready=true
+POST /v1/remesh?target_quads=1000: HTTP 200
+输入 GLB: 728 bytes
+输出 GLB: 69,020 bytes
+Blender 复验: 1,826 vertices / 1,004 faces
+```
+
+服务通过 Tailscale 私网直接访问，不要求 Bearer Token。正式提交前仍需使用实际生成的角色 GLB 连续验证拓扑质量、UV 和基础色回烘结果。
 
 完整证据见 [DGX / ComfyUI 全链路对应关系](../deployment/dgx-pipeline-integration.md)。
 
