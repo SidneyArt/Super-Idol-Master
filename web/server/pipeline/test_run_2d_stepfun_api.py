@@ -81,7 +81,28 @@ class StepFunImageApiTests(unittest.TestCase):
         self.assertIn("左右手", prompt)
         self.assertIn("完全空置", prompt)
         self.assertIn("所有手持物", prompt)
-        self.assertIn("12%纯白安全边距", prompt)
+        self.assertIn("RGB(255,255,255)", prompt)
+        self.assertIn("至少12%留白", prompt)
+
+    def test_tpose_source_replaces_connected_cream_background_with_white(self):
+        with TemporaryDirectory() as directory:
+            source_path = Path(directory) / "cream.png"
+            destination = Path(directory) / "white.png"
+            image = Image.new("RGB", (400, 600), (248, 242, 226))
+            for y in range(150, 500):
+                for x in range(140, 260):
+                    image.putpixel((x, y), (35, 70, 120))
+            for y in range(200, 350):
+                for x in range(0, 60):
+                    image.putpixel((x, y), (225, 235, 245))
+            image.save(source_path)
+
+            prepare_tpose_source(source_path, destination)
+
+            with Image.open(destination) as prepared:
+                self.assertEqual(prepared.getpixel((prepared.width // 2, 250)), (255, 255, 255))
+                self.assertEqual(prepared.getpixel((prepared.width // 2, prepared.height // 2)), (35, 70, 120))
+                self.assertEqual(prepared.getpixel((320, 450)), (225, 235, 245))
 
     def test_text_generation_uses_generation_endpoint_and_json(self):
         session = FakeSession()

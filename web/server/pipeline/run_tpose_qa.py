@@ -8,6 +8,7 @@ import json
 import math
 import sys
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ WORKFLOW_FILE = SCRIPT_DIR / "TPose_QA_SDPose.json"
 MIN_CONFIDENCE = 0.25
 BACKGROUND_BORDER_RATIO = 0.08
 MIN_WHITE_BORDER_RATIO = 0.96
+MIN_CONNECTED_BACKGROUND_WHITE_RATIO = 0.94
 WHITE_CHANNEL_MIN = 245
 WHITE_CHANNEL_SPREAD_MAX = 12
 
@@ -58,9 +60,49 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
                     white_count += 1
         white_ratio = white_count / max(sample_count, 1)
         mean_rgb = [round(total / max(sample_count, 1), 2) for total in channel_totals]
+        visited = bytearray(width * height)
+        queue: deque[tuple[int, int]] = deque()
+
+        def is_light_neutral(red: int, green: int, blue: int) -> bool:
+            return min(red, green, blue) >= 180 and max(red, green, blue) - min(red, green, blue) <= 55
+
+        def enqueue(x: int, y: int) -> None:
+            index = y * width + x
+            if visited[index] or not is_light_neutral(*pixels[x, y]):
+                return
+            visited[index] = 1
+            queue.append((x, y))
+
+        for x in range(width):
+            enqueue(x, 0)
+            enqueue(x, height - 1)
+        for y in range(height):
+            enqueue(0, y)
+            enqueue(width - 1, y)
+
+        connected_count = 0
+        connected_white_count = 0
+        while queue:
+            x, y = queue.popleft()
+            red, green, blue = pixels[x, y]
+            connected_count += 1
+            if min(red, green, blue) >= WHITE_CHANNEL_MIN and max(red, green, blue) - min(red, green, blue) <= WHITE_CHANNEL_SPREAD_MAX:
+                connected_white_count += 1
+            if x > 0:
+                enqueue(x - 1, y)
+            if x + 1 < width:
+                enqueue(x + 1, y)
+            if y > 0:
+                enqueue(x, y - 1)
+            if y + 1 < height:
+                enqueue(x, y + 1)
+
+        connected_white_ratio = connected_white_count / max(connected_count, 1)
         return {
-            "passed": white_ratio >= MIN_WHITE_BORDER_RATIO,
+            "passed": white_ratio >= MIN_WHITE_BORDER_RATIO and connected_white_ratio >= MIN_CONNECTED_BACKGROUND_WHITE_RATIO,
             "whiteBorderRatio": round(white_ratio, 4),
+            "connectedBackgroundWhiteRatio": round(connected_white_ratio, 4),
+            "connectedBackgroundPixelRatio": round(connected_count / max(width * height, 1), 4),
             "borderMeanRgb": mean_rgb,
             "borderRatio": BACKGROUND_BORDER_RATIO,
             "imageWidth": width,
@@ -216,6 +258,8 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
     evaluation.setdefault("metrics", {}).update({
         "backgroundPassed": background["passed"],
         "whiteBorderRatio": background["whiteBorderRatio"],
+        "connectedBackgroundWhiteRatio": background["connectedBackgroundWhiteRatio"],
+        "connectedBackgroundPixelRatio": background["connectedBackgroundPixelRatio"],
         "borderMeanRgb": background["borderMeanRgb"],
         "borderRatio": background["borderRatio"],
         "imageWidth": background["imageWidth"],
@@ -224,7 +268,10 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
     if not background["passed"]:
         evaluation["passed"] = False
         evaluation["score"] = min(int(evaluation.get("score") or 0), 79)
-        background_reason = f"背景不是纯白（边缘纯白占比 {background['whiteBorderRatio']:.1%}）"
+        background_reason = (
+            f"背景不是纯白（边缘纯白占比 {background['whiteBorderRatio']:.1%}，"
+            f"连通背景纯白占比 {background['connectedBackgroundWhiteRatio']:.1%}）"
+        )
         current_summary = str(evaluation.get("summary") or "").rstrip("。")
         evaluation["summary"] = f"{current_summary}；{background_reason}" if current_summary else background_reason
     evaluation.update({

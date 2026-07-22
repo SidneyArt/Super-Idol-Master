@@ -113,6 +113,7 @@ export function createCoordinatorRuntime({
   getLatestCharacterSheetRequest,
   getCharacterSheetRequest,
   getLatestTaskBatch,
+  getTaskExecutionStatus,
   getImageModelStatus,
   getPermissionMode,
   requestApproval,
@@ -347,6 +348,7 @@ export function createCoordinatorRuntime({
 10. 若本轮附带或自动继承了图片，必须依据实际视觉内容回答人数、角色和画面问题；不得声称当前没有图片，也不得要求用户重新上传。只有无法从画面确认的细节才说明不确定。
 11. 用户对已生成图片提出风格修改、效果不满意、人物缺失/多余或要求再次生成时，必须创建新的 generate_character_sheet 审批或生成 Job。没有真实工具结果时，禁止声称“已重新提交”“已启动”或“等待审批”。
 12. 用户要求继续、推进或把“这些/这几个/已有任务”做到某阶段时，必须使用 continue_latest_tasks；绝对不得再次调用 create_character_tasks。
+13. 用户询问任务当前进度、具体执行阶段、卡在哪一步、子 Agent 状态或失败原因时，必须调用 get_task_execution_status；不得只根据工作空间的任务数量统计推测。
 
 当前工作空间：${JSON.stringify(current)}
 全部工作空间：${JSON.stringify(workspaces)}
@@ -411,6 +413,25 @@ ${transcript.slice(-12000)}
         parameters: Type.Object({}),
         executionMode: "sequential",
         execute: async () => textResult(JSON.stringify(getWorkspaces()), getWorkspaces()),
+      },
+      {
+        name: "get_task_execution_status",
+        label: "读取任务执行阶段",
+        description: "读取当前工作空间内单个任务或全部任务的具体流水线阶段、当前 Job、Supervisor 计划、专业子 Agent 检查和最近事件。只读，不会推进任务。",
+        parameters: Type.Object({
+          runId: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+        }),
+        executionMode: "sequential",
+        execute: async (_id, params) => {
+          if (typeof getTaskExecutionStatus !== "function") throw new Error("任务阶段查询能力未配置");
+          const status = getTaskExecutionStatus(workspaceId, params.runId || null);
+          execution.actions.push({
+            tool: "get_task_execution_status",
+            runId: params.runId || null,
+            count: Array.isArray(status?.tasks) ? status.tasks.length : 0,
+          });
+          return textResult(JSON.stringify(status), status);
+        },
       },
       {
         name: "get_image_model_status",
@@ -609,6 +630,28 @@ ${transcript.slice(-12000)}
     };
   }
 
+  function addActivityMessage(workspaceId, sessionId, content) {
+    const safeContent = String(content || "").trim().slice(0, 6000);
+    if (!safeContent) return null;
+    const conversation = db.prepare(`
+      SELECT 1 FROM dispatcher_conversations WHERE id = ? AND workspace_id = ? LIMIT 1
+    `).get(sessionId, workspaceId);
+    if (!conversation) return null;
+    const latest = db.prepare(`
+      SELECT content FROM dispatcher_messages
+      WHERE workspace_id = ? AND session_id = ? ORDER BY id DESC LIMIT 1
+    `).get(workspaceId, sessionId);
+    if (latest?.content === safeContent) return null;
+    const createdAt = new Date().toISOString();
+    const result = db.prepare(`
+      INSERT INTO dispatcher_messages (workspace_id, session_id, role, content, attachment_name, attachment_mime, created_at)
+      VALUES (?, ?, 'assistant', ?, NULL, NULL, ?)
+    `).run(workspaceId, sessionId, safeContent, createdAt);
+    db.prepare(`UPDATE dispatcher_conversations SET updated_at = ? WHERE id = ? AND workspace_id = ?`)
+      .run(createdAt, sessionId, workspaceId);
+    return { id: Number(result.lastInsertRowid), role: "assistant", content: safeContent, createdAt };
+  }
+
   function regenerateCharacterSheet({ workspaceId, sessionId, generationId }) {
     if (activeAgent) throw new Error("总调度 Agent 正在处理上一条消息");
     if (!getWorkspaces().some((item) => item.id === workspaceId)) throw new Error("工作空间不存在");
@@ -711,5 +754,10 @@ ${transcript.slice(-12000)}
     return true;
   }
 
-  return { run, regenerateCharacterSheet, cancel, getMessages, getConversation, startSession, activateSession, deleteSession, status: () => ({ running: Boolean(activeAgent) }) };
+  function inspectTaskExecutionStatus(workspaceId, runId = null) {
+    if (typeof getTaskExecutionStatus !== "function") throw new Error("任务阶段查询能力未配置");
+    return getTaskExecutionStatus(workspaceId, runId);
+  }
+
+  return { run, regenerateCharacterSheet, addActivityMessage, inspectTaskExecutionStatus, cancel, getMessages, getConversation, startSession, activateSession, deleteSession, status: () => ({ running: Boolean(activeAgent) }) };
 }

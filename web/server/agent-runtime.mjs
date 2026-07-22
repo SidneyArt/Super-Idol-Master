@@ -10,6 +10,7 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_TOOL_CALLS = 10;
 const MAX_TURNS = 10;
 const MAX_ROLE_TURNS = 4;
+const MAX_QA_REPAIR_ATTEMPTS = 3;
 export const ASSET_AGENT_ROLES = [
   "supervisor",
   "art_director",
@@ -38,8 +39,8 @@ const REQUIRED_TPOSE_CONSTRAINTS = [
   { label: "双手完全空置", pattern: /双手(?:完全)?空置|双手空手|不拿任何物品|不持有任何道具|empty[- ]?hands|no (?:held )?(?:items|props|weapons)/i },
   { label: "纯白背景", pattern: /纯白背景|白色背景|white background/i },
 ];
-const REQUIRED_TPOSE_SUFFIX = "单人主体，完整全身，严格正视，标准 T-Pose，双臂水平伸展，肘部伸直，肢体无遮挡，双手张开且完全空置，不拿任何武器、法杖、工具或其他物品，纯白无渐变背景";
-const REQUIRED_TPOSE_NEGATIVE_SUFFIX = "手持物，道具，武器，法杖，锤子，刀剑，枪械，球，滑板，工具，灰色背景，彩色背景，渐变背景，场景地面，地平线";
+const REQUIRED_TPOSE_SUFFIX = "最高优先级：只保留角色身份、脸部、发型、服装和穿戴式配饰；忽略参考图及原描述中的姿势、场景和手持装备。单人主体，完整全身，严格正视，标准 T-Pose，双臂呈一条水平直线，肘部完全伸直，肢体无遮挡，双手张开且完全空置，不拿任何武器、盾牌、法杖、工具或其他物品。背景必须是均匀纯白 RGB(255,255,255)，无渐变、无米白色、无阴影、无地面、无地平线";
+const REQUIRED_TPOSE_NEGATIVE_SUFFIX = "手持物，道具，武器，盾牌，法杖，锤子，刀剑，枪械，球，滑板，工具，弯曲手臂，肘部弯曲，肩线倾斜，灰色背景，彩色背景，米白背景，奶油色背景，暖白背景，渐变背景，背景阴影，场景地面，地平线";
 
 const PROMPT_PLAN_SCHEMA = Type.Object({
   positivePrompt: Type.String({ minLength: 1, maxLength: 4000 }),
@@ -193,7 +194,8 @@ function normalizePromptPlan(report, candidate) {
   const originalPositive = candidate.positivePrompt || "";
   const mergedPositive = mergePrompt(originalPositive, report.positivePrompt, 4000);
   const missing = REQUIRED_TPOSE_CONSTRAINTS.filter((item) => !item.pattern.test(mergedPositive));
-  const suffix = missing.length ? `，${REQUIRED_TPOSE_SUFFIX}` : "";
+  const canonicalPolicyMissing = !mergedPositive.includes("RGB(255,255,255)") || !mergedPositive.includes("最高优先级");
+  const suffix = missing.length || canonicalPolicyMissing ? `，${REQUIRED_TPOSE_SUFFIX}` : "";
   const positivePrompt = `${mergedPositive.slice(0, 4000 - suffix.length)}${suffix}`;
   const reviewedNegative = mergePrompt(candidate.negativePrompt || "", report.negativePrompt, 2000);
   const negativeSuffix = reviewedNegative.includes(REQUIRED_TPOSE_NEGATIVE_SUFFIX)
@@ -208,15 +210,34 @@ function normalizePromptPlan(report, candidate) {
     ...(Array.isArray(report.poseConstraints) ? report.poseConstraints : []),
     ...REQUIRED_TPOSE_CONSTRAINTS.map((item) => item.label),
   ])].slice(0, 20);
-  const policyNote = missing.length ? ` PromptPolicy 已补齐 ${missing.length} 项 T-Pose 硬约束。` : "";
+  const policyNote = missing.length || canonicalPolicyMissing
+    ? ` PromptPolicy 已补齐 ${missing.length} 项缺失约束并写入最高优先级 T-Pose/纯白背景策略。`
+    : "";
   return {
     ...report,
     positivePrompt,
     negativePrompt,
     poseConstraints,
     issues,
-    decision: report.decision === "manual_review" ? "manual_review" : missing.length ? "revise" : report.decision,
+    decision: report.decision === "manual_review" ? "manual_review" : missing.length || canonicalPolicyMissing ? "revise" : report.decision,
     summary: `${report.summary}${policyNote}`.slice(0, 500),
+  };
+}
+
+export function buildQaRepairPrompts(run, failureReason, attempt) {
+  const reason = String(failureReason || "T-Pose 质量门禁未通过").trim().slice(0, 900);
+  const repairDirective = [
+    `QA 自动修复第 ${attempt} 轮，失败证据：${reason}`,
+    "本轮必须重新构图，不得沿用上一版姿势或背景",
+    "角色严格正视镜头，左右手腕、肘、肩位于同一水平直线，双臂与躯干形成清晰 90 度夹角，肘部完全伸直",
+    "角色完整全身居中，头顶、手指和双脚四周均有充足留白",
+    "丢弃参考图的原背景并替换为均匀纯白 RGB(255,255,255)，禁止米白、奶油色、暖白、灰色、渐变、投影、地面和地平线",
+    "双手完全空置；删除原描述或参考图中的武器、盾牌、法杖、匕首、工具包及其他手持装备",
+  ].join("。") + "。";
+  const negativeRepair = "非标准T-Pose，手臂下垂，手臂倾斜，肘部弯曲，肩线倾斜，身体侧转，透视姿势，裁切，贴边，手持物，武器，盾牌，法杖，匕首，工具包，米白背景，奶油色背景，暖白背景，灰色背景，彩色背景，渐变背景，背景阴影，场景地面，地平线";
+  return {
+    positivePrompt: `${String(run.positivePrompt || "").trim()}，${repairDirective}`.slice(0, 4000),
+    negativePrompt: `${String(run.negativePrompt || "").trim()}${run.negativePrompt ? "，" : ""}${negativeRepair}`.slice(0, 2000),
   };
 }
 
@@ -227,7 +248,7 @@ export function normalizeVisualQaReport(report, deterministicQa) {
     return !/(?:无|未|没有|并未|不再|并不)$/.test(prefix);
   });
   const heldPropEvidence = hasPositiveEvidence(/(?:手持|拿着|握着|持有|手中有|手里有)[^。；\n]{0,24}(?:武器|道具|刀|剑|枪|法杖|锤|球|滑板|工具|苦无)/gi);
-  const nonWhiteBackgroundEvidence = hasPositiveEvidence(/(?:灰色|彩色|渐变|场景|地平线)[^。；\n]{0,12}背景|背景(?:为|是|存在)[^。；\n]{0,12}(?:灰色|彩色|渐变|场景|地平线)/gi);
+  const nonWhiteBackgroundEvidence = hasPositiveEvidence(/(?:灰色|彩色|米白|奶油色|暖白|渐变|阴影|投影|纹理|场景|地平线)[^。；\n]{0,12}背景|背景(?:为|是|存在)[^。；\n]{0,12}(?:灰色|彩色|米白|奶油色|暖白|渐变|阴影|投影|纹理|场景|地平线)/gi);
   const normalized = {
     ...report,
     handsEmpty: heldPropEvidence ? false : report.handsEmpty,
@@ -342,7 +363,7 @@ function buildSystemPrompt(detail, history, permissionMode) {
 4. 用户只要求推进一步时，调用 advance_workflow；如果进入的新阶段需要执行任务，再调用 run_stage_job。
 5. 用户要求回退时调用 revert_workflow。修改已经产生下游资产的提示词前，先回退到“概念图生成”。
 6. 一次对话最多直接启动一个 GPU Job。execute_pipeline_goal 的后续 Job 由完成事件依次触发，仍遵守单 GPU 串行规则。
-7. 不要在没有明确终点时替用户确认生成结果；明确的流水线终点属于对中间合格产物的持续授权。SDPose、专业 QA 或资产检查不通过时必须暂停，不能自动越过。
+7. 不要在没有明确终点时替用户确认生成结果；明确的流水线终点属于对中间合格产物的持续授权。SDPose、Visual QA 或 Character Consistency 未通过时绝对不能越过质量门禁，但应自动依据失败证据修复提示词、重新生成并复检，而不是立即暂停；连续三轮修复仍未通过时才结束自动计划并明确报告。3D 结构、绑骨或导出硬门禁失败时不得自动伪造修复结果。
 8. 如果用户只是询问状态或建议，不要调用写工具。信息不足时先提出一个简短问题。
 9. 图片是参考信息，不等于流水线已经生成的正式资产。分析图片时把可见的角色、服装、风格、配色和构图转成提示词。
 10. 工具报错时解释真实原因，不要绕过阶段、审批或运行中任务限制。
@@ -369,6 +390,7 @@ export function createAssetAgentRuntime({
   getRunReferenceImagePath,
   getAssetInspection,
   addRunEvent,
+  publishActivity,
   getPermissionMode,
   requestApproval,
 }) {
@@ -558,6 +580,15 @@ export function createAssetAgentRuntime({
   const activeRoleRuns = new Set();
   const drivingPlans = new Set();
 
+  function publishRunActivity(runId, activity) {
+    if (typeof publishActivity !== "function") return;
+    try {
+      publishActivity({ runId, ...activity });
+    } catch {
+      // Coordinator visibility must never interrupt an asset pipeline.
+    }
+  }
+
   function getWorkflowPlan(runId) {
     return db.prepare(`
       SELECT run_id AS runId, target, target_stage AS targetStage, status, message,
@@ -571,6 +602,7 @@ export function createAssetAgentRuntime({
       UPDATE agent_workflow_plans SET status = ?, message = ?, updated_at = ? WHERE run_id = ?
     `).run(status, message.slice(0, 1000), new Date().toISOString(), runId);
     addRunEvent(runId, `agent_pipeline_${status}`, getRunDetail(runId).run.currentStage, message.slice(0, 500));
+    publishRunActivity(runId, { kind: "workflow", status, message: message.slice(0, 500) });
   }
 
   function getRoleRuns(runId, limit = 20) {
@@ -699,11 +731,19 @@ export function createAssetAgentRuntime({
         db.exec("ROLLBACK");
         throw error;
       }
+      publishRunActivity(runId, {
+        kind: "role",
+        agentRole,
+        status: "succeeded",
+        message: String(report.summary || `${agentRole} 已完成检查`).slice(0, 500),
+      });
       return report;
     } catch (error) {
+      const roleError = (error instanceof Error ? error.message : "角色调用失败").slice(0, 1200);
       db.prepare(`
         UPDATE agent_role_runs SET status = 'failed', error_message = ?, completed_at = ? WHERE id = ?
-      `).run((error instanceof Error ? error.message : "角色调用失败").slice(0, 1200), new Date().toISOString(), roleRunId);
+      `).run(roleError, new Date().toISOString(), roleRunId);
+      publishRunActivity(runId, { kind: "role", agentRole, status: "failed", message: roleError.slice(0, 500) });
       throw error;
     } finally {
       activeRoleRuns.delete(activeKey);
@@ -759,7 +799,7 @@ export function createAssetAgentRuntime({
       triggerType: "qa_job_completed",
       sourceKey,
       reportType: "image_quality_report",
-      systemPrompt: `你是 Super Idol Master 的 Visual QA。你没有状态修改和任务执行权限，只负责视觉语义复核。\n\n规则：\n1. 独立检查单主体、完整全身、严格正视、双臂水平、肢体无遮挡、双手完全空置和纯白背景。\n2. 必须逐只检查左右手；只要任一只手拿着武器、法杖、锤子、刀剑、枪、球、滑板、工具或任何其他物品，handsEmpty 必须为 false，decision 不得为 pass。\n3. 纯白背景不允许灰色或彩色渐变、场景地面、地平线和大面积投影；只要存在这些内容，whiteBackground 必须为 false，decision 不得为 pass。\n4. SDPose 与背景像素指标是确定性证据，不得伪造或改写；任一硬门禁失败时不得 pass。\n5. 没有身份参考图时 identityConsistent 必须为 null。\n6. 只有全部布尔检查为 true 且置信度至少 0.8 时才能 pass；不确定时选择 manual_review。\n7. 只能通过 submit_visual_qa_report 提交报告，不得触发重试或推进流程。`,
+      systemPrompt: `你是 Super Idol Master 的 Visual QA。你没有状态修改和任务执行权限，只负责视觉语义复核。\n\n规则：\n1. 独立检查单主体、完整全身、严格正视、双臂水平、肢体无遮挡、双手完全空置和纯白背景。\n2. 必须逐只检查左右手；只要任一只手拿着武器、法杖、锤子、刀剑、枪、球、滑板、工具或任何其他物品，handsEmpty 必须为 false，decision 不得为 pass。\n3. 纯白背景必须接近均匀 RGB(255,255,255)，不允许米白、奶油色、暖白、灰色或彩色渐变、纹理、场景地面、地平线和投影；只要存在这些内容，whiteBackground 必须为 false，decision 不得为 pass。必须同时核对 deterministicQa 中的 backgroundPassed、whiteBorderRatio 和 connectedBackgroundWhiteRatio。\n4. SDPose 与背景像素指标是确定性证据，不得伪造或改写；任一硬门禁失败时不得 pass。\n5. 没有身份参考图时 identityConsistent 必须为 null。\n6. 只有全部布尔检查为 true 且置信度至少 0.8 时才能 pass；不确定时选择 manual_review。\n7. 只能通过 submit_visual_qa_report 提交报告，不得触发重试或推进流程。`,
       input: {
         runId,
         assetName: context.name,
@@ -890,6 +930,47 @@ export function createAssetAgentRuntime({
     return { ...row, report };
   }
 
+  function qaRepairAttemptCount(runId) {
+    const plan = getWorkflowPlan(runId);
+    if (!plan) return 0;
+    const row = db.prepare(`
+      SELECT COUNT(*) AS count FROM run_events
+      WHERE run_id = ? AND event_type = 'agent_qa_repair_started' AND created_at >= ?
+    `).get(runId, plan.createdAt);
+    return Number(row?.count || 0);
+  }
+
+  async function repairQaAndRegenerate(runId, failureReason) {
+    const previousAttempts = qaRepairAttemptCount(runId);
+    if (previousAttempts >= MAX_QA_REPAIR_ATTEMPTS) {
+      const message = `连续 ${MAX_QA_REPAIR_ATTEMPTS} 轮自动修复后 T-Pose 仍未通过：${failureReason}`;
+      updateWorkflowPlan(runId, "failed", message);
+      addMessage(runId, "assistant", `自动修复已结束：${message}`);
+      return getWorkflowPlan(runId);
+    }
+
+    const attempt = previousAttempts + 1;
+    const reason = String(failureReason || "T-Pose 质量门禁未通过").trim().slice(0, 900);
+    addRunEvent(runId, "agent_qa_repair_started", 2, `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮 QA 自动修复：${reason.slice(0, 420)}`);
+    addMessage(runId, "assistant", `QA 未通过，正在执行第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮自动修复：先修正提示词，再重新生成并复检。失败依据：${reason}`);
+
+    const reverted = revertWorkflow(runId, 1, `QA 未通过，自动回退并执行第 ${attempt} 轮提示词修复`);
+    const candidate = buildQaRepairPrompts(reverted.run, reason, attempt);
+    try {
+      await prepareCharacterPrompts(runId, candidate, `根据 QA 失败证据执行第 ${attempt} 轮自动提示词修复`);
+    } catch (error) {
+      updatePrompts(runId, {
+        ...candidate,
+        reason: `Art Director 不可用，应用第 ${attempt} 轮确定性 QA 修复约束`,
+      });
+      addRunEvent(runId, "qa_repair_prompt_fallback", 1, `第 ${attempt} 轮使用确定性修复提示词：${error instanceof Error ? error.message : "Art Director 调用失败"}`);
+    }
+
+    const detail = runStageJob(runId, "generate_2d", `第 ${attempt} 轮 QA 修复后自动重新生成 T-Pose`);
+    updateWorkflowPlan(runId, "running", `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮提示词已修复，${detail.run.jobMessage}；完成后自动重新执行 SDPose 与专业 QA`);
+    return getWorkflowPlan(runId);
+  }
+
   async function driveWorkflowPlan(runId) {
     if (drivingPlans.has(runId)) return getWorkflowPlan(runId);
     const plan = getWorkflowPlan(runId);
@@ -925,17 +1006,22 @@ export function createAssetAgentRuntime({
       }
 
       if (run.currentStage === 2) {
+        const sourceKey = `qa:${run.jobPromptId || "current"}`;
         if (run.qaStatus === "failed") {
-          updateWorkflowPlan(runId, "blocked", `SDPose 质检未通过：${run.qaSummary || "姿态硬门禁失败"}`);
-          addMessage(runId, "assistant", `自动流水线已暂停：SDPose 质检未通过。${run.qaSummary || "请检查姿态结果后重新生成。"}`);
-          return getWorkflowPlan(runId);
+          const visual = latestRoleRun(runId, "visual_qa", "qa_job_completed", sourceKey);
+          const consistency = latestRoleRun(runId, "character_consistency", "qa_job_completed", sourceKey);
+          const evidence = [
+            run.qaSummary || "SDPose 姿态或背景硬门禁失败",
+            visual?.report?.summary,
+            consistency?.report?.summary,
+          ].filter(Boolean).join("；");
+          return await repairQaAndRegenerate(runId, evidence);
         }
         if (run.qaStatus !== "passed") {
           detail = runStageJob(runId, "check_tpose", "Agent 流水线自动启动 SDPose 质检");
           updateWorkflowPlan(runId, "running", `${detail.run.jobMessage}；随后将调用 Visual QA 与 Character Consistency`);
           return getWorkflowPlan(runId);
         }
-        const sourceKey = `qa:${run.jobPromptId || "current"}`;
         let visual = latestRoleRun(runId, "visual_qa", "qa_job_completed", sourceKey);
         if (!visual) {
           try {
@@ -952,9 +1038,7 @@ export function createAssetAgentRuntime({
         }
         if (visual.status !== "succeeded" || visual.report?.decision !== "pass") {
           const reason = visual.report?.summary || visual.errorMessage || "Visual QA 建议人工复核";
-          updateWorkflowPlan(runId, "blocked", `Visual QA 未放行：${reason}`);
-          addMessage(runId, "assistant", `自动流水线已暂停：Visual QA 未放行。${reason}`);
-          return getWorkflowPlan(runId);
+          return await repairQaAndRegenerate(runId, `Visual QA 未放行：${reason}`);
         }
         let consistency = latestRoleRun(runId, "character_consistency", "qa_job_completed", sourceKey);
         if (!consistency) {
@@ -972,9 +1056,7 @@ export function createAssetAgentRuntime({
         }
         if (consistency.status !== "succeeded" || consistency.report?.decision !== "pass") {
           const reason = consistency.report?.summary || consistency.errorMessage || "角色一致性检查建议人工复核";
-          updateWorkflowPlan(runId, "blocked", `Character Consistency 未放行：${reason}`);
-          addMessage(runId, "assistant", `自动流水线已暂停：角色一致性检查未放行。${reason}`);
-          return getWorkflowPlan(runId);
+          return await repairQaAndRegenerate(runId, `Character Consistency 未放行：${reason}`);
         }
         if (plan.targetStage === 2) {
           updateWorkflowPlan(runId, "completed", "SDPose、Visual QA 与角色一致性检查均已通过，达到自动执行目标");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { ASSET_AGENT_ROLES, createAssetAgentRuntime, normalizeVisualQaReport } from "./agent-runtime.mjs";
+import { ASSET_AGENT_ROLES, buildQaRepairPrompts, createAssetAgentRuntime, normalizeVisualQaReport } from "./agent-runtime.mjs";
 import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
 
 function createAssetRuntime(db) {
@@ -79,11 +79,25 @@ test("coordinator session deletion removes its timeline metadata without deletin
     getLatestGeneratedImage: () => null,
     getLatestCharacterSheetRequest: () => null,
     getLatestTaskBatch: () => null,
+    getTaskExecutionStatus: (workspaceId, runId) => ({
+      workspace: { id: workspaceId, name: "测试空间" },
+      taskCount: 1,
+      tasks: [{ id: runId || "run-1", currentStage: 2, currentStageName: "T-Pose 检查", stageState: "running" }],
+    }),
     getImageModelStatus: () => ({}),
     getPermissionMode: () => "request",
     requestApproval: () => {},
   });
   const first = runtime.getConversation("workspace-1");
+  assert.deepEqual(runtime.inspectTaskExecutionStatus("workspace-1", "run-1").tasks[0], {
+    id: "run-1",
+    currentStage: 2,
+    currentStageName: "T-Pose 检查",
+    stageState: "running",
+  });
+  assert.ok(runtime.addActivityMessage("workspace-1", first.sessionId, "子 Agent 已完成 Visual QA"));
+  assert.equal(runtime.addActivityMessage("workspace-1", first.sessionId, "子 Agent 已完成 Visual QA"), null);
+  assert.equal(runtime.getConversation("workspace-1").messages.at(-1).content, "子 Agent 已完成 Visual QA");
   db.prepare("INSERT INTO dispatcher_generations (id, workspace_id, session_id) VALUES ('generation-1', 'workspace-1', ?)").run(first.sessionId);
   db.prepare("INSERT INTO dispatcher_task_batches (id, workspace_id, session_id) VALUES ('batch-1', 'workspace-1', ?)").run(first.sessionId);
 
@@ -92,6 +106,97 @@ test("coordinator session deletion removes its timeline metadata without deletin
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM dispatcher_generations").get().count, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM dispatcher_task_batches").get().count, 0);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM workspaces").get().count, 1);
+  db.close();
+});
+
+test("QA repair prompts prioritize exact white background and pose corrections", () => {
+  const prompts = buildQaRepairPrompts({
+    positivePrompt: "蓝色王国法师，手持法杖",
+    negativePrompt: "低画质",
+  }, "双臂不够水平；背景不是纯白", 2);
+
+  assert.match(prompts.positivePrompt, /第 2 轮/);
+  assert.match(prompts.positivePrompt, /RGB\(255,255,255\)/);
+  assert.match(prompts.positivePrompt, /双臂与躯干形成清晰 90 度夹角/);
+  assert.match(prompts.positivePrompt, /删除.*法杖/);
+  assert.match(prompts.negativePrompt, /米白背景/);
+  assert.match(prompts.negativePrompt, /肘部弯曲/);
+});
+
+test("failed T-Pose QA repairs prompts and regenerates instead of blocking", async () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE runs (id TEXT PRIMARY KEY);
+    INSERT INTO runs (id) VALUES ('run-repair');
+    CREATE TABLE run_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      stage INTEGER NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  const run = {
+    id: "run-repair",
+    name: "白底修复角色",
+    currentStage: 2,
+    positivePrompt: "蓝色法师，手持法杖",
+    negativePrompt: "低画质",
+    jobStatus: "idle",
+    jobType: "qa",
+    jobMessage: "",
+    jobProgress: 100,
+    jobPromptId: "qa-failed-1",
+    qaStatus: "failed",
+    qaScore: 72,
+    qaSummary: "双臂不够水平；背景不是纯白",
+    qaMetrics: { backgroundPassed: false, whiteBorderRatio: 0.64 },
+    assets: { imageReady: true, modelReady: false, topologyReady: false, riggedReady: false },
+  };
+  const detail = () => ({ run });
+  const runtime = createAssetAgentRuntime({
+    db,
+    getRunDetail: detail,
+    updatePrompts: (_runId, prompts) => {
+      run.positivePrompt = prompts.positivePrompt;
+      run.negativePrompt = prompts.negativePrompt;
+      return detail();
+    },
+    advanceWorkflow: () => detail(),
+    revertWorkflow: () => {
+      run.currentStage = 1;
+      run.qaStatus = "pending";
+      run.assets.imageReady = false;
+      return detail();
+    },
+    runStageJob: (_runId, action) => {
+      assert.equal(action, "generate_2d");
+      run.jobStatus = "running";
+      run.jobType = "2d";
+      run.jobMessage = "正在重新生成 T-Pose";
+      return detail();
+    },
+    getAgentConfig: () => ({ apiKey: "", model: "step-3.7-flash" }),
+    getRunImagePath: () => null,
+    getRunReferenceImagePath: () => null,
+    getAssetInspection: () => ({}),
+    addRunEvent: (runId, eventType, stage, message, createdAt = new Date().toISOString()) => {
+      db.prepare("INSERT INTO run_events (run_id, event_type, stage, message, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(runId, eventType, stage, message, createdAt);
+    },
+    getPermissionMode: () => "auto",
+    requestApproval: () => {},
+  });
+
+  const plan = await runtime.scheduleWorkflowPlan("run-repair", "model");
+
+  assert.equal(plan.status, "running");
+  assert.equal(run.jobStatus, "running");
+  assert.match(run.positivePrompt, /RGB\(255,255,255\)/);
+  assert.match(run.negativePrompt, /米白背景/);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM run_events WHERE event_type = 'agent_qa_repair_started'").get().count, 1);
+  assert.match(runtime.getConversation("run-repair").messages.at(-1).content, /自动修复/);
   db.close();
 });
 
@@ -188,6 +293,27 @@ test("visual QA cannot pass when its own summary identifies a gradient backgroun
   assert.equal(report.whiteBackground, false);
   assert.equal(report.decision, "repairable");
   assert.match(report.issues.join(" "), /背景不是纯白/);
+});
+
+test("visual QA treats cream background evidence as non-white", () => {
+  const report = normalizeVisualQaReport({
+    assetKind: "humanoid",
+    fullBody: true,
+    singleSubject: true,
+    frontFacing: true,
+    armsHorizontal: true,
+    limbsUnoccluded: true,
+    handsEmpty: true,
+    whiteBackground: true,
+    identityConsistent: null,
+    confidence: 0.95,
+    issues: [],
+    decision: "pass",
+    summary: "角色姿态正确，但背景为米白色。",
+  }, { status: "passed" });
+
+  assert.equal(report.whiteBackground, false);
+  assert.equal(report.decision, "repairable");
 });
 
 test("visual QA does not treat explicit negative evidence as a held prop", () => {

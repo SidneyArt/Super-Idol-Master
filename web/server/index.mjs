@@ -1649,6 +1649,39 @@ function streamDownload(res, filePath, label) {
   createReadStream(filePath).pipe(res);
 }
 
+function publishCoordinatorAgentActivity({ runId, kind, agentRole, status, message }) {
+  const batches = db.prepare(`
+    SELECT workspace_id AS workspaceId, session_id AS sessionId, run_ids AS runIds
+    FROM dispatcher_task_batches ORDER BY created_at DESC LIMIT 100
+  `).all();
+  const batch = batches.find((item) => {
+    try {
+      return JSON.parse(item.runIds || "[]").includes(runId);
+    } catch {
+      return false;
+    }
+  });
+  if (!batch?.sessionId) return;
+  const run = getRunRow(runId);
+  if (!run) return;
+  const roleLabels = {
+    art_director: "Art Director",
+    visual_qa: "Visual QA",
+    character_consistency: "Character Consistency",
+    asset_inspector: "Asset Inspector",
+    rigging_qa: "Rigging QA",
+    export_specialist: "Export Specialist",
+    workflow_doctor: "Workflow Doctor",
+  };
+  const statusLabels = { running: "执行中", succeeded: "已完成", failed: "失败", completed: "已完成", blocked: "已暂停" };
+  const source = kind === "role" ? roleLabels[agentRole] || agentRole : "Supervisor 自动流水线";
+  coordinatorAgent.addActivityMessage(
+    batch.workspaceId,
+    batch.sessionId,
+    `**子 Agent · ${run.name} · ${source}（${statusLabels[status] || status || "更新"}）**\n\n${String(message || "状态已更新").slice(0, 1000)}`,
+  );
+}
+
 const assetAgent = createAssetAgentRuntime({
   db,
   getRunDetail: runDetail,
@@ -1666,6 +1699,7 @@ const assetAgent = createAssetAgentRuntime({
     return inspectGlb(filePath, assetKind === "rigged_model");
   },
   addRunEvent: addEvent,
+  publishActivity: publishCoordinatorAgentActivity,
   getPermissionMode: (runId) => approvalRuntime.permission("task", runId),
   requestApproval: approvalRuntime.requestApproval,
 });
@@ -1775,6 +1809,85 @@ function getDispatcherGeneration(id) {
            created_at AS createdAt, updated_at AS updatedAt
     FROM dispatcher_generations WHERE id = ?
   `).get(id) || null;
+}
+
+const COORDINATOR_STAGE_NAMES = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动拓扑", "自动绑骨", "资产导出"];
+
+function coordinatorTaskStageState(run, plan) {
+  if (run.status === "completed") return "completed";
+  if (run.jobStatus === "running") return "running";
+  if (run.jobStatus === "failed") return "failed";
+  if (plan?.status === "blocked" || plan?.status === "failed") return plan.status;
+  if (plan?.status === "completed") return "completed";
+  if (plan?.status === "running") return "running";
+  return "waiting";
+}
+
+function getCoordinatorTaskExecutionStatus(workspaceId, runId = null) {
+  const workspace = getWorkspace(workspaceId);
+  if (!workspace) throw new Error("工作空间不存在");
+  const rows = runId
+    ? [getRunRow(runId)].filter((run) => run?.workspaceId === workspaceId)
+    : db.prepare(`${runSelect} WHERE workspace_id = ? ORDER BY updated_at DESC`).all(workspaceId);
+  if (runId && !rows.length) throw new Error("当前工作空间中不存在该任务");
+
+  const tasks = rows.map((row) => {
+    const run = serializeRun(row);
+    const plan = assetAgent.getWorkflowPlan(row.id);
+    const roleRuns = assetAgent.getRoleRuns(row.id, 12).map((roleRun) => ({
+      id: roleRun.id,
+      agentRole: roleRun.agentRole,
+      triggerType: roleRun.triggerType,
+      status: roleRun.status,
+      summary: roleRun.report?.summary || roleRun.errorMessage || null,
+      createdAt: roleRun.createdAt,
+      completedAt: roleRun.completedAt,
+    }));
+    const runningRole = roleRuns.find((roleRun) => roleRun.status === "running");
+    const stageState = coordinatorTaskStageState(run, plan);
+    const activeStep = run.jobStatus === "running"
+      ? { kind: "job", type: run.jobType, node: run.jobCurrentNode, progress: run.jobProgress, message: run.jobMessage }
+      : runningRole
+        ? { kind: "agent_role", role: runningRole.agentRole, message: runningRole.summary }
+        : plan?.status === "running"
+          ? { kind: "workflow", target: plan.target, message: plan.message }
+          : { kind: stageState, message: run.jobMessage || plan?.message || null };
+    return {
+      id: run.id,
+      name: run.name,
+      pipelineType: run.pipelineType,
+      currentStage: run.currentStage,
+      currentStageName: COORDINATOR_STAGE_NAMES[run.currentStage] || "未知阶段",
+      stageState,
+      stages: COORDINATOR_STAGE_NAMES.map((name, index) => ({
+        index,
+        name,
+        status: index < run.currentStage ? "completed" : index === run.currentStage ? stageState : "pending",
+      })),
+      status: run.status,
+      qa: { status: run.qaStatus, score: run.qaScore, summary: run.qaSummary },
+      job: {
+        status: run.jobStatus,
+        type: run.jobType,
+        progress: run.jobProgress,
+        currentNode: run.jobCurrentNode,
+        message: run.jobMessage,
+      },
+      activeStep,
+      workflowPlan: plan,
+      agentRoles: roleRuns,
+      assets: run.assets,
+      recentEvents: getEvents(row.id).slice(0, 12),
+      updatedAt: run.updatedAt,
+    };
+  });
+
+  return {
+    workspace: { id: workspace.id, name: workspace.name },
+    taskCount: tasks.length,
+    tasks,
+    queriedAt: new Date().toISOString(),
+  };
 }
 
 function listDispatcherGenerations(workspaceId, sessionId) {
@@ -2017,6 +2130,7 @@ const coordinatorAgent = createCoordinatorRuntime({
   getLatestCharacterSheetRequest,
   getCharacterSheetRequest,
   getLatestTaskBatch: (workspaceId, sessionId) => listDispatcherTaskBatches(workspaceId, sessionId)[0] || null,
+  getTaskExecutionStatus: getCoordinatorTaskExecutionStatus,
   delegateTask: (runId, target) => delegateCoordinatorTask(runId, target),
   getImageModelStatus: () => {
     const settings = settingsStore.publicSettings();

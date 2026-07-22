@@ -34,6 +34,22 @@ class TposeBackgroundQaTests(unittest.TestCase):
             self.assertFalse(result["passed"])
             self.assertLess(result["whiteBorderRatio"], 0.96)
 
+    def test_white_outer_border_does_not_hide_cream_inner_background(self):
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "cream-center.png"
+            image = Image.new("RGB", (512, 512), (255, 255, 255))
+            pixels = image.load()
+            for y in range(48, 464):
+                for x in range(48, 464):
+                    pixels[x, y] = (248, 242, 226)
+            image.save(image_path)
+
+            result = evaluate_background(image_path)
+
+            self.assertFalse(result["passed"])
+            self.assertEqual(result["whiteBorderRatio"], 1.0)
+            self.assertLess(result["connectedBackgroundWhiteRatio"], 0.94)
+
 
 if __name__ == "__main__":
     unittest.main()

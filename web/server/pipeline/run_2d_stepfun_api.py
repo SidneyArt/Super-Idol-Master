@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import uuid
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
@@ -28,14 +29,16 @@ MAX_EDIT_ASPECT_RATIO = 2.94
 TPOSE_CANVAS_SIZE = 1024
 TPOSE_SAFE_MARGIN_RATIO = 0.12
 TPOSE_POSITIVE_CONSTRAINTS = (
-    "输出必须为1:1正方形画布。镜头拉远，角色居中并完整全身出镜；标准T-Pose，双臂水平伸直；"
-    "左右手、全部手指、头顶和双脚都必须完整可见，任何身体部位不得越出画面；"
-    "双手张开且完全空置，移除原画中的武器、法杖、工具、球、滑板及所有手持物；人物四周至少保留12%纯白安全边距。"
+    "最高优先级：不要复制参考图的姿势、背景、投影或手持装备，只保留角色身份、脸部、发型、服装和穿戴式配饰。"
+    "输出1:1正方形，镜头拉远，单个角色居中完整全身；严格正视标准T-Pose，双肩水平，双臂与躯干成90度并呈一条水平直线，肘部完全伸直。"
+    "左右手、全部手指、头顶和双脚完整可见，四周至少12%留白；双手张开完全空置，删除武器、盾牌、法杖、匕首、工具包和所有手持物。"
+    "背景只能是均匀纯白RGB(255,255,255)，整张背景无色偏、无渐变、无阴影、无纹理、无地面、无地平线。"
 )
 TPOSE_NEGATIVE_CONSTRAINTS = (
     "竖幅，横幅，非1:1，特写，放大构图，出画，越界，贴边，裁切，截断手臂，截断手掌，"
     "缺失手指，缺失四肢，头顶裁切，脚部裁切，手持物，道具，武器，法杖，锤子，刀剑，枪械，"
-    "球，滑板，工具，灰色背景，彩色背景，渐变背景，场景地面，地平线"
+    "球，滑板，工具，米白背景，奶油色背景，暖白背景，灰色背景，彩色背景，渐变背景，"
+    "环境色偏，背景阴影，投影，纹理背景，场景地面，地平线"
 )
 STEPFUN_GENERATION_MODELS = {"step-image-edit-2", "step-2x-large", "step-1x-medium"}
 STEPFUN_EDIT_MODELS = {"step-image-edit-2"}
@@ -85,10 +88,68 @@ def prompt_with_required_constraints(value: str, constraints: str, label: str) -
     return f"{prompt}{separator}{constraints}"
 
 
+def whiten_connected_background(image: Image.Image) -> Image.Image:
+    """Replace the dominant light edge background with white without erasing armor highlights."""
+    canvas = image.convert("RGB")
+    width, height = canvas.size
+    pixels = canvas.load()
+    edge_samples = []
+    for x in range(width):
+        edge_samples.extend((pixels[x, 0], pixels[x, height - 1]))
+    for y in range(height):
+        edge_samples.extend((pixels[0, y], pixels[width - 1, y]))
+    edge_samples = [
+        color for color in edge_samples
+        if min(color) >= 170 and max(color) - min(color) <= 60
+    ]
+    if not edge_samples:
+        return canvas
+    background = tuple(sorted(color[channel] for color in edge_samples)[len(edge_samples) // 2] for channel in range(3))
+    background_warmth = background[0] - background[2]
+    visited = bytearray(width * height)
+    queue: deque[tuple[int, int]] = deque()
+
+    def is_background(red: int, green: int, blue: int) -> bool:
+        exact_white = min(red, green, blue) >= 250 and max(red, green, blue) - min(red, green, blue) <= 8
+        close_to_dominant = (
+            min(red, green, blue) >= 170
+            and max(abs(red - background[0]), abs(green - background[1]), abs(blue - background[2])) <= 24
+            and abs((red - blue) - background_warmth) <= 12
+        )
+        return exact_white or close_to_dominant
+
+    def enqueue(x: int, y: int) -> None:
+        index = y * width + x
+        if visited[index] or not is_background(*pixels[x, y]):
+            return
+        visited[index] = 1
+        queue.append((x, y))
+
+    for x in range(width):
+        enqueue(x, 0)
+        enqueue(x, height - 1)
+    for y in range(height):
+        enqueue(0, y)
+        enqueue(width - 1, y)
+
+    while queue:
+        x, y = queue.popleft()
+        pixels[x, y] = (255, 255, 255)
+        if x > 0:
+            enqueue(x - 1, y)
+        if x + 1 < width:
+            enqueue(x + 1, y)
+        if y > 0:
+            enqueue(x, y - 1)
+        if y + 1 < height:
+            enqueue(x, y + 1)
+    return canvas
+
+
 def prepare_tpose_source(input_path: Path, destination: Path) -> None:
     with Image.open(input_path) as source:
         source.load()
-        image = ImageOps.exif_transpose(source).convert("RGBA")
+        image = whiten_connected_background(ImageOps.exif_transpose(source)).convert("RGBA")
         usable_size = round(TPOSE_CANVAS_SIZE * (1 - 2 * TPOSE_SAFE_MARGIN_RATIO))
         image.thumbnail((usable_size, usable_size), Image.Resampling.LANCZOS)
         canvas = Image.new("RGBA", (TPOSE_CANVAS_SIZE, TPOSE_CANVAS_SIZE), (255, 255, 255, 255))

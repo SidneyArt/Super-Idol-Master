@@ -1181,6 +1181,24 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }, [selectedWorkspaceId]);
 
   useEffect(() => {
+    if (!selectedWorkspaceId || dispatcherBusy) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void api<ConversationPayload>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`)
+        .then((data) => {
+          if (cancelled || selectedWorkspaceIdRef.current !== selectedWorkspaceId) return;
+          if (dispatcherSessionIdRef.current && data.sessionId !== dispatcherSessionIdRef.current) return;
+          applyDispatcherConversation(data);
+        })
+        .catch(() => undefined);
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedWorkspaceId, dispatcherSessionId, dispatcherBusy]);
+
+  useEffect(() => {
     void refreshActivity(false).catch(() => undefined);
   }, [selectedId, selectedWorkspaceId, dispatcherSessionId]);
 
