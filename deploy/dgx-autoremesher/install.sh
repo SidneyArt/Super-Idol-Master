@@ -14,7 +14,7 @@ SERVICE_ROOT="/opt/autoremesher-api"
 SERVICE_NAME="autoremesher-api"
 SERVICE_ENV="/etc/autoremesher-api.env"
 
-for required_file in service.py blender_bridge.py run-headless.sh service.env.example autoremesher-api.service; do
+for required_file in service.py blender_bridge.py run-headless.sh service.env.example autoremesher-api.service arm64-geogram.patch; do
   if [[ ! -f "${SCRIPT_DIR}/${required_file}" ]]; then
     echo "Missing installer file: ${SCRIPT_DIR}/${required_file}" >&2
     exit 1
@@ -25,7 +25,7 @@ apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
   build-essential git qt5-qmake qtbase5-dev qttools5-dev-tools \
   libqt5svg5-dev libqt5multimedia5-plugins libqt5multimedia5 libtbb-dev \
-  libgl1-mesa-dev xvfb blender curl openssl
+  libgl1-mesa-dev xvfb blender curl openssl patch
 
 if [[ ! -d "${BUILD_ROOT}/.git" ]]; then
   git clone https://github.com/huxingyi/autoremesher.git "${BUILD_ROOT}"
@@ -37,6 +37,10 @@ git -C "${BUILD_ROOT}" checkout --detach "${AUTOREMESHER_REF}"
 # Spark is aarch64, so native ARM64 builds must use the compiler default ISA.
 if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
   sed -i 's/[[:space:]]*-march=x86-64-v2//g' "${BUILD_ROOT}/autoremesher.pro"
+  GEOGRAM_ATOMICS="${BUILD_ROOT}/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/basic/atomics.h"
+  if ! grep -q 'GEO_USE_GNU_ATOMICS' "${GEOGRAM_ATOMICS}"; then
+    patch --batch --forward -d "${BUILD_ROOT}" -p1 < "${SCRIPT_DIR}/arm64-geogram.patch"
+  fi
 fi
 
 cd "${BUILD_ROOT}"

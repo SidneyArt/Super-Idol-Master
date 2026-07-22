@@ -18,6 +18,8 @@
 
 在保存本项目代码的 Windows 电脑中，只上传本目录：
 
+> `scp` 命令在 Windows PowerShell 中执行，不要复制到 DGX Bash。PowerShell 提示符通常以 `PS` 开头，DGX Bash 提示符通常以 `sidney@spark-` 开头。
+
 ```powershell
 scp -r .\deploy\dgx-autoremesher dgx:~/autoremesher-api-installer
 ssh dgx
@@ -31,6 +33,10 @@ sudo bash install.sh
 ```
 
 脚本会自行下载并编译上游 AutoRemesher、安装 Blender 和运行依赖、生成 API Token，并启动 `autoremesher-api.service`。
+
+DGX Spark 使用 AArch64。安装脚本会自动移除上游的 x86 编译参数，并修补内置 Geogram 1.8.3 将 Linux ARM64 误判为 x86、生成 `pause` 和 `lock` 汇编指令的问题。
+
+如果旧版脚本已经因 `unknown mnemonic 'pause'` 失败，从 Windows PowerShell 上传新版 `install.sh` 和 `arm64-geogram.patch`，再在 DGX 中重新执行安装脚本即可；不需要清理已有编译目录。
 
 查看 Token：
 

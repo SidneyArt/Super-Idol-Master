@@ -59,6 +59,8 @@ ss -ltn 'sport = :8190'
 
 在保存 Super Idol Master 源码的 Windows 电脑中，进入仓库根目录并执行：
 
+> 以下命令只能在显示 `PS D:\...>` 的 Windows PowerShell 中执行，不能在显示 `sidney@spark-...$` 的 DGX Bash 中执行。如果 Bash 因反引号进入 `>` 等待状态，按 `Ctrl+C` 取消。
+
 ```powershell
 scp -r .\deploy\dgx-autoremesher dgx:~/autoremesher-api-installer
 ssh dgx
@@ -89,11 +91,12 @@ sudo bash install.sh
 1. 安装 Qt 5、TBB、Mesa、Xvfb、Blender 和 C++ 构建工具；
 2. 从上游仓库下载固定版本的 AutoRemesher；
 3. 移除上游不适用于 ARM64 的 `-march=x86-64-v2` 参数；
-4. 在 DGX Spark 上原生编译 AutoRemesher；
-5. 安装独立 HTTP API 到 `/opt/autoremesher-api`；
-6. 首次安装时自动生成随机 API Token；
-7. 启用并启动 `autoremesher-api.service`；
-8. 调用本机 `/healthz` 检查服务状态。
+4. 修补内置 Geogram 1.8.3 将 Linux ARM64 误判为 x86、生成 `pause` 和 `lock` 汇编指令的问题；
+5. 在 DGX Spark 上原生编译 AutoRemesher；
+6. 安装独立 HTTP API 到 `/opt/autoremesher-api`；
+7. 首次安装时自动生成随机 API Token；
+8. 启用并启动 `autoremesher-api.service`；
+9. 调用本机 `/healthz` 检查服务状态。
 
 AutoRemesher 的源代码和二进制默认位于：
 
@@ -109,6 +112,31 @@ API 服务文件位于：
 /etc/autoremesher-api.env
 /etc/systemd/system/autoremesher-api.service
 ```
+
+### 5.1 ARM64 汇编错误恢复
+
+旧版安装包可能在最终链接阶段出现以下错误：
+
+```text
+unknown mnemonic `pause'
+lto-wrapper failed
+make: *** [autoremesher] 错误 1
+```
+
+这是内置 Geogram 1.8.3 将 Linux ARM64 误判为 x86 导致的。新版安装包已自动应用 `arm64-geogram.patch`。如果首次安装已经在此处失败，只需要从 Windows PowerShell 重新上传安装脚本和补丁：
+
+```powershell
+scp .\deploy\dgx-autoremesher\install.sh .\deploy\dgx-autoremesher\arm64-geogram.patch dgx:~/autoremesher-api-installer/
+```
+
+然后在 DGX Bash 中续编：
+
+```bash
+cd ~/autoremesher-api-installer
+sudo bash install.sh
+```
+
+不需要删除 `/opt/autoremesher-src`。脚本会修补已有源码，并在现有编译结果上继续构建。
 
 ## 6. 获取 Token 并配置监听地址
 

@@ -1,0 +1,42 @@
+diff --git a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/basic/atomics.h b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/basic/atomics.h
+--- a/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/basic/atomics.h
++++ b/thirdparty/geogram/geogram-1.8.3/src/lib/geogram/basic/atomics.h
+@@ -55,6 +55,8 @@
+ #    define GEO_USE_ARM32_ATOMICS
+ #  elif defined(GEO_OS_ANDROID)
+ #    define GEO_USE_ANDROID_ATOMICS
++#  elif defined(__aarch64__)
++#    define GEO_USE_GNU_ATOMICS
+ #  else
+ #    define GEO_USE_X86_ATOMICS
+ #  endif
+@@ -73,6 +75,29 @@ inline char atomic_bittestandreset_x86(volatile unsigned int*, unsigned int) {
+     return 0;
+ }
+ 
++#elif defined(GEO_USE_GNU_ATOMICS)
++
++/** Issues an AArch64 spin-loop hint. */
++inline void geo_pause() {
++    __asm__ __volatile__("yield" : : : "memory");
++}
++
++/** Atomically sets a bit using GCC architecture-neutral builtins. */
++inline char atomic_bittestandset_x86(
++    volatile unsigned int* ptr, unsigned int bit
++) {
++    const unsigned int mask = 1u << bit;
++    return (__atomic_fetch_or(ptr, mask, __ATOMIC_ACQ_REL) & mask) != 0;
++}
++
++/** Atomically resets a bit using GCC architecture-neutral builtins. */
++inline char atomic_bittestandreset_x86(
++    volatile unsigned int* ptr, unsigned int bit
++) {
++    const unsigned int mask = 1u << bit;
++    return (__atomic_fetch_and(ptr, ~mask, __ATOMIC_ACQ_REL) & mask) != 0;
++}
++
+ #elif defined(GEO_USE_ANDROID_ATOMICS)
+ 
+ /** A mutex for Android */
