@@ -1931,7 +1931,7 @@ function startCharacterSheetGeneration(input = {}) {
     `生成一张角色原画合集图，单张画布内准确包含 ${characterCount} 个不同角色。`,
     `所有角色保持完全一致的美术风格：${style}。`,
     `角色设定：${enumerated}。`,
-    "横向整齐排列，每个角色完整全身、彼此分离且不重叠，比例统一，光照统一，背景简洁，清晰展示服装、配色和身份差异。不要拆成多张图片，不要生成角色卡边框或文字标签。",
+    "横向整齐排列，每个角色及其全部装备占据独立的等宽安全区域，角色之间保留清晰可见的背景间隔。每个角色必须完整全身、彼此分离且不重叠；头发、帽檐、披风、手脚、武器、盾牌和法杖都不得伸入相邻角色区域或越出画布。比例统一，光照统一，背景简洁，清晰展示服装、配色和身份差异。不要拆成多张图片，不要生成角色卡边框或文字标签。",
     additional,
   ].filter(Boolean).join(" ").slice(0, 6000);
   const imageConfig = settingsStore.coordinatorImageConfig("text_to_model");

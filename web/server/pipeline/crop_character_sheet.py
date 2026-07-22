@@ -16,17 +16,43 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def safe_box(item: dict, width: int, height: int) -> tuple[int, int, int, int]:
+def expand_interval(start: float, length: float, minimum_length: float) -> tuple[float, float]:
+    target_length = min(1.0, max(length, minimum_length))
+    center = start + length / 2
+    expanded_start = center - target_length / 2
+    expanded_end = center + target_length / 2
+    if expanded_start < 0.0:
+        expanded_end -= expanded_start
+        expanded_start = 0.0
+    if expanded_end > 1.0:
+        expanded_start -= expanded_end - 1.0
+        expanded_end = 1.0
+    return max(0.0, expanded_start), min(1.0, expanded_end)
+
+
+def safe_box(item: dict, width: int, height: int, character_count: int = 1) -> tuple[int, int, int, int]:
     x = max(0.0, min(1.0, float(item["x"])))
     y = max(0.0, min(1.0, float(item["y"])))
     box_width = max(0.02, min(1.0 - x, float(item["width"])))
     box_height = max(0.02, min(1.0 - y, float(item["height"])))
-    padding_x = box_width * 0.04
-    padding_y = box_height * 0.04
+    safe_count = max(1, character_count)
+
+    # Vision models sometimes return equal-width character lanes instead of true
+    # silhouette bounds. Preserve enough horizontal context for wide equipment
+    # such as shields, staffs, capes, and hats; a neighboring fragment is safer
+    # for downstream generation than cutting off the target character itself.
+    minimum_width = min(0.75, 1.45 / safe_count)
+    x, expanded_right = expand_interval(x, box_width, minimum_width)
+    y, expanded_bottom = expand_interval(y, box_height, 0.96)
+    box_width = expanded_right - x
+    box_height = expanded_bottom - y
+
+    padding_x = box_width * 0.03
+    padding_y = box_height * 0.03
     left = round(max(0.0, x - padding_x) * width)
     top = round(max(0.0, y - padding_y) * height)
-    right = round(min(1.0, x + box_width + padding_x) * width)
-    bottom = round(min(1.0, y + box_height + padding_y) * height)
+    right = round(min(1.0, expanded_right + padding_x) * width)
+    bottom = round(min(1.0, expanded_bottom + padding_y) * height)
     if right - left < 16 or bottom - top < 16:
         raise ValueError("角色裁切区域过小")
     return left, top, right, bottom
@@ -54,7 +80,7 @@ def main() -> int:
         image.load()
         canvas = image.convert("RGBA")
         for index, item in enumerate(boxes, start=1):
-            crop = canvas.crop(safe_box(item, canvas.width, canvas.height))
+            crop = canvas.crop(safe_box(item, canvas.width, canvas.height, len(boxes)))
             destination = output_dir / f"character-{index:02d}.png"
             crop.save(destination, format="PNG")
             results.append(str(destination.resolve()))
