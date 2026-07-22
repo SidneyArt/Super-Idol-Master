@@ -1190,6 +1190,115 @@ function workflowClasses(graph) {
   return [...new Set(Object.values(graph).map((node) => node.class_type))];
 }
 
+const workspaceAssetDefinitions = {
+  image: { column: "imagePathInternal", group: "2d", label: "2D 概念图", downloadKind: "image", rigged: false },
+  model: { column: "modelPathInternal", group: "3d", label: "静态 GLB", downloadKind: "model", rigged: false },
+  topology: { column: "topologyPathInternal", group: "3d", label: "拓扑 GLB", downloadKind: "topology", rigged: false },
+  rigged: { column: "riggedModelPathInternal", group: "3d", label: "绑定 GLB", downloadKind: "rigged", rigged: true },
+};
+
+const workspaceAssetCascade = {
+  image: ["image", "model", "topology", "rigged"],
+  model: ["model", "topology", "rigged"],
+  topology: ["topology", "rigged"],
+  rigged: ["rigged"],
+};
+
+function listWorkspaceAssets(workspaceId) {
+  if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
+  const rows = db.prepare(`${runSelect} WHERE workspace_id = ? ORDER BY updated_at DESC`).all(workspaceId);
+  return rows.flatMap((row) => Object.entries(workspaceAssetDefinitions).flatMap(([kind, definition]) => {
+    const filePath = row[definition.column];
+    if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) return [];
+    const file = statSync(filePath);
+    return [{
+      id: `${row.id}:${kind}`,
+      workspaceId,
+      runId: row.id,
+      runName: row.name,
+      kind,
+      group: definition.group,
+      label: definition.label,
+      downloadUrl: `/api/runs/${row.id}/download/${definition.downloadKind}`,
+      previewUrl: kind === "image" ? `/api/runs/${row.id}/preview/image` : `/api/runs/${row.id}/download/${definition.downloadKind}`,
+      filename: basename(filePath),
+      size: file.size,
+      createdAt: file.mtime.toISOString(),
+      rigged: definition.rigged,
+    }];
+  }));
+}
+
+function isControlledAssetPath(filePath) {
+  const candidate = resolve(filePath);
+  const normalized = process.platform === "win32" ? candidate.toLowerCase() : candidate;
+  return [outputRoot, generatedDir].some((root) => {
+    const normalizedRoot = process.platform === "win32" ? root.toLowerCase() : root;
+    return normalized === normalizedRoot || normalized.startsWith(`${normalizedRoot}${sep}`);
+  });
+}
+
+function deleteControlledAssetFile(filePath) {
+  if (!filePath) return;
+  if (!isControlledAssetPath(filePath)) throw new Error("拒绝删除工作目录之外的文件");
+  if (existsSync(filePath) && statSync(filePath).isFile()) unlinkSync(filePath);
+}
+
+function generatedFileFromPreviewUrl(value) {
+  if (typeof value !== "string" || !value.startsWith("/generated/")) return null;
+  return join(generatedDir, basename(value.split("?")[0]));
+}
+
+function deleteWorkspaceAsset(workspaceId, runId, kind) {
+  const run = getRunRow(runId);
+  if (!run || run.workspaceId !== workspaceId) throw new Error("资产不存在或不属于该工作空间");
+  if (activeJobs.has(runId) || run.jobStatus === "running") throw new Error("任务正在执行，暂时不能删除资产");
+  const cascadeKinds = workspaceAssetCascade[kind];
+  if (!cascadeKinds) throw new Error("未知资产类型");
+
+  for (const cascadeKind of cascadeKinds) {
+    const definition = workspaceAssetDefinitions[cascadeKind];
+    deleteControlledAssetFile(run[definition.column]);
+  }
+  if (kind === "image") {
+    deleteControlledAssetFile(generatedFileFromPreviewUrl(run.previewPath));
+    deleteControlledAssetFile(generatedFileFromPreviewUrl(run.qaOverlayPath));
+  }
+
+  const now = new Date().toISOString();
+  if (kind === "image") {
+    db.prepare(`
+      UPDATE runs SET current_stage = MIN(current_stage, 1), status = 'active',
+        image_path = NULL, preview_path = NULL, model_path = NULL, topology_path = NULL, rigged_model_path = NULL,
+        qa_status = 'pending', qa_score = NULL, qa_summary = '', qa_metrics = '{}', qa_overlay_path = NULL,
+        job_type = 'none', generation_status = 'idle', generation_message = '', generation_progress = 0,
+        generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ? WHERE id = ?
+    `).run(now, runId);
+  } else if (kind === "model") {
+    db.prepare(`
+      UPDATE runs SET current_stage = MIN(current_stage, 3), status = 'active',
+        model_path = NULL, topology_path = NULL, rigged_model_path = NULL,
+        job_type = 'none', generation_status = 'idle', generation_message = '', generation_progress = 0,
+        generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ? WHERE id = ?
+    `).run(now, runId);
+  } else if (kind === "topology") {
+    db.prepare(`
+      UPDATE runs SET current_stage = MIN(current_stage, 4), status = 'active',
+        topology_path = NULL, rigged_model_path = NULL,
+        job_type = 'none', generation_status = 'idle', generation_message = '', generation_progress = 0,
+        generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ? WHERE id = ?
+    `).run(now, runId);
+  } else {
+    db.prepare(`
+      UPDATE runs SET current_stage = MIN(current_stage, 5), status = 'active', rigged_model_path = NULL,
+        job_type = 'none', generation_status = 'idle', generation_message = '', generation_progress = 0,
+        generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ? WHERE id = ?
+    `).run(now, runId);
+  }
+  addEvent(runId, "asset_deleted", Math.min(run.currentStage, { image: 1, model: 3, topology: 4, rigged: 5 }[kind]), `从资产库删除 ${workspaceAssetDefinitions[kind].label}`, now);
+  return { ok: true, deletedKinds: cascadeKinds, assets: listWorkspaceAssets(workspaceId) };
+}
+
 async function checkTopologyService(config) {
   const started = Date.now();
   const baseline = {
@@ -1678,6 +1787,23 @@ async function delegateCoordinatorTask(runId, target, reason = "总调度 Agent 
   return assetAgent.scheduleWorkflowPlan(runId, target);
 }
 
+function streamAssetPreview(res, filePath) {
+  if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) throw new Error("资产文件不存在");
+  const contentTypes = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".glb": "model/gltf-binary",
+  };
+  res.writeHead(200, {
+    "Content-Type": contentTypes[extname(filePath).toLowerCase()] || "application/octet-stream",
+    "Content-Length": statSync(filePath).size,
+    "Cache-Control": "private, max-age=60",
+  });
+  createReadStream(filePath).pipe(res);
+}
+
 function isCoordinatorDelegationApproval(approval) {
   return approval?.scopeType === "task"
     && approval?.operation === "execute_pipeline_goal"
@@ -1923,6 +2049,17 @@ const server = createServer(async (req, res) => {
       json(res, 201, createWorkspaceRecord(body));
       return;
     }
+    if (parts[0] === "api" && parts[1] === "workspaces" && parts[2] && parts[3] === "assets") {
+      const workspaceId = decodeURIComponent(parts[2]);
+      if (req.method === "GET" && parts.length === 4) {
+        json(res, 200, { assets: listWorkspaceAssets(workspaceId) });
+        return;
+      }
+      if (req.method === "DELETE" && parts[4] && parts[5] && parts.length === 6) {
+        json(res, 200, deleteWorkspaceAsset(workspaceId, decodeURIComponent(parts[4]), decodeURIComponent(parts[5])));
+        return;
+      }
+    }
     if (req.method === "GET" && url.pathname === "/api/runs") {
       const workspaceId = url.searchParams.get("workspaceId");
       const rows = workspaceId
@@ -2018,6 +2155,17 @@ const server = createServer(async (req, res) => {
       if (req.method === "POST" && parts[3] === "revert") {
         const body = await readBody(req);
         json(res, 200, revertRun(id, Number(body.stage)));
+        return;
+      }
+      if (req.method === "GET" && parts[3] === "preview" && parts[4]) {
+        const paths = {
+          image: existing.imagePathInternal,
+          model: existing.modelPathInternal,
+          topology: existing.topologyPathInternal,
+          rigged: existing.riggedModelPathInternal,
+        };
+        if (!(parts[4] in paths)) throw new Error("未知资产类型");
+        streamAssetPreview(res, paths[parts[4]]);
         return;
       }
       if (req.method === "GET" && parts[3] === "download" && parts[4]) {

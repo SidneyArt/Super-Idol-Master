@@ -14,6 +14,7 @@ import {
   FolderOpen,
   Home,
   ImageIcon,
+  Library,
   LoaderCircle,
   Maximize2,
   MessageSquare,
@@ -163,6 +164,23 @@ export type Workspace = {
   runningCount: number;
   createdAt: string;
   updatedAt: string;
+};
+type WorkspaceAssetKind = "image" | "model" | "topology" | "rigged";
+type WorkspaceAssetFilter = "all" | "2d" | "3d" | WorkspaceAssetKind;
+type WorkspaceAsset = {
+  id: string;
+  workspaceId: string;
+  runId: string;
+  runName: string;
+  kind: WorkspaceAssetKind;
+  group: "2d" | "3d";
+  label: string;
+  downloadUrl: string;
+  previewUrl: string;
+  filename: string;
+  size: number;
+  createdAt: string;
+  rigged: boolean;
 };
 type ApprovalRequest = {
   id: number;
@@ -530,6 +548,14 @@ function formatMemory(value: number | null | undefined) {
   return `${(Number(value) / (1024 ** 3)).toFixed(1)} GB`;
 }
 
+function formatFileSize(value: number) {
+  if (!Number.isFinite(value) || value < 1) return "0 B";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 ** 3) return `${(value / (1024 ** 2)).toFixed(1)} MB`;
+  return `${(value / (1024 ** 3)).toFixed(1)} GB`;
+}
+
 function jobName(type: JobType) {
   return { none: "本地流程", "2d": "2D 图片", qa: "SDPose", "3d": "Pixal3D", topology: "AutoRemesher", rig: "SkinTokens" }[type];
 }
@@ -782,6 +808,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [dispatcherTaskBatches, setDispatcherTaskBatches] = useState<DispatcherTaskBatch[]>([]);
   const dispatcherGenerationScrollKey = dispatcherGenerations.map((item) => `${item.id}:${item.updatedAt}`).join("|");
   const [showWorkspaceCreate, setShowWorkspaceCreate] = useState(false);
+  const [assetLibraryWorkspaceId, setAssetLibraryWorkspaceId] = useState<string | null>(null);
+  const [workspaceAssets, setWorkspaceAssets] = useState<WorkspaceAsset[]>([]);
+  const [workspaceAssetFilter, setWorkspaceAssetFilter] = useState<WorkspaceAssetFilter>("all");
+  const [selectedWorkspaceAssetId, setSelectedWorkspaceAssetId] = useState<string | null>(null);
+  const [workspaceAssetsLoading, setWorkspaceAssetsLoading] = useState(false);
   const [workspaceForm, setWorkspaceForm] = useState({ name: "", description: "" });
   const [form, setForm] = useState({ name: "", workspaceId: "default", pipelineType: "text_to_model" as "text_to_model" | "image_to_model" });
   const [taskSourceImage, setTaskSourceImage] = useState<AgentAttachment | null>(null);
@@ -916,6 +947,54 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     const nextId = preferredId || selectedWorkspaceId || data.workspaces[0]?.id || "default";
     selectWorkspace(nextId);
     return data.workspaces;
+  }
+
+  async function openAssetLibrary(workspaceId: string) {
+    setAssetLibraryWorkspaceId(workspaceId);
+    setWorkspaceAssetFilter("all");
+    setSelectedWorkspaceAssetId(null);
+    setWorkspaceAssets([]);
+    setWorkspaceAssetsLoading(true);
+    setError("");
+    try {
+      const data = await api<{ assets: WorkspaceAsset[] }>(`/api/workspaces/${encodeURIComponent(workspaceId)}/assets`);
+      setWorkspaceAssets(data.assets);
+      setSelectedWorkspaceAssetId(data.assets[0]?.id || null);
+    } catch (reason) {
+      setAssetLibraryWorkspaceId(null);
+      setError(reason instanceof Error ? reason.message : "资产库加载失败");
+    } finally {
+      setWorkspaceAssetsLoading(false);
+    }
+  }
+
+  function requestDeleteWorkspaceAsset(asset: WorkspaceAsset) {
+    const dependencyText = {
+      image: "删除概念图也会删除由它生成的静态模型、拓扑模型和绑定模型。",
+      model: "删除静态模型也会删除由它生成的拓扑模型和绑定模型。",
+      topology: "删除拓扑模型也会删除由它生成的绑定模型。",
+      rigged: "只会删除这个绑定模型。",
+    }[asset.kind];
+    setUiConfirmation({
+      title: `删除“${asset.runName}”的${asset.label}？`,
+      description: `${dependencyText} 文件和对应流程状态会同步更新，此操作无法撤销。`,
+      confirmLabel: "删除资产",
+      tone: "danger",
+      action: async () => {
+        try {
+          const data = await api<{ assets: WorkspaceAsset[] }>(`/api/workspaces/${encodeURIComponent(asset.workspaceId)}/assets/${encodeURIComponent(asset.runId)}/${asset.kind}`, { method: "DELETE" });
+          setWorkspaceAssets(data.assets);
+          setSelectedWorkspaceAssetId((current) => current === asset.id ? data.assets[0]?.id || null : current);
+          const [runData] = await Promise.all([
+            api<{ runs: Run[] }>("/api/runs"),
+            refreshWorkspaces(asset.workspaceId),
+          ]);
+          setRuns(runData.runs);
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "资产删除失败");
+        }
+      },
+    });
   }
 
   async function refreshActivity(showToast = false) {
@@ -2222,6 +2301,15 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const selectedRunAgentBusy = agentBusy && activeAgentRunId === run?.id;
   const activeAgentRunName = runs.find((item) => item.id === activeAgentRunId)?.name;
   const selectedWorkspace = workspaces.find((item) => item.id === selectedWorkspaceId) || workspaces[0] || null;
+  const assetLibraryWorkspace = workspaces.find((item) => item.id === assetLibraryWorkspaceId) || null;
+  const filteredWorkspaceAssets = workspaceAssets.filter((asset) => {
+    if (workspaceAssetFilter === "all") return true;
+    if (workspaceAssetFilter === "2d" || workspaceAssetFilter === "3d") return asset.group === workspaceAssetFilter;
+    return asset.kind === workspaceAssetFilter;
+  });
+  const selectedWorkspaceAsset = filteredWorkspaceAssets.find((asset) => asset.id === selectedWorkspaceAssetId)
+    || filteredWorkspaceAssets[0]
+    || null;
   const dgxDevice = system?.comfyui.devices?.[0] || null;
   const dgxMemoryTotal = formatMemory(dgxDevice?.vramTotal ?? dgxDevice?.torchVramTotal);
   const dgxMemoryFree = formatMemory(dgxDevice?.vramFree ?? dgxDevice?.torchVramFree);
@@ -2323,6 +2411,18 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     </button>
                     <button
                       type="button"
+                      className="workspace-library-button"
+                      onClick={() => {
+                        selectWorkspace(workspace.id);
+                        void openAssetLibrary(workspace.id);
+                      }}
+                      title={`打开 ${workspace.name} 的资产库`}
+                      aria-label={`打开 ${workspace.name} 的资产库`}
+                    >
+                      <Library size={15} />
+                    </button>
+                    <button
+                      type="button"
                       className="workspace-toggle-button"
                       onClick={() => toggleWorkspace(workspace.id)}
                       aria-expanded={expandedWorkspaceIds.has(workspace.id)}
@@ -2364,6 +2464,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             <header className="dispatcher-header">
               <div className="dispatcher-title"><span><Bot size={22} /></span><div><small>总调度中心</small><h1>{selectedWorkspace?.name || "创建工作空间后开始调度"}</h1></div></div>
               <div className="dispatcher-actions">
+                <button className="secondary-button" type="button" disabled={!selectedWorkspace} onClick={() => { if (selectedWorkspace) void openAssetLibrary(selectedWorkspace.id); }}><Library size={16} />资产库</button>
                 <button className="secondary-button" type="button" onClick={() => { setForm({ name: "", workspaceId: selectedWorkspaceId, pipelineType: "text_to_model" }); setShowCreate(true); }}><Plus size={16} />新建任务</button>
                 <button className="secondary-button" type="button" onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Settings size={16} />模型配置</button>
               </div>
@@ -3153,6 +3254,76 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </>
             )}
           </form>
+        </div>
+      )}
+
+      {assetLibraryWorkspaceId && (
+        <div className="modal-backdrop asset-library-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !uiConfirmation) setAssetLibraryWorkspaceId(null); }}>
+          <section className="asset-library-modal" role="dialog" aria-modal="true" aria-labelledby="asset-library-title">
+            <header className="asset-library-header">
+              <div><span>WORKSPACE ASSETS</span><h2 id="asset-library-title">{assetLibraryWorkspace?.name || "工作空间"} · 资产库</h2><p>集中预览和管理当前工作空间内各任务生成的 2D 与 3D 资产。</p></div>
+              <button className="icon-button" type="button" onClick={() => setAssetLibraryWorkspaceId(null)} aria-label="关闭资产库"><X size={19} /></button>
+            </header>
+            <div className="asset-library-body">
+              <aside className="asset-library-browser">
+                <nav className="asset-library-filters" aria-label="资产类型筛选">
+                  {([
+                    ["all", "全部"],
+                    ["2d", "2D 图片"],
+                    ["3d", "全部 3D"],
+                    ["model", "静态模型"],
+                    ["topology", "拓扑模型"],
+                    ["rigged", "绑定模型"],
+                  ] as Array<[WorkspaceAssetFilter, string]>).map(([value, label]) => {
+                    const count = value === "all"
+                      ? workspaceAssets.length
+                      : workspaceAssets.filter((asset) => value === "2d" || value === "3d" ? asset.group === value : asset.kind === value).length;
+                    return <button type="button" key={value} className={workspaceAssetFilter === value ? "active" : ""} onClick={() => { setWorkspaceAssetFilter(value); setSelectedWorkspaceAssetId(null); }}><span>{label}</span><em>{count}</em></button>;
+                  })}
+                </nav>
+                <div className="asset-library-list" aria-label="资产列表">
+                  {workspaceAssetsLoading && <div className="asset-library-empty"><LoaderCircle className="spinning" size={22} /><span>正在读取资产…</span></div>}
+                  {!workspaceAssetsLoading && filteredWorkspaceAssets.map((asset) => (
+                    <button type="button" className={`asset-library-card ${selectedWorkspaceAsset?.id === asset.id ? "selected" : ""}`} key={asset.id} onClick={() => setSelectedWorkspaceAssetId(asset.id)}>
+                      <span className={`asset-library-thumb ${asset.group}`}>
+                        {asset.group === "2d"
+                          ? <Image src={downloadUrl(asset.previewUrl)} alt={asset.runName} width={160} height={100} unoptimized />
+                          : <Box size={24} />}
+                        <small>{asset.kind === "image" ? "PNG" : "GLB"}</small>
+                      </span>
+                      <span className="asset-library-card-copy"><strong>{asset.runName}</strong><small>{asset.label} · {formatFileSize(asset.size)}</small><time>{formatTime(asset.createdAt)}</time></span>
+                    </button>
+                  ))}
+                  {!workspaceAssetsLoading && !filteredWorkspaceAssets.length && <div className="asset-library-empty"><Library size={24} /><strong>暂无此类资产</strong><span>完成对应生成阶段后，资产会自动出现在这里。</span></div>}
+                </div>
+              </aside>
+              <div className="asset-library-detail">
+                {selectedWorkspaceAsset ? (
+                  <>
+                    <header className="asset-library-detail-header">
+                      <div><span>{selectedWorkspaceAsset.label}</span><h3>{selectedWorkspaceAsset.runName}</h3><p>{selectedWorkspaceAsset.filename} · {formatFileSize(selectedWorkspaceAsset.size)}</p></div>
+                      <div>
+                        <button className="secondary-button" type="button" onClick={() => openTask(selectedWorkspaceAsset.runId)}>打开任务</button>
+                        <a className="secondary-button" href={downloadUrl(selectedWorkspaceAsset.downloadUrl)} download><Download size={15} />下载</a>
+                        <button className="danger-button" type="button" onClick={() => requestDeleteWorkspaceAsset(selectedWorkspaceAsset)}><Trash2 size={15} />删除</button>
+                      </div>
+                    </header>
+                    <div className={`asset-library-preview-frame preview-frame ${selectedWorkspaceAsset.group === "3d" ? "model-preview" : ""}`}>
+                      {selectedWorkspaceAsset.group === "2d" ? (
+                        <Image className="asset-preview-image" src={downloadUrl(selectedWorkspaceAsset.previewUrl)} alt={`${selectedWorkspaceAsset.runName} ${selectedWorkspaceAsset.label}`} width={1600} height={1600} unoptimized />
+                      ) : (
+                        <Suspense fallback={<div className="model-loading"><LoaderCircle className="spinning" size={24} /><span>正在加载 3D 资产…</span></div>}>
+                          <ModelViewer src={downloadUrl(selectedWorkspaceAsset.previewUrl)} label={`${selectedWorkspaceAsset.runName} ${selectedWorkspaceAsset.label}`} rigged={selectedWorkspaceAsset.rigged} />
+                        </Suspense>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div className="asset-library-detail-empty"><Library size={32} /><h3>选择一个资产进行预览</h3><p>2D 图片和 3D 模型会使用任务生成页相同的预览方式。</p></div>
+                )}
+              </div>
+            </div>
+          </section>
         </div>
       )}
 

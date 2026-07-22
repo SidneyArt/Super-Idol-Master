@@ -19,7 +19,6 @@ type ModelStats = {
   triangles: number;
 };
 
-type WireframeMaterial = THREE.Material & { wireframe: boolean };
 type ViewerPanel = "render" | "rotation" | "skeleton" | "grid" | "view" | "lighting";
 type CameraView = "default" | "front" | "back" | "left" | "right";
 
@@ -53,7 +52,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   const directionalColorRef = useRef("#ffffff");
   const directionalIntensityRef = useRef(0.5);
   const backgroundColorRef = useRef("#464646");
-  const materialsRef = useRef<Set<WireframeMaterial>>(new Set());
+  const wireframeOverlaysRef = useRef<Set<THREE.Mesh>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [autoRotate, setAutoRotate] = useState(false);
@@ -98,10 +97,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
 
   useEffect(() => {
     wireframeRef.current = wireframe;
-    for (const material of materialsRef.current) {
-      material.wireframe = wireframe;
-      material.needsUpdate = true;
-    }
+    for (const overlay of wireframeOverlaysRef.current) overlay.visible = wireframe;
   }, [wireframe]);
 
   useEffect(() => {
@@ -148,7 +144,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     setError("");
     setStats(null);
     setShowSkeleton(false);
-    materialsRef.current = new Set();
+    wireframeOverlaysRef.current = new Set();
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(backgroundColorRef.current);
@@ -191,6 +187,18 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     scene.add(grid);
     gridRef.current = grid;
 
+    const wireframeMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      wireframe: true,
+      transparent: false,
+      depthTest: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+      toneMapped: false,
+    });
+
     const resize = () => {
       const width = Math.max(host.clientWidth, 1);
       const height = Math.max(host.clientHeight, 1);
@@ -212,6 +220,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
         let bones = 0;
         let vertices = 0;
         let triangles = 0;
+        const wireframeOverlays: Array<{ source: THREE.Mesh; overlay: THREE.Mesh }> = [];
         model.traverse((object) => {
           if (object instanceof THREE.Mesh) {
             meshes += 1;
@@ -219,18 +228,21 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
             const position = geometry.getAttribute("position");
             vertices += position?.count || 0;
             triangles += geometry.index ? geometry.index.count / 3 : (position?.count || 0) / 3;
-            const materials = Array.isArray(object.material) ? object.material : [object.material];
-            for (const material of materials) {
-              if ("wireframe" in material) {
-                const wireframeMaterial = material as WireframeMaterial;
-                wireframeMaterial.wireframe = wireframeRef.current;
-                wireframeMaterial.needsUpdate = true;
-                materialsRef.current.add(wireframeMaterial);
-              }
-            }
+            const overlay = object.clone(false) as THREE.Mesh;
+            overlay.name = `${object.name || "mesh"}-wireframe-overlay`;
+            overlay.material = wireframeMaterial;
+            overlay.visible = wireframeRef.current;
+            overlay.renderOrder = 100;
+            overlay.frustumCulled = false;
+            overlay.userData = { ...overlay.userData, wireframeOverlay: true };
+            wireframeOverlays.push({ source: object, overlay });
           }
           if (object instanceof THREE.Bone) bones += 1;
         });
+        for (const { source, overlay } of wireframeOverlays) {
+          source.parent?.add(overlay);
+          wireframeOverlaysRef.current.add(overlay);
+        }
 
         scene.add(model);
         const bounds = new THREE.Box3().setFromObject(model);
@@ -302,7 +314,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
       sceneRef.current = null;
       gridRef.current = null;
       lightsRef.current = null;
-      materialsRef.current = new Set();
+      wireframeOverlaysRef.current = new Set();
       if (skeletonRef.current) {
         skeletonRef.current.geometry.dispose();
         const material = skeletonRef.current.material;
@@ -312,11 +324,13 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
       skeletonRef.current = null;
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
+          if (object.userData.wireframeOverlay) return;
           object.geometry.dispose();
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           materials.forEach(disposeMaterial);
         }
       });
+      wireframeMaterial.dispose();
       grid.geometry.dispose();
       gridMaterial.dispose();
       renderer.dispose();
