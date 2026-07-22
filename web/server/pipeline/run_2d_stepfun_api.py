@@ -29,13 +29,16 @@ MAX_EDIT_ASPECT_RATIO = 2.94
 TPOSE_CANVAS_SIZE = 1024
 TPOSE_SAFE_MARGIN_RATIO = 0.12
 TPOSE_POSITIVE_CONSTRAINTS = (
-    "最高优先级：不要复制参考图的姿势、背景、投影或手持装备，只保留角色身份、脸部、发型、服装和穿戴式配饰。"
-    "输出1:1正方形，镜头拉远，单个角色居中完整全身；严格正视标准T-Pose，双肩水平，双臂与躯干成90度并呈一条水平直线，肘部完全伸直。"
-    "左右手、全部手指、头顶和双脚完整可见，四周至少12%留白；双手张开完全空置，删除武器、盾牌、法杖、匕首、工具包和所有手持物。"
+    "【最高优先级硬约束，必须覆盖参考图姿势】不要复制参考图的姿势、背景、投影或手持装备，只保留角色身份、脸部、发型、服装和穿戴式配饰。"
+    "输出1:1正方形，镜头拉远，单个角色居中完整全身；严格正视标准T-Pose，不是A-Pose或V-Pose，身体轮廓必须呈大写字母T。"
+    "左手腕、左肘、左肩、右肩、右肘、右手腕六个关节点必须处于同一条水平直线；两侧手腕不得低于或高于肩关节，双臂与躯干各成90度，双肩水平，双肘完全伸直。"
+    "Strict front-view T-pose; shoulders, elbows and wrists collinear horizontally; arms perpendicular to torso."
+    "左右手、全部手指、头顶和双脚完整可见，四周至少12%留白；双手张开并完全空置，删除武器、盾牌、法杖、匕首、工具包和所有手持物。"
     "背景只能是均匀纯白RGB(255,255,255)，整张背景无色偏、无渐变、无阴影、无纹理、无地面、无地平线。"
 )
 TPOSE_NEGATIVE_CONSTRAINTS = (
-    "竖幅，横幅，非1:1，特写，放大构图，出画，越界，贴边，裁切，截断手臂，截断手掌，"
+    "A-Pose，V-Pose，双臂下垂，双臂斜向下，双臂斜向上，手腕低于肩膀，手腕高于肩膀，弯肘，耸肩，非水平手臂，"
+    "arms down，downward-sloping arms，diagonal arms，bent elbows，竖幅，横幅，非1:1，特写，放大构图，出画，越界，贴边，裁切，截断手臂，截断手掌，"
     "缺失手指，缺失四肢，头顶裁切，脚部裁切，手持物，道具，武器，法杖，锤子，刀剑，枪械，"
     "球，滑板，工具，米白背景，奶油色背景，暖白背景，灰色背景，彩色背景，渐变背景，"
     "环境色偏，背景阴影，投影，纹理背景，场景地面，地平线"
@@ -53,6 +56,12 @@ CONTENT_BLOCK_MARKERS = (
     "未审核通过",
 )
 SAFE_NEGATIVE_PROMPT = "低画质，重复角色，角色重叠，裁切，文字，水印，风格不一致"
+SAFE_TPOSE_NEGATIVE_PROMPT = (
+    "A-Pose，V-Pose，双臂下垂，双臂斜向下，双臂斜向上，手腕低于肩膀，手腕高于肩膀，"
+    "弯肘，耸肩，非水平手臂，arms down，downward-sloping arms，diagonal arms，bent elbows，"
+    "非正视，身体侧转，多角色，裁切，贴边，缺失手指，缺失四肢，米白背景，奶油色背景，"
+    "暖白背景，灰色背景，彩色背景，渐变背景，背景阴影，投影，纹理背景，场景地面，地平线"
+)
 
 
 class ContentBlockedError(RuntimeError):
@@ -75,7 +84,8 @@ def prompt_with_required_constraints(value: str, constraints: str, label: str) -
     if not prompt:
         raise RuntimeError(f"{label}不能为空")
     separator = "，"
-    available = MAX_PROMPT_CHARS - len(separator) - len(constraints)
+    source_prefix = "原始提示补充："
+    available = MAX_PROMPT_CHARS - len(separator) - len(source_prefix) - len(constraints)
     if available <= 0:
         raise RuntimeError(f"{label}的必要约束超过接口字符限制")
     if len(prompt) > available:
@@ -85,7 +95,10 @@ def prompt_with_required_constraints(value: str, constraints: str, label: str) -
             flush=True,
         )
         prompt = prompt[:available].rstrip(" ，,。")
-    return f"{prompt}{separator}{constraints}"
+    # StepFun image-edit follows early instructions more reliably. Keep the
+    # non-negotiable pose/background contract first so a long identity prompt
+    # or the source image's original pose cannot override it.
+    return f"{constraints}{separator}{source_prefix}{prompt}"
 
 
 def whiten_connected_background(image: Image.Image) -> Image.Image:
@@ -327,6 +340,7 @@ def request_with_content_retry(
     prompt: str,
     negative_prompt: str,
     source_path: Path | None,
+    safe_negative_prompt: str = SAFE_NEGATIVE_PROMPT,
 ) -> dict:
     current_prompt = prompt
     current_negative = negative_prompt
@@ -354,7 +368,7 @@ def request_with_content_retry(
                 flush=True,
             )
             current_prompt = safe_semantic_rewrite(current_prompt)
-            current_negative = SAFE_NEGATIVE_PROMPT
+            current_negative = safe_negative_prompt
     raise RuntimeError("图像 API 没有返回结果")
 
 
@@ -444,6 +458,7 @@ def main() -> int:
         prompt=prompt,
         negative_prompt=negative_prompt,
         source_path=source_path,
+        safe_negative_prompt=SAFE_TPOSE_NEGATIVE_PROMPT if args.tpose_output else SAFE_NEGATIVE_PROMPT,
     )
 
     destination = run_dir / "concept.png"

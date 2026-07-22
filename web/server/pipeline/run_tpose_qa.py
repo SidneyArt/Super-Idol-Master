@@ -189,19 +189,19 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
 
     score = 15  # exactly one person
     score += 20 if visible else max(0, round(20 * min_confidence / MIN_CONFIDENCE))
-    score += max(0, round(20 * (1 - arm_horizontal_error / 0.30)))
-    score += max(0, round(10 * min(right_elbow_angle, left_elbow_angle) / 170))
-    score += 10 if shoulder_tilt <= 0.12 and hip_tilt <= 0.18 else 3
+    score += max(0, round(20 * (1 - arm_horizontal_error / 0.20)))
+    score += max(0, round(10 * min(right_elbow_angle, left_elbow_angle) / 175))
+    score += 10 if shoulder_tilt <= 0.08 and hip_tilt <= 0.18 else 3
     score += 15 if full_body else 0
     score += max(0, round(10 * (1 - max(torso_center_error / 0.08, arm_symmetry_error / 0.25))))
     score = max(0, min(100, score))
 
     critical_pass = (
         visible
-        and arm_horizontal_error <= 0.25
-        and right_elbow_angle >= 150
-        and left_elbow_angle >= 150
-        and shoulder_tilt <= 0.16
+        and arm_horizontal_error <= 0.12
+        and right_elbow_angle >= 160
+        and left_elbow_angle >= 160
+        and shoulder_tilt <= 0.10
         and full_body
     )
     passed = critical_pass and score >= 80
@@ -211,11 +211,11 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
         reasons = []
         if not visible:
             reasons.append("关键点置信度不足")
-        if arm_horizontal_error > 0.25:
+        if arm_horizontal_error > 0.12:
             reasons.append("双臂不够水平")
-        if min(right_elbow_angle, left_elbow_angle) < 150:
+        if min(right_elbow_angle, left_elbow_angle) < 160:
             reasons.append("肘部未充分伸直")
-        if shoulder_tilt > 0.16:
+        if shoulder_tilt > 0.10:
             reasons.append("肩线倾斜")
         if not full_body:
             reasons.append("未识别到完整全身")

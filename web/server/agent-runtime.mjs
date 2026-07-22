@@ -229,12 +229,12 @@ export function buildQaRepairPrompts(run, failureReason, attempt) {
   const repairDirective = [
     `QA 自动修复第 ${attempt} 轮，失败证据：${reason}`,
     "本轮必须重新构图，不得沿用上一版姿势或背景",
-    "角色严格正视镜头，左右手腕、肘、肩位于同一水平直线，双臂与躯干形成清晰 90 度夹角，肘部完全伸直",
+    "角色严格正视镜头并呈大写字母 T，绝对不是 A-Pose 或 V-Pose；左手腕、左肘、左肩、右肩、右肘、右手腕六个关节点处于同一水平直线，手腕不得低于或高于肩关节，双臂与躯干形成清晰 90 度夹角，肘部完全伸直",
     "角色完整全身居中，头顶、手指和双脚四周均有充足留白",
     "丢弃参考图的原背景并替换为均匀纯白 RGB(255,255,255)，禁止米白、奶油色、暖白、灰色、渐变、投影、地面和地平线",
     "双手完全空置；删除原描述或参考图中的武器、盾牌、法杖、匕首、工具包及其他手持装备",
   ].join("。") + "。";
-  const negativeRepair = "非标准T-Pose，手臂下垂，手臂倾斜，肘部弯曲，肩线倾斜，身体侧转，透视姿势，裁切，贴边，手持物，武器，盾牌，法杖，匕首，工具包，米白背景，奶油色背景，暖白背景，灰色背景，彩色背景，渐变背景，背景阴影，场景地面，地平线";
+  const negativeRepair = "非标准T-Pose，A-Pose，V-Pose，手臂下垂，手臂斜向下，手臂斜向上，手腕低于肩膀，手腕高于肩膀，肘部弯曲，肩线倾斜，身体侧转，透视姿势，裁切，贴边，手持物，武器，盾牌，法杖，匕首，工具包，米白背景，奶油色背景，暖白背景，灰色背景，彩色背景，渐变背景，背景阴影，场景地面，地平线";
   return {
     positivePrompt: `${String(run.positivePrompt || "").trim()}，${repairDirective}`.slice(0, 4000),
     negativePrompt: `${String(run.negativePrompt || "").trim()}${run.negativePrompt ? "，" : ""}${negativeRepair}`.slice(0, 2000),
@@ -360,7 +360,7 @@ function buildSystemPrompt(detail, history, permissionMode) {
 1. 你只能通过已注册工具改变项目状态，绝不能声称未执行的操作已经完成。
 2. 用户提供角色描述或参考图片，并要求创建、完善或重生成时，主动整理正向和负向提示词，再调用 update_character_prompts。
 3. 用户给出明确终点（例如“一路生成到模型”“自动做到绑骨完成”）时，优先调用 execute_pipeline_goal 一次登记持续执行目标。系统会在每个异步 Job 完成后自动恢复编排，不要把它拆成多轮人工确认。
-4. 用户只要求推进一步时，调用 advance_workflow；如果进入的新阶段需要执行任务，再调用 run_stage_job。
+4. 用户只要求推进一步时，调用 advance_workflow；如果进入的新阶段需要执行任务，再调用 run_stage_job。例外：当 T-Pose 质检已经失败，用户要求“重新生成/再试一次/修复 T-Pose”时，必须调用 execute_pipeline_goal，目标至少为 validated_tpose；禁止只调用 run_stage_job 生成一张未复检图片。若此前计划目标晚于 validated_tpose，应保留原计划终点。
 5. 用户要求回退时调用 revert_workflow。修改已经产生下游资产的提示词前，先回退到“概念图生成”。
 6. 一次对话最多直接启动一个 GPU Job。execute_pipeline_goal 的后续 Job 由完成事件依次触发，仍遵守单 GPU 串行规则。
 7. 不要在没有明确终点时替用户确认生成结果；明确的流水线终点属于对中间合格产物的持续授权。SDPose、Visual QA 或 Character Consistency 未通过时绝对不能越过质量门禁，但应自动依据失败证据修复提示词、重新生成并复检，而不是立即暂停；连续三轮修复仍未通过时才结束自动计划并明确报告。3D 结构、绑骨或导出硬门禁失败时不得自动伪造修复结果。
@@ -1555,7 +1555,7 @@ export function createAssetAgentRuntime({
       {
         name: "run_stage_job",
         label: "执行阶段任务",
-        description: "启动当前阶段允许的 2D 生成、T-Pose 检查、3D 生成、自动拓扑或自动绑骨任务。",
+        description: "启动当前阶段允许的单个 2D 生成、T-Pose 检查、3D 生成、自动拓扑或自动绑骨任务。T-Pose 质检已失败后的重新生成不要使用本工具，必须使用 execute_pipeline_goal（至少到 validated_tpose），以保证重新生成后自动复检。",
         parameters: Type.Object({
           action: Type.Union([
             Type.Literal("generate_2d"),

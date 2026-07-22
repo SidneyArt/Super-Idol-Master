@@ -7,6 +7,7 @@ from PIL import Image
 from run_2d_stepfun_api import (
     MAX_PROMPT_CHARS,
     MIN_EDIT_ASPECT_RATIO,
+    SAFE_TPOSE_NEGATIVE_PROMPT,
     TPOSE_CANVAS_SIZE,
     TPOSE_POSITIVE_CONSTRAINTS,
     endpoint_for,
@@ -77,7 +78,11 @@ class StepFunImageApiTests(unittest.TestCase):
         prompt = prompt_with_required_constraints("角色设定" * 300, TPOSE_POSITIVE_CONSTRAINTS, "正向提示词")
 
         self.assertLessEqual(len(prompt), MAX_PROMPT_CHARS)
-        self.assertTrue(prompt.endswith(TPOSE_POSITIVE_CONSTRAINTS))
+        self.assertTrue(prompt.startswith(TPOSE_POSITIVE_CONSTRAINTS))
+        self.assertIn("原始提示补充：", prompt)
+        self.assertIn("左手腕、左肘、左肩、右肩、右肘、右手腕", prompt)
+        self.assertIn("不得低于或高于肩关节", prompt)
+        self.assertIn("不是A-Pose或V-Pose", prompt)
         self.assertIn("左右手", prompt)
         self.assertIn("完全空置", prompt)
         self.assertIn("所有手持物", prompt)
@@ -179,6 +184,28 @@ class StepFunImageApiTests(unittest.TestCase):
         retry_body = session.calls[1][1]["json"]
         self.assertNotIn("刺客", retry_body["prompt"])
         self.assertEqual(retry_body["negative_prompt"], "低画质，重复角色，角色重叠，裁切，文字，水印，风格不一致")
+
+    def test_tpose_content_retry_keeps_safe_pose_and_background_constraints(self):
+        session = FakeSession([
+            FakeResponse(451, {"error": {"message": "The content you provided or machine outputted is blocked."}}),
+            FakeResponse(200, {"data": [{"finish_reason": "success", "b64_json": "ok"}]}),
+        ])
+
+        request_with_content_retry(
+            session,
+            endpoint="https://api.stepfun.com/v1/images/edits",
+            api_key="secret",
+            model="step-image-edit-2",
+            prompt="严格 T-Pose 的刺客角色",
+            negative_prompt="原始负向提示词",
+            source_path=None,
+            safe_negative_prompt=SAFE_TPOSE_NEGATIVE_PROMPT,
+        )
+
+        retry_body = session.calls[1][1]["json"]
+        self.assertIn("双臂斜向下", retry_body["negative_prompt"])
+        self.assertIn("手腕低于肩膀", retry_body["negative_prompt"])
+        self.assertIn("米白背景", retry_body["negative_prompt"])
 
     def test_second_content_block_returns_clear_error_without_more_retries(self):
         blocked = {"error": {"message": "The content you provided or machine outputted is blocked."}}

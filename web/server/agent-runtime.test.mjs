@@ -118,8 +118,11 @@ test("QA repair prompts prioritize exact white background and pose corrections",
   assert.match(prompts.positivePrompt, /第 2 轮/);
   assert.match(prompts.positivePrompt, /RGB\(255,255,255\)/);
   assert.match(prompts.positivePrompt, /双臂与躯干形成清晰 90 度夹角/);
+  assert.match(prompts.positivePrompt, /左手腕、左肘、左肩、右肩、右肘、右手腕/);
+  assert.match(prompts.positivePrompt, /绝对不是 A-Pose 或 V-Pose/);
   assert.match(prompts.positivePrompt, /删除.*法杖/);
   assert.match(prompts.negativePrompt, /米白背景/);
+  assert.match(prompts.negativePrompt, /手腕低于肩膀/);
   assert.match(prompts.negativePrompt, /肘部弯曲/);
 });
 
