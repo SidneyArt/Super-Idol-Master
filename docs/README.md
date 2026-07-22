@@ -42,6 +42,7 @@ docs/
 ## 产品与需求
 
 - [产品需求文档](./product/super-idol-master-prd.md)：目标用户、用户流程、功能范围、验收标准和比赛交付。
+- [DGX Spark Hackathon 参赛审计与提交清单](./product/hackathon-submission-audit.md)：按提交要求和评分权重核对当前证据、缺口、演示脚本与正式提交门禁。
 
 ## 文档维护规则
 

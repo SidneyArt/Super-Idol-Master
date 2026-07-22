@@ -138,7 +138,7 @@ Super-Idol-Master/
 
 **职责：** 将自然语言意图转换为有限的领域工具调用，在工作空间与任务两个层级协调专业角色。
 
-总调度层的 `Coordinator` 可以列出或创建工作空间、读取图片模型状态、分析合集原画、创建多个角色任务，并分别调用这些任务的 Asset Agent。它不能执行任意 Shell 或绕过 Run 状态机。任务层仍由 `Supervisor`、`Art Director` 和 `Visual QA` 负责。
+总调度层的 `Coordinator` 可以列出或创建工作空间、读取图片模型状态、分析合集原画、创建多个角色任务，并分别调用这些任务的 Asset Agent。它不能执行任意 Shell 或绕过 Run 状态机。任务层由 `Supervisor` 编排，并按阶段调用 `Art Director`、`Visual QA`、`Character Consistency`、`Asset Inspector`、`Rigging QA`、`Export Specialist` 和 `Workflow Doctor`。
 
 总调度 Agent 与每个任务的 Asset Agent 都有独立权限模式：
 
@@ -147,7 +147,7 @@ Super-Idol-Master/
 
 两个层级的 Agent 也分别维护持久化会话。新建会话不会删除旧消息，用户可以从会话选择器恢复历史；总调度会话限定在所属工作空间，任务会话限定在所属 Run。前端显示按实际系统提示词和最近 24 条消息估算的上下文用量，以及模型的 131,072 token 上限。
 
-持续流水线目标只在登记目标时审批一次。批准代表允许系统自动执行到指定终点，但 SDPose、各专业 Agent、产物结构检查和失败暂停机制仍然生效。
+持续流水线目标只在登记目标时审批一次。批准代表允许系统自动执行到指定终点，但 SDPose、各专业 Agent、产物结构检查和失败暂停机制仍然生效。总调度 Agent 委派已经获批的目标时，不会永久修改任务 Agent 自己的权限模式。
 
 角色边界：
 
@@ -162,7 +162,7 @@ Super-Idol-Master/
 | `Export Specialist` | 检查最终 GLB 的通用交付就绪度并提交告警 | 写入或转换文件、假定未指定的引擎规范已经满足 |
 | `Workflow Doctor` | 在 Job 失败后分类原因并提交安全修复建议 | 修改工作流、启动重试、声称建议已经执行 |
 
-持续执行计划保存在 `agent_workflow_plans`。例如目标为“静态 3D 模型”时，完成事件按顺序驱动：
+持续执行计划保存在 `agent_workflow_plans`。例如目标为“完成自动拓扑的 3D 模型”时，完成事件按顺序驱动：
 
 ```text
 生成 2D
@@ -173,15 +173,15 @@ Super-Idol-Master/
   → 图片与身份门禁通过
   → 生成 3D
   → 检查 GLB mesh
+  → 调用 Asset Inspector
   → AutoRemesher 自动拓扑与纹理回烘
   → 检查拓扑 GLB mesh
-  → 调用 Asset Inspector
   → 完成计划
 ```
 
 任一质量门禁未通过时，计划进入 `blocked`；Job 或结果处理失败时进入 `failed`。系统重启不会把中断计划误报为继续运行。
 
-**技术栈：** `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai`、Stepfun OpenAI 兼容 API。
+**技术栈：** `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai`、StepFun OpenAI 兼容 API。
 
 ### 3.4. Python 生成适配层
 
@@ -205,17 +205,18 @@ Super-Idol-Master/
 
 **职责：** 承载 Qwen Image、SDPose Wholebody、Pixal3D 和 SkinTokens 等 GPU 工作流。
 
-**连接方式：** 默认通过 Tailscale 私网访问 `http://100.120.236.113:8188`。各阶段可以在设置面板中使用独立端点和工作流版本。
+**连接方式：** 默认使用受控网络访问 `http://100.120.236.113:8188`；可以采用公司内网、VPN、SSH 隧道或 Tailscale。各阶段可以在设置面板中使用独立端点和工作流版本。
 
 ## 4. 状态机与质量门禁
 
 | 阶段 | 入口条件 | 执行器 | 成功证据 | 下一阶段门禁 |
 | --- | --- | --- | --- | --- |
 | 角色描述 / 原画 | Run 已创建；图生模型任务另需受控路径内的单体原画 | Supervisor / Art Director | 已保存提示词或原画 | 角色设定已确认或存在持续执行授权 |
-| 2D / T-Pose 图 | 文生模型需正向提示词；图生模型需原画 | Qwen Image 或对应 Stepfun 图片 API | PNG 文件存在于受控路径 | 用户确认，或持续计划自动确认 |
-| T-Pose 检查 | 2D 图片存在 | SDPose + Visual QA | 关键点评分、覆盖图、结构化视觉报告 | SDPose 为 `passed` 且 Visual QA 为 `pass` |
-| 3D 模型生成 | T-Pose 硬门禁通过 | Pixal3D | 有效 glTF 2.0 GLB，至少一个 mesh | 用户确认，或持续计划自动确认 |
-| 自动绑骨 | 静态 GLB 存在 | SkinTokens | 有效 GLB，至少一个 skin 和 joint | 用户确认，或持续计划自动确认 |
+| 2D / T-Pose 图 | 文生模型需正向提示词；图生模型需原画 | Qwen Image 或对应 StepFun 图片 API | PNG 文件存在于受控路径 | 用户确认，或持续计划自动确认 |
+| T-Pose 检查 | 2D 图片存在 | SDPose + Visual QA + Character Consistency | 关键点评分、覆盖图、视觉与身份结构化报告 | SDPose 为 `passed`，Visual QA 与身份检查均为 `pass` |
+| 3D 模型生成 | T-Pose 硬门禁通过 | Pixal3D + Asset Inspector | 有效 glTF 2.0 GLB，至少一个 mesh | 用户确认，或 Asset Inspector 放行持续计划 |
+| 自动拓扑 | 静态 GLB 存在 | AutoRemesher + Blender | 有效拓扑 GLB，至少一个 mesh | 用户确认，或持续计划自动确认 |
+| 自动绑骨 | 拓扑 GLB 存在 | SkinTokens + Rigging QA | 有效 GLB，至少一个 skin 和 joint | 用户确认，或 Rigging QA 放行持续计划 |
 | 资产导出 | 绑骨 GLB 存在 | 本地 API | 可下载最终 GLB | 流水线完成 |
 
 状态机以 SQLite 中的 Run 为唯一事实来源。浏览阶段卡片不会改变真实阶段；所有推进、回退、开始、成功、失败和 Agent 结论都会形成事件记录。
@@ -261,7 +262,7 @@ Super-Idol-Master/
 
 ## 6. 外部集成与 API
 
-### 6.1. Stepfun
+### 6.1. StepFun
 
 **用途：**
 
@@ -333,11 +334,11 @@ npm run agent:verify
 
 **当前测试边界：**
 
-- `npm run build` 验证前端和服务端模块能够完成生产构建；
+- `npm test` 依次执行 Node 单元测试、Python 单元测试和生产构建；
 - `npm run lint` 执行静态检查；
 - `npm run agent:verify` 验证模型文本、图片和工具调用兼容性；
 - Python 工作流以真实 DGX E2E 运行结果为主要集成证据；
-- 当前没有完整的单元测试、API 集成测试或浏览器 E2E 套件。
+- 当前已有设置密钥、Agent 角色状态、StepFun 图片 API、T-Pose QA 和拓扑客户端单元测试，但仍没有完整的 API 集成测试或浏览器 E2E 套件。
 
 ## 10. 未来规划与架构债务
 
@@ -346,7 +347,7 @@ npm run agent:verify
 - 将前端轮询升级为 SSE 或 WebSocket 事件推送，减少重复请求。
 - 为 Asset Inspector 与 Rigging QA 增加服务端多视图和标准动作变形渲染，扩展现有结构指标。
 - 将二进制资产从 Run 单路径演进为带版本和谱系的资产实体。
-- 增加集中式 GPU 指标、阶段耗时、错误率和 Agent 质量评估。
+- 在现有 DGX 设备、统一内存、队列和延迟展示基础上，增加阶段耗时、错误率和 Agent 质量评估。
 - 如果开放多用户或远程控制台，补充认证、RBAC、审计和密钥管理。
 
 这些项目是规划，不代表当前已经实现。

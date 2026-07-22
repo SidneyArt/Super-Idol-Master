@@ -10,6 +10,16 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_TOOL_CALLS = 10;
 const MAX_TURNS = 10;
 const MAX_ROLE_TURNS = 4;
+export const ASSET_AGENT_ROLES = [
+  "supervisor",
+  "art_director",
+  "visual_qa",
+  "character_consistency",
+  "asset_inspector",
+  "rigging_qa",
+  "export_specialist",
+  "workflow_doctor",
+];
 const PIPELINE_TARGETS = {
   concept_image: { stage: 1, label: "2D 概念图" },
   validated_tpose: { stage: 2, label: "通过质检的 T-Pose" },
@@ -210,28 +220,40 @@ function normalizePromptPlan(report, candidate) {
   };
 }
 
-function normalizeVisualQaReport(report, deterministicQa) {
+export function normalizeVisualQaReport(report, deterministicQa) {
+  const evidenceText = `${report.summary || ""}\n${Array.isArray(report.issues) ? report.issues.join("\n") : ""}`;
+  const hasPositiveEvidence = (pattern) => [...evidenceText.matchAll(pattern)].some((match) => {
+    const prefix = evidenceText.slice(Math.max(0, Number(match.index) - 4), Number(match.index));
+    return !/(?:无|未|没有|并未|不再|并不)$/.test(prefix);
+  });
+  const heldPropEvidence = hasPositiveEvidence(/(?:手持|拿着|握着|持有|手中有|手里有)[^。；\n]{0,24}(?:武器|道具|刀|剑|枪|法杖|锤|球|滑板|工具|苦无)/gi);
+  const nonWhiteBackgroundEvidence = hasPositiveEvidence(/(?:灰色|彩色|渐变|场景|地平线)[^。；\n]{0,12}背景|背景(?:为|是|存在)[^。；\n]{0,12}(?:灰色|彩色|渐变|场景|地平线)/gi);
+  const normalized = {
+    ...report,
+    handsEmpty: heldPropEvidence ? false : report.handsEmpty,
+    whiteBackground: nonWhiteBackgroundEvidence ? false : report.whiteBackground,
+  };
   const failures = [
-    [report.singleSubject, "画面不是严格单主体"],
-    [report.fullBody, "角色没有完整全身出镜"],
-    [report.frontFacing, "角色不是严格正视"],
-    [report.armsHorizontal, "双臂没有水平伸展"],
-    [report.limbsUnoccluded, "肢体存在遮挡或裁切"],
-    [report.handsEmpty, "角色手中仍持有道具或武器"],
-    [report.whiteBackground, "背景不是纯白无渐变背景"],
+    [normalized.singleSubject, "画面不是严格单主体"],
+    [normalized.fullBody, "角色没有完整全身出镜"],
+    [normalized.frontFacing, "角色不是严格正视"],
+    [normalized.armsHorizontal, "双臂没有水平伸展"],
+    [normalized.limbsUnoccluded, "肢体存在遮挡或裁切"],
+    [normalized.handsEmpty, heldPropEvidence ? "Visual QA 文本证据显示角色仍持有道具或武器" : "角色手中仍持有道具或武器"],
+    [normalized.whiteBackground, nonWhiteBackgroundEvidence ? "Visual QA 文本证据显示背景不是纯白无渐变背景" : "背景不是纯白无渐变背景"],
   ].filter(([passed]) => passed !== true).map(([, issue]) => issue);
   if (deterministicQa.status === "failed") failures.push("SDPose 与背景像素硬门禁未通过");
-  if (report.decision === "pass" && Number(report.confidence || 0) < 0.8) failures.push("Visual QA 置信度不足 0.8");
-  if (!failures.length) return report;
+  if (normalized.decision === "pass" && Number(normalized.confidence || 0) < 0.8) failures.push("Visual QA 置信度不足 0.8");
+  if (!failures.length) return normalized;
   return {
-    ...report,
-    decision: report.decision === "reject"
+    ...normalized,
+    decision: normalized.decision === "reject"
       ? "reject"
       : failures.some((item) => item.includes("置信度")) && failures.length === 1
         ? "manual_review"
         : "repairable",
-    issues: [...new Set([...(report.issues || []), ...failures])].slice(0, 20),
-    summary: `${report.summary} 硬门禁未通过：${failures.join("；")}。`.slice(0, 500),
+    issues: [...new Set([...(normalized.issues || []), ...failures])].slice(0, 20),
+    summary: `${normalized.summary} 硬门禁未通过：${failures.join("；")}。`.slice(0, 500),
   };
 }
 
@@ -1573,7 +1595,7 @@ export function createAssetAgentRuntime({
       return {
         configured: Boolean(config.apiKey),
         model: config.model,
-        roles: ["supervisor", "art_director", "visual_qa"],
+        roles: [...ASSET_AGENT_ROLES],
       };
     },
   };

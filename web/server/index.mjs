@@ -883,7 +883,7 @@ function jobArguments(run, jobType) {
   throw new Error("未知 DGX 任务类型");
 }
 
-function completeJob(runId, jobType, stdout) {
+function completeJob(runId, jobType, stdout, execution = {}) {
   const now = new Date().toISOString();
   const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const lastLine = lines.at(-1) || "";
@@ -904,7 +904,8 @@ function completeJob(runId, jobType, stdout) {
           model_path = NULL, topology_path = NULL, rigged_model_path = NULL, qa_score = NULL, qa_summary = '', qa_metrics = '{}',
           qa_overlay_path = NULL, updated_at = ? WHERE id = ?
       `).run(previewPath, source, now, runId);
-      addEvent(runId, "generation_succeeded", 1, "DGX Qwen Image 已返回真实 PNG", now);
+      const imageProvider = execution.imageProvider || "DGX Qwen Image";
+      addEvent(runId, "generation_succeeded", 1, `${imageProvider} 已返回真实 PNG`, now);
     } else if (jobType === "qa") {
       const result = JSON.parse(lastLine);
       sourceKey = `qa:${result.promptId || now}`;
@@ -1074,7 +1075,9 @@ function launchJob(run, jobType, processConfig) {
     if (activeJobs.get(run.id) === activeJob) activeJobs.delete(run.id);
     try {
       if (success) {
-        const completion = completeJob(run.id, jobType, stdout);
+        const completion = completeJob(run.id, jobType, stdout, {
+          imageProvider: usesImageApi ? `图片 API ${processConfig.api.model}` : "DGX Qwen Image",
+        });
         void assetAgent.handleJobCompleted(completion).catch((error) => {
           console.error(`[Agent] ${jobType} completion hook failed:`, error);
         });
@@ -1128,7 +1131,7 @@ function startJob(runId, jobType) {
 
   const stage = { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType];
   const messages = {
-    "2d": processConfig.mode === "api" ? `正在调用阶跃 ${processConfig.api.model} 生成 2D 概念图` : "正在调用 DGX Qwen Image 生成 2D 概念图",
+    "2d": processConfig.mode === "api" ? `正在调用图片 API ${processConfig.api.model} 生成 2D 概念图` : "正在调用 DGX Qwen Image 生成 2D 概念图",
     qa: "正在调用 DGX SDPose 自动检查 T-Pose",
     "3d": "正在调用 DGX Pixal3D 生成静态 GLB",
     topology: "正在调用 DGX AutoRemesher 执行自动拓扑与纹理回烘",
@@ -1192,6 +1195,36 @@ function workflowClasses(graph) {
   return [...new Set(Object.values(graph).map((node) => node.class_type))];
 }
 
+async function checkTopologyService(config) {
+  const started = Date.now();
+  const baseline = {
+    configured: Boolean(config.url),
+    online: false,
+    ready: false,
+    url: config.url || "",
+    latencyMs: 0,
+    architecture: null,
+  };
+  if (!config.url) return baseline;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(`${config.url}/healthz`, { signal: controller.signal });
+    const health = response.ok ? await response.json() : {};
+    return {
+      ...baseline,
+      online: response.ok,
+      ready: response.ok && health.ready === true,
+      latencyMs: Date.now() - started,
+      architecture: typeof health.architecture === "string" ? health.architecture : null,
+    };
+  } catch {
+    return { ...baseline, latencyMs: Date.now() - started };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function checkComfyUi(force = false) {
   if (!force && systemCache && Date.now() - systemCacheAt < 15_000) return systemCache;
   const configs = Object.fromEntries(PROCESS_KINDS.map((kind) => [kind, settingsStore.processConfig(kind)]));
@@ -1213,8 +1246,10 @@ async function checkComfyUi(force = false) {
       }
     })());
   }
+  const topologyPromise = checkTopologyService(settingsStore.topologyConfig());
   const endpoints = new Map();
   await Promise.all([...endpointPromises.entries()].map(async ([url, promise]) => endpoints.set(url, await promise)));
+  const topology = await topologyPromise;
   const checks = {};
   for (const kind of PROCESS_KINDS) {
     const config = configs[kind];
@@ -1246,6 +1281,15 @@ async function checkComfyUi(force = false) {
   }
   const endpointValues = [...endpoints.values()];
   const urls = [...endpoints.keys()];
+  const devices = endpointValues.flatMap((item) => Array.isArray(item.stats?.devices) ? item.stats.devices : []).map((device) => ({
+    name: typeof device.name === "string" ? device.name : "NVIDIA GPU",
+    type: typeof device.type === "string" ? device.type : "cuda",
+    index: Number.isFinite(Number(device.index)) ? Number(device.index) : null,
+    vramTotal: Number.isFinite(Number(device.vram_total)) ? Number(device.vram_total) : null,
+    vramFree: Number.isFinite(Number(device.vram_free)) ? Number(device.vram_free) : null,
+    torchVramTotal: Number.isFinite(Number(device.torch_vram_total)) ? Number(device.torch_vram_total) : null,
+    torchVramFree: Number.isFinite(Number(device.torch_vram_free)) ? Number(device.torch_vram_free) : null,
+  }));
   const value = {
     online: endpointValues.every((item) => item.online),
     url: urls.length === 1 ? urls[0] : "多个端点",
@@ -1255,8 +1299,10 @@ async function checkComfyUi(force = false) {
       running: endpointValues.reduce((total, item) => total + (item.queue.queue_running?.length || 0), 0),
       pending: endpointValues.reduce((total, item) => total + (item.queue.queue_pending?.length || 0), 0),
     },
+    devices,
+    topology,
     workflows: checks,
-    pipelineReady: Object.values(checks).every((item) => item.ready),
+    pipelineReady: Object.values(checks).every((item) => item.ready) && topology.ready,
   };
   systemCache = value;
   systemCacheAt = Date.now();
@@ -1631,8 +1677,10 @@ const COORDINATOR_DELEGATION_REASONS = new Set([
 ]);
 
 async function delegateCoordinatorTask(runId, target, reason = "总调度 Agent 委派持续执行目标") {
-  approvalRuntime.setPermission("task", runId, "auto");
-  return assetAgent.requestWorkflowPlan(runId, target, reason);
+  const run = getRunRow(runId);
+  if (!run) throw new Error("任务不存在");
+  addEvent(runId, "coordinator_delegated", run.currentStage, reason);
+  return assetAgent.scheduleWorkflowPlan(runId, target);
 }
 
 function isCoordinatorDelegationApproval(approval) {
@@ -1690,7 +1738,6 @@ approvalRuntime.setExecutor(async (approval) => {
 for (const pending of approvalRuntime.listApprovals("pending")) {
   const approval = approvalRuntime.getApproval(pending.id);
   if (!isCoordinatorDelegationApproval(approval)) continue;
-  approvalRuntime.setPermission("task", approval.runId, "auto");
   try {
     await approvalRuntime.approve(approval.id);
   } catch (error) {

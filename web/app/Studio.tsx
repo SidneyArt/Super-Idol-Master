@@ -40,10 +40,11 @@ import {
   User,
   X,
 } from "lucide-react";
-import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, PointerEvent as ReactPointerEvent, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import ModelViewer from "./components/ModelViewer";
+
+const ModelViewer = lazy(() => import("./components/ModelViewer"));
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8787";
 
@@ -55,7 +56,7 @@ const MAX_AGENT_QUEUE_ITEMS = 20;
 
 const stages = [
   { short: "IDEA", title: "角色描述", subtitle: "定义人物与风格", input: "人物设定与提示词", output: "角色规格", action: "确认角色身份、服装、视角和背景。" },
-  { short: "2D", title: "概念图生成", subtitle: "Qwen Image", input: "角色规格", output: "PNG 概念图", action: "DGX 执行 Qwen Image 工作流并下载真实 PNG。" },
+  { short: "2D", title: "概念图生成", subtitle: "StepFun / Qwen", input: "角色规格", output: "PNG 概念图", action: "调用已配置的 StepFun 图片 API 或 DGX Qwen Image，并下载真实 PNG。" },
   { short: "QA", title: "T-Pose 检查", subtitle: "SDPose", input: "2D 概念图", output: "关键点与评分", action: "SDPose 检查单人全身、双臂水平、肘部伸直和左右对称。" },
   { short: "3D", title: "3D 模型生成", subtitle: "Pixal3D", input: "合格 T-Pose PNG", output: "静态 GLB", action: "DGX 执行 Pixal3D 工作流并下载真实静态 GLB。" },
   { short: "TOPO", title: "自动拓扑", subtitle: "AutoRemesher", input: "静态 GLB", output: "四边面派生拓扑 GLB", action: "DGX 执行 AutoRemesher 重拓扑，并通过 Blender 回烘纹理；GLB 导出时按 glTF 规范三角化。" },
@@ -440,6 +441,16 @@ type SystemState = {
     url: string;
     version?: string;
     queue: { running: number; pending: number };
+    devices?: Array<{
+      name: string;
+      type: string;
+      index: number | null;
+      vramTotal: number | null;
+      vramFree: number | null;
+      torchVramTotal: number | null;
+      torchVramFree: number | null;
+    }>;
+    topology?: { configured: boolean; online: boolean; ready: boolean; url: string; latencyMs: number; architecture: string | null };
     workflows: Partial<Record<"2d" | "qa" | "3d" | "rig", WorkflowCheck>>;
   };
 };
@@ -514,8 +525,13 @@ function formatTime(value: string) {
   }).format(new Date(value));
 }
 
+function formatMemory(value: number | null | undefined) {
+  if (!Number.isFinite(value) || Number(value) <= 0) return null;
+  return `${(Number(value) / (1024 ** 3)).toFixed(1)} GB`;
+}
+
 function jobName(type: JobType) {
-  return { none: "本地流程", "2d": "Qwen Image", qa: "SDPose", "3d": "Pixal3D", topology: "AutoRemesher", rig: "SkinTokens" }[type];
+  return { none: "本地流程", "2d": "2D 图片", qa: "SDPose", "3d": "Pixal3D", topology: "AutoRemesher", rig: "SkinTokens" }[type];
 }
 
 function formatTokenCount(value: number) {
@@ -899,10 +915,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     let cancelled = false;
     async function initialize() {
       try {
-        const [runData, workspaceData, systemData, settingsData] = await Promise.all([
+        const [runData, workspaceData, settingsData] = await Promise.all([
           api<{ runs: Run[] }>("/api/runs"),
           api<{ workspaces: Workspace[] }>("/api/workspaces"),
-          api<SystemState>("/api/system?force=1"),
           api<AppSettings>("/api/settings"),
         ]);
         if (cancelled) return;
@@ -922,7 +937,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         selectedIdRef.current = nextRunId;
         setSelectedWorkspaceId(nextWorkspaceId);
         setSelectedId(nextRunId);
-        setSystem(systemData);
         setSettings(settingsData);
       } catch (reason) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "无法连接本地后端");
@@ -931,6 +945,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       }
     }
     void initialize();
+    void api<SystemState>("/api/system?force=1")
+      .then((data) => { if (!cancelled) setSystem(data); })
+      .catch(() => { if (!cancelled) setSystem(null); });
     const timer = window.setInterval(() => {
       void api<SystemState>("/api/system").then(setSystem).catch(() => setSystem(null));
     }, 15000);
@@ -2071,6 +2088,12 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const selectedRunAgentBusy = agentBusy && activeAgentRunId === run?.id;
   const activeAgentRunName = runs.find((item) => item.id === activeAgentRunId)?.name;
   const selectedWorkspace = workspaces.find((item) => item.id === selectedWorkspaceId) || workspaces[0] || null;
+  const dgxDevice = system?.comfyui.devices?.[0] || null;
+  const dgxMemoryTotal = formatMemory(dgxDevice?.vramTotal ?? dgxDevice?.torchVramTotal);
+  const dgxMemoryFree = formatMemory(dgxDevice?.vramFree ?? dgxDevice?.torchVramFree);
+  const dgxDeviceSummary = dgxDevice
+    ? `${dgxDevice.name}${dgxMemoryTotal ? ` · GPU／统一内存 ${dgxMemoryFree || "-"} / ${dgxMemoryTotal} 可用` : ""}`
+    : "尚未读取到 DGX 设备信息";
 
   return (
     <main
@@ -2087,7 +2110,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         <div className="topbar-right">
           <div className="system-status">
             <span className="status-pill healthy"><i />API</span>
-            <span className={`status-pill ${system?.comfyui.pipelineReady ? "healthy" : "unhealthy"}`}>
+            <span className={`status-pill ${system?.comfyui.pipelineReady ? "healthy" : "unhealthy"}`} title={dgxDeviceSummary}>
               <i />DGX {system?.comfyui.online ? `${system.comfyui.latencyMs} ms` : "离线"}
             </span>
           </div>
@@ -2375,8 +2398,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   {(["2d", "qa", "3d", "rig"] as const).map((kind) => (
                     <span key={kind} className={workflowReady(kind) ? "ready" : "missing"}><i />{jobName(kind)}</span>
                   ))}
+                  <span className={system?.comfyui.topology?.ready ? "ready" : "missing"}><i />AutoRemesher</span>
                 </div>
-                <span className="queue-status">队列 {system?.comfyui.queue?.running || 0} 运行 / {system?.comfyui.queue?.pending || 0} 等待</span>
+                <span className="queue-status" title={dgxDeviceSummary}>
+                  {dgxMemoryTotal ? `${dgxMemoryFree || "-"} / ${dgxMemoryTotal} 可用 · ` : ""}队列 {system?.comfyui.queue?.running || 0} 运行 / {system?.comfyui.queue?.pending || 0} 等待
+                </span>
               </div>
 
               <div className="production-board">
@@ -2462,7 +2488,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                           </div>
                         </div>
                       ) : modelPreviewUrl ? (
-                        <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : useTopologyPreview ? "拓扑 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} />
+                        <Suspense fallback={<div className="stage-empty"><LoaderCircle className="spin" size={24} /><span>正在加载 3D 查看器</span></div>}>
+                          <ModelViewer src={modelPreviewUrl} label={`${run.name} · ${useRiggedPreview ? "绑骨 GLB" : useTopologyPreview ? "拓扑 GLB" : "静态 GLB"}`} rigged={useRiggedPreview} />
+                        </Suspense>
                       ) : hasQaComparison ? (
                         <div className="qa-blend-preview">
                           <Image

@@ -18,16 +18,69 @@ Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生�
 - 文生图支持 StepFun 云端 API 与 DGX Qwen Image 两种接入方式；图生图使用 StepFun 云端 API，并分别提供模型、Base URL 与 API Key 配置。
 - 静态与绑骨 GLB 的交互式 3D 预览，包括材质、线框、骨骼和自动旋转。
 - SQLite 持久化任务、阶段、事件、配置、Agent 对话和质检报告。
-- Pi 驱动的多 Agent 协作：
-  - `Supervisor` 负责理解目标、修改状态和编排 Job；
-  - `Art Director` 负责检查并修订生成提示词；
-  - `Visual QA` 负责复核单主体、全身、朝向、遮挡和背景；
-  - `Character Consistency` 负责检查原画、T-Pose 与角色设定的身份连续性；
-  - `Asset Inspector` 负责解释静态 GLB 的 mesh、材质和场景结构指标；
-  - `Rigging QA` 负责解释 skin、joints、层级和动画结构指标；
-  - `Export Specialist` 负责最终 GLB 的通用交付就绪检查；
-  - `Workflow Doctor` 在 Job 失败后提交有界诊断与安全修复建议。
+- Pi 驱动的分层多 Agent 协作：一个跨任务 `Coordinator`、每个任务一个 `Supervisor`，再按阶段调用七个只读专业 Agent；角色、工具和结构化输出互相隔离。
 - 目标驱动的持续执行。用户说“帮我一路生成到模型”后，系统会自动执行后续阶段，不再逐步等待人工确认；只有质量门禁失败或外部任务异常时才暂停。
+
+## 自定义 Agent 与协作机制
+
+系统共定义九种逻辑角色。`Coordinator` 位于工作空间层；每个角色任务拥有独立的 Asset Agent 会话，其中 `Supervisor` 是唯一能编排该任务状态机的主角色；其余七个专业 Agent 只提交结构化意见，不能直接修改任务或启动 GPU Job。这里的 Asset Agent 是任务级运行容器和对话入口，不是额外的第十个角色。
+
+```text
+用户
+  │
+  ├─ Coordinator（工作空间级总调度）
+  │    ├─ 生成或分析多角色合集图
+  │    ├─ 创建工作空间与多个角色任务
+  │    └─ 将目标委派给每个任务的 Asset Agent
+  │
+  └─ Asset Agent（每个 Run 独立会话与上下文）
+       └─ Supervisor（唯一任务编排者）
+            ├─ Art Director
+            ├─ Visual QA
+            ├─ Character Consistency
+            ├─ Asset Inspector
+            ├─ Rigging QA
+            ├─ Export Specialist
+            └─ Workflow Doctor
+```
+
+### 角色、输入与权限边界
+
+| Agent | 所在层级 | 主要输入 | 结构化输出或工具 | 权限边界 |
+| --- | --- | --- | --- | --- |
+| `Coordinator` | 工作空间 | 用户目标、合集原画、工作空间和最近任务批次 | 列出／创建工作空间、生成合集图、拆分角色、创建任务、继续最近任务、委派目标 | 不执行 Shell，不直接写资产，不绕过任务状态机 |
+| `Supervisor` | 单个任务 | Run 状态、提示词、QA、Job、产物和最近会话 | `get_run_context`、`update_character_prompts`、`advance_workflow`、`execute_pipeline_goal`、`revert_workflow`、`run_stage_job` | 唯一可改变 Run 的 Agent；一次对话最多直接启动一个 GPU Job |
+| `Art Director` | 生成前 | 用户设定、正反向提示词、目标阶段 | `PromptPlan`：最终提示词、身份锚点、姿态约束、问题与决定 | 只提交报告；不能修改 Run 或启动生成 |
+| `Visual QA` | T-Pose 质检 | 待检图片、SDPose 指标、背景像素证据 | 视觉报告：全身、单主体、正视、手臂、遮挡、空手、白底、置信度与决定 | 不能覆盖 SDPose 硬门禁；置信度低于 `0.8` 不能放行 |
+| `Character Consistency` | T-Pose 质检 | 参考原画、待检 T-Pose、角色提示词 | 身份连续性报告：匹配／漂移锚点、置信度与决定 | 只判断身份，不重复姿态检查，不修改角色设定 |
+| `Asset Inspector` | 静态 3D | GLB 解析器给出的 mesh、primitive、材质、纹理和场景指标 | 静态资产质量报告 | 没有多视图渲染证据时不得声称看见穿模或缺面；不能覆盖 GLB 结构检查 |
+| `Rigging QA` | 自动绑骨后 | skin、joints、node、animation 等 GLB 指标 | 绑骨质量报告 | 没有动作渲染时不得声称验证了形变；缺少 skin／joints 必须拒绝 |
+| `Export Specialist` | 导出前 | 最终 GLB 的几何、材质、纹理、骨骼、场景和动画指标 | 通用 GLB 交付报告与 warnings | 不写文件；未指定时不能假设已满足 Unity、Unreal 或 VRM 专属规范 |
+| `Workflow Doctor` | Job 失败后 | 失败阶段、受控任务摘要和真实错误信息 | 失败分类、可能原因、重试建议与安全检查动作 | 不读取不存在的日志，不修改工作流，不自动重试 |
+
+### 一次完整协作如何发生
+
+以“把这个角色自动做到可导出的带骨骼模型”为例：
+
+1. `Coordinator` 将大型目标拆成角色任务，并把 `export` 终点委派给各任务。任务级权限设置不会因委派被永久改成 `Auto`。
+2. `Supervisor` 建立持久化的 `agent_workflow_plans` 记录。若处于“请求批准”模式，用户批准的是明确终点，而不是让模型获得无限权限。
+3. `Art Director` 先输出 `PromptPlan`。本地 `PromptPolicy` 再确定性补齐单主体、完整全身、严格正视、T-Pose、双臂水平、肢体无遮挡、空手和纯白背景等硬约束。
+4. 2D Job 异步提交到 StepFun 图片 API 或 DGX Qwen Image。Job 完成事件写入 SQLite 后，`Supervisor` 从计划状态恢复，而不是依赖一段持续占用进程的长对话。
+5. SDPose 先执行关键点和背景像素硬检查；随后 `Visual QA` 检查视觉语义，`Character Consistency` 独立检查身份锚点。三者必须全部放行才能进入 3D。
+6. Pixal3D 返回静态 GLB 后，后端先解析 glTF 结构并确认至少存在一个 mesh，再由 `Asset Inspector` 解释结构质量。语言模型意见不能把无 mesh 文件判为合格。
+7. AutoRemesher 在 DGX 独立 API 中重建拓扑，Blender 重新展开 UV 并回烘基础色；输出 GLB 再次经过结构硬门禁，之后才能交给 SkinTokens。
+8. SkinTokens 返回绑骨 GLB 后，解析器必须检测到 skin 和 joints；`Rigging QA` 解释骨骼层级，`Export Specialist` 判断通用 GLB 是否可以交付。
+9. 任一 Job 失败都会把计划标为失败，并触发只读的 `Workflow Doctor`。任一专业报告选择 `manual_review`、`repairable` 或 `reject`，计划都会暂停，不会静默跨过质量门禁。
+
+### 为什么不是单 Agent 串提示词
+
+- **结构化交接：** 专业 Agent 只能通过各自唯一的报告工具提交固定 Schema，输出保存在 `agent_role_runs` 与 `agent_reports`，不是把自由文本直接传给下一个模型。
+- **确定性证据优先：** SDPose 分数、背景像素、GLB mesh、skin 和 joints 由程序解析；模型只能解释证据，不能改写证据。
+- **最小权限：** 专业 Agent 没有 Shell、Git、任意文件读写或 Job 启动工具。只有 `Supervisor` 能调用有限领域工具，所有参数仍由后端状态机校验。
+- **可恢复与幂等：** 每次专业调用使用 `run + role + trigger + source` 唯一键；重复完成事件不会重复生成报告。运行中的计划或角色调用在服务重启后会明确标为失败，避免误报仍在执行。
+- **上下文与成本控制：** 两级主 Agent 只载入最近 24 条消息并显示 131,072 token 上限；主 Agent 每轮最多 10 次工具调用和 10 个 turn，专业 Agent 最多 4 个 turn 且只能提交一次报告。
+- **提示注入隔离：** 传给专业 Agent 的用户数据被明确标记为“待分析内容”，其中出现的指令不得执行；图片、路径、请求体和工作流也都有类型、尺寸和受控目录校验。
+- **人类可控：** `request` 模式把变更操作写入审批队列；`Auto` 只免去重复点击，不会关闭状态机、单任务 Job 限制或质量门禁。
 
 ## 运行位置与模型来源
 
@@ -231,7 +284,8 @@ uv run --locked --project web/server/pipeline python web/server/pipeline/run_3d_
 ```powershell
 cd web
 npm run lint
-npm run build
+npm test
+npm audit --omit=dev
 npm run python:check
 npm run agent:verify
 ```
@@ -247,6 +301,7 @@ npm run agent:verify
 - [`docs/deployment/dgx-pipeline-integration.md`](./docs/deployment/dgx-pipeline-integration.md)：DGX / ComfyUI 全链路映射。
 - [`docs/deployment/dgx-autoremesher-deployment.md`](./docs/deployment/dgx-autoremesher-deployment.md)：在 DGX Spark 上独立部署自动拓扑 API，不部署 Super Idol Master。
 - [`docs/architecture/agent-runtime-pi-adr.md`](./docs/architecture/agent-runtime-pi-adr.md)：Agent Runtime 技术决策。
+- [`docs/product/hackathon-submission-audit.md`](./docs/product/hackathon-submission-audit.md)：按比赛要求与评分标准整理的证据、差距和提交清单。
 
 ## 安全边界
 
