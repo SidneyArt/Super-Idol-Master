@@ -1524,6 +1524,42 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     }
   }
 
+  function requestDeleteWorkspace(workspace: Workspace) {
+    if (workspace.id === "default" || busy) return;
+    setUiConfirmation({
+      title: `删除“${workspace.name}”？`,
+      description: `该工作空间中的 ${workspace.taskCount} 个任务、Agent 对话、审批记录和生成资产都会被永久删除。此操作无法撤销。`,
+      confirmLabel: "删除工作空间",
+      tone: "danger",
+      action: async () => {
+        setBusy(true);
+        setError("");
+        try {
+          const data = await api<{ workspaces: Workspace[] }>(`/api/workspaces/${encodeURIComponent(workspace.id)}`, { method: "DELETE" });
+          const runData = await api<{ runs: Run[] }>("/api/runs");
+          const fallbackId = data.workspaces.find((item) => item.id === "default")?.id || data.workspaces[0]?.id || "default";
+          const nextWorkspaceId = selectedWorkspaceIdRef.current === workspace.id ? fallbackId : selectedWorkspaceIdRef.current;
+          setWorkspaces(data.workspaces);
+          setRuns(runData.runs);
+          selectWorkspace(nextWorkspaceId);
+          selectRun(null);
+          setDetail(null);
+          setForm((current) => ({ ...current, workspaceId: nextWorkspaceId }));
+          setExpandedWorkspaceIds((current) => {
+            const next = new Set(current);
+            next.delete(workspace.id);
+            return next;
+          });
+          if (assetLibraryWorkspaceId === workspace.id) setAssetLibraryWorkspaceId(null);
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "工作空间删除失败");
+        } finally {
+          setBusy(false);
+        }
+      },
+    });
+  }
+
   function workflowReady(kind: "2d" | "qa" | "3d" | "rig") {
     return system?.comfyui.workflows?.[kind]?.ready === true;
   }
@@ -2468,6 +2504,20 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     >
                       <Library size={15} />
                     </button>
+                    {workspace.id === "default" ? (
+                      <span className="workspace-delete-spacer" aria-hidden="true" />
+                    ) : (
+                      <button
+                        type="button"
+                        className="workspace-delete-button"
+                        disabled={busy}
+                        onClick={() => requestDeleteWorkspace(workspace)}
+                        title={`删除工作空间：${workspace.name}`}
+                        aria-label={`删除工作空间：${workspace.name}`}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="workspace-toggle-button"

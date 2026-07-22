@@ -1453,6 +1453,74 @@ function deleteWorkspaceAsset(workspaceId, runId, kind) {
   return { ok: true, deletedKinds: cascadeKinds, assets: listWorkspaceAssets(workspaceId) };
 }
 
+function deleteWorkspaceRecord(workspaceId) {
+  if (workspaceId === "default") throw new Error("默认工作空间不能删除");
+  const workspace = getWorkspace(workspaceId);
+  if (!workspace) throw new Error("工作空间不存在");
+
+  const runs = db.prepare(`${runSelect} WHERE workspace_id = ?`).all(workspaceId);
+  if (runs.some((run) => activeJobs.has(run.id) || run.jobStatus === "running" || assetAgent.isBusy(run.id))) {
+    throw new Error("该工作空间仍有任务正在执行，完成或停止后才能删除");
+  }
+  const generations = db.prepare(`
+    SELECT id, status, preview_path AS previewPath, output_path AS outputPath
+    FROM dispatcher_generations WHERE workspace_id = ?
+  `).all(workspaceId);
+  if (generations.some((generation) => generation.status === "running" || activeDispatcherJobs.has(generation.id))) {
+    throw new Error("该工作空间仍有合集图生成任务正在执行，完成或停止后才能删除");
+  }
+  if (coordinatorAgent.status().running) {
+    throw new Error("总调度 Agent 正在处理消息，完成或停止后才能删除工作空间");
+  }
+  const executingApproval = db.prepare(`
+    SELECT 1 FROM approval_requests
+    WHERE workspace_id = ? AND status = 'executing' LIMIT 1
+  `).get(workspaceId);
+  if (executingApproval) throw new Error("该工作空间仍有审批操作正在执行，完成后才能删除");
+
+  const files = new Set();
+  for (const run of runs) {
+    files.add(run.sourceImagePathInternal);
+    files.add(run.imagePathInternal);
+    files.add(run.modelPathInternal);
+    files.add(run.topologyPathInternal);
+    files.add(run.riggedModelPathInternal);
+    files.add(generatedFileFromPreviewUrl(run.sourcePreviewPath));
+    files.add(generatedFileFromPreviewUrl(run.previewPath));
+    files.add(generatedFileFromPreviewUrl(run.qaOverlayPath));
+  }
+  for (const generation of generations) {
+    files.add(generation.outputPath);
+    files.add(generatedFileFromPreviewUrl(generation.previewPath));
+  }
+
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`
+      DELETE FROM agent_permission_modes
+      WHERE scope_type = 'task' AND scope_id IN (SELECT id FROM runs WHERE workspace_id = ?)
+    `).run(workspaceId);
+    db.prepare("DELETE FROM approval_requests WHERE workspace_id = ?").run(workspaceId);
+    db.prepare("DELETE FROM app_notifications WHERE workspace_id = ?").run(workspaceId);
+    db.prepare("DELETE FROM workspaces WHERE id = ?").run(workspaceId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  let cleanupFailedCount = 0;
+  for (const filePath of files) {
+    if (!filePath || !isControlledAssetPath(filePath)) continue;
+    try {
+      deleteControlledAssetFile(filePath);
+    } catch {
+      cleanupFailedCount += 1;
+    }
+  }
+  return { ok: true, cleanupFailedCount, workspaces: getWorkspacesSummary() };
+}
+
 async function checkTopologyService(config) {
   const started = Date.now();
   const baseline = {
@@ -2208,6 +2276,10 @@ const server = createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/workspaces") {
       const body = await readBody(req);
       json(res, 201, createWorkspaceRecord(body));
+      return;
+    }
+    if (req.method === "DELETE" && parts[0] === "api" && parts[1] === "workspaces" && parts[2] && parts.length === 3) {
+      json(res, 200, deleteWorkspaceRecord(cleanText(decodeURIComponent(parts[2]), 80, "工作空间 ID", true)));
       return;
     }
     if (parts[0] === "api" && parts[1] === "animations") {

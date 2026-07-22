@@ -296,15 +296,18 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .workspace-list { min-height: 0; padding: 10px; overflow-y: auto; }
 .workspace-group { margin-bottom: 7px; border: 1px solid transparent; border-radius: 8px; overflow: hidden; }
 .workspace-group.selected { border-color: var(--border-strong); background: var(--surface-soft); }
-.workspace-item { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 34px 34px; align-items: center; gap: 3px; padding: 4px; }
+.workspace-item { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 34px 34px 34px; align-items: center; gap: 3px; padding: 4px; }
 .workspace-select-button { min-width: 0; display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 9px; padding: 6px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.workspace-select-button:hover, .workspace-library-button:hover, .workspace-toggle-button:hover { background: var(--surface-hover); }
+.workspace-select-button:hover, .workspace-library-button:hover, .workspace-delete-button:hover, .workspace-toggle-button:hover { background: var(--surface-hover); }
 .workspace-select-button > span:nth-child(2), .workspace-select-button strong, .workspace-select-button small { min-width: 0; display: block; }
 .workspace-select-button strong, .workspace-select-button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-select-button strong { font-size: 12px; }
 .workspace-select-button small { margin-top: 2px; color: var(--muted); font-size: 10px; }
-.workspace-library-button, .workspace-toggle-button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.workspace-library-button, .workspace-delete-button, .workspace-toggle-button, .workspace-delete-spacer { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.workspace-library-button, .workspace-delete-button, .workspace-toggle-button { cursor: pointer; }
 .workspace-library-button:hover { color: var(--accent); }
+.workspace-delete-button:hover { color: var(--danger); }
+.workspace-delete-button:disabled { opacity: .45; cursor: not-allowed; }
 .workspace-chevron { transition: transform 220ms cubic-bezier(.2, .8, .2, 1), color 160ms ease; }
 .workspace-group.expanded .workspace-chevron { color: var(--accent); transform: rotate(90deg); }
 .workspace-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }

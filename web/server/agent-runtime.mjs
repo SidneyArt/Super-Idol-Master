@@ -1617,6 +1617,9 @@ export function createAssetAgentRuntime({
     handleJobCompleted,
     handleJobFailed,
     prepareCharacterPrompts,
+    isBusy: (runId) => activeAgents.has(runId)
+      || drivingPlans.has(runId)
+      || [...activeRoleRuns].some((key) => key.startsWith(`${runId}:`)),
     status: () => {
       const config = getAgentConfig();
       return {
