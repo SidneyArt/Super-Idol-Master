@@ -17,13 +17,14 @@ from urllib.parse import parse_qs, urlparse
 
 HOST = os.environ.get("TOPOLOGY_HOST", "0.0.0.0")
 PORT = int(os.environ.get("TOPOLOGY_PORT", "8190"))
-SERVICE_VERSION = "1.1.0"
+SERVICE_VERSION = "1.1.1"
 AUTOREMESHER = os.environ.get("AUTOREMESHER_BIN", "/opt/autoremesher/autoremesher")
 BLENDER = os.environ.get("BLENDER_BIN", "/usr/bin/blender")
 BRIDGE = Path(os.environ.get("TOPOLOGY_BLENDER_BRIDGE", "/opt/autoremesher-api/blender_bridge.py"))
 MAX_INPUT_BYTES = int(os.environ.get("TOPOLOGY_MAX_INPUT_BYTES", str(512 * 1024 * 1024)))
 TIMEOUT_SECONDS = int(os.environ.get("TOPOLOGY_JOB_TIMEOUT_SECONDS", "3600"))
 TEXTURE_SIZE = int(os.environ.get("TOPOLOGY_TEXTURE_SIZE", "2048"))
+SMOOTH_SHADING_ANGLE = float(os.environ.get("TOPOLOGY_SMOOTH_SHADING_ANGLE", "60.0"))
 PREPROCESS_MAX_FACES = int(os.environ.get("TOPOLOGY_PREPROCESS_MAX_FACES", "150000"))
 PREPROCESS_MERGE_DISTANCE_RATIO = float(
     os.environ.get("TOPOLOGY_PREPROCESS_MERGE_DISTANCE_RATIO", "0.0000001")
@@ -137,6 +138,7 @@ def remesh(work_dir: Path, input_glb: Path, target_quads: int) -> Path:
         BLENDER, "--background", "--python", str(BRIDGE), "--",
         "rebuild-glb", "--source", str(input_glb), "--topology", str(output_obj),
         "--output", str(output_glb), "--texture-size", str(TEXTURE_SIZE),
+        "--smooth-angle", str(SMOOTH_SHADING_ANGLE),
     ], work_dir, stage="texture rebake")
     validate_glb(output_glb)
     inspect_log = run([
@@ -170,6 +172,7 @@ class Handler(BaseHTTPRequestHandler):
                 "maxConcurrency": int(os.environ.get("TOPOLOGY_MAX_CONCURRENCY", "1")),
                 "preprocessMaxFaces": PREPROCESS_MAX_FACES,
                 "preprocessVoxelResolution": PREPROCESS_VOXEL_RESOLUTION,
+                "smoothShadingAngle": SMOOTH_SHADING_ANGLE,
             })
             return
         self.send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})

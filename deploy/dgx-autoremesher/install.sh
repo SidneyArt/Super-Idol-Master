@@ -82,6 +82,8 @@ grep -q '^TOPOLOGY_PREPROCESS_VOXEL_RESOLUTION=' "${SERVICE_ENV}" || \
   printf 'TOPOLOGY_PREPROCESS_VOXEL_RESOLUTION=256\n' >> "${SERVICE_ENV}"
 grep -q '^TOPOLOGY_ADAPTIVITY=' "${SERVICE_ENV}" || \
   printf 'TOPOLOGY_ADAPTIVITY=0.0\n' >> "${SERVICE_ENV}"
+grep -q '^TOPOLOGY_SMOOTH_SHADING_ANGLE=' "${SERVICE_ENV}" || \
+  printf 'TOPOLOGY_SMOOTH_SHADING_ANGLE=60.0\n' >> "${SERVICE_ENV}"
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}.service"
 systemctl restart "${SERVICE_NAME}.service"

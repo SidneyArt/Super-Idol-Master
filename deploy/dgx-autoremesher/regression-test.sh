@@ -42,7 +42,8 @@ QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}" "${AUTOREMESHER_BIN}" \
 
 "${BLENDER_BIN}" --background --python "${SCRIPT_DIR}/blender_bridge.py" -- \
   rebuild-glb --source "${INPUT_GLB}" --topology "${OUTPUT_OBJ}" \
-  --output "${OUTPUT_GLB}" --texture-size "${TEXTURE_SIZE}"
+  --output "${OUTPUT_GLB}" --texture-size "${TEXTURE_SIZE}" \
+  --smooth-angle "${TOPOLOGY_SMOOTH_SHADING_ANGLE:-60.0}"
 
 python3 - "${OUTPUT_GLB}" <<'PY'
 from pathlib import Path

@@ -223,6 +223,7 @@ TOPOLOGY_PORT=8190
 TOPOLOGY_MAX_CONCURRENCY=1
 TOPOLOGY_JOB_TIMEOUT_SECONDS=3600
 TOPOLOGY_TEXTURE_SIZE=2048
+TOPOLOGY_SMOOTH_SHADING_ANGLE=60.0
 TOPOLOGY_PREPROCESS_MAX_FACES=150000
 TOPOLOGY_PREPROCESS_MERGE_DISTANCE_RATIO=0.0000001
 TOPOLOGY_PREPROCESS_VOXEL_RESOLUTION=256
@@ -240,6 +241,8 @@ QT_QPA_PLATFORM=xcb
 `TOPOLOGY_PREPROCESS_MERGE_DISTANCE_RATIO` 按模型包围盒对角线计算近邻点合并阈值。默认值只用于清理几乎完全重合的顶点，不应将其当作减面强度参数。
 
 `TOPOLOGY_ADAPTIVITY=0.0` 用于让输出数量尽量接近请求的目标四边面数。提高该值会生成更自适应、但通常更少的四边面。
+
+`TOPOLOGY_SMOOTH_SHADING_ANGLE=60.0` 会为拓扑 GLB 写入平滑顶点法线，同时保留边界和超过 60° 的硬边。该设置不会改变 UV 或基础色纹理；设为 `0` 会让几乎所有边保持硬边，设为 `180` 会平滑所有内部边。
 
 修改后重启：
 
@@ -494,7 +497,7 @@ curl --noproxy '*' --fail-with-body http://127.0.0.1:8190/healthz
 grep '^TOPOLOGY_PREPROCESS_' /etc/autoremesher-api.env
 ```
 
-健康检查响应中的 `version` 应至少为 `1.1.0`，`preprocessMaxFaces` 默认应为 `150000`，`preprocessVoxelResolution` 默认应为 `256`。
+健康检查响应中的 `version` 应至少为 `1.1.1`，`preprocessMaxFaces` 默认应为 `150000`，`preprocessVoxelResolution` 默认应为 `256`，`smoothShadingAngle` 默认应为 `60.0`。
 
 如果真实模型在默认设置下仍然崩溃，可以把 `TOPOLOGY_PREPROCESS_VOXEL_RESOLUTION` 降到 `192`，重启服务后重试。不要覆盖原始 GLB，也不需要重新生成前面的 2D 和 3D 资产。
 
@@ -540,7 +543,7 @@ bash api-regression-test.sh \
 
 - AutoRemesher 主要使用 CPU，部署到 DGX Spark 并不会直接利用其 GPU；
 - AutoRemesher CLI 只接收和输出 OBJ，因此 API 使用 Blender 完成 GLB 转换；
-- 当前只回烘基础色纹理，法线、粗糙度、金属度和透明度尚未回烘；
+- 当前只回烘基础色纹理；GLB 会写入平滑顶点法线，但法线贴图、粗糙度贴图、金属度贴图和透明度贴图尚未回烘；
 - glTF/GLB 不原生保存四边面，导出的 GLB 是由四边面拓扑拆分得到的三角面；
 - 高密度输入默认先在临时副本上以分辨率 `256` 执行体素重建，并限制到最多 150,000 个面；该步骤用于提高原生 AutoRemesher 的稳定性，不会修改原始 GLB；
 - 当前默认单并发，第二个同时到达的任务会收到 `HTTP 429`；

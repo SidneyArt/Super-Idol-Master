@@ -179,6 +179,30 @@ def bake_texture(source_objects: list[bpy.types.Object], target: bpy.types.Objec
     image.pack()
 
 
+def apply_smooth_shading(target: bpy.types.Object, angle_degrees: float) -> tuple[int, int]:
+    """Smooth organic surfaces while retaining boundaries and high-angle hard edges."""
+    angle_limit = math.radians(max(0.0, min(angle_degrees, 180.0)))
+    editable = bmesh.new()
+    editable.from_mesh(target.data)
+    for face in editable.faces:
+        face.smooth = True
+    hard_edges = 0
+    for edge in editable.edges:
+        is_smooth = len(edge.link_faces) == 2 and edge.calc_face_angle(0.0) <= angle_limit
+        edge.smooth = is_smooth
+        if not is_smooth:
+            hard_edges += 1
+    editable.to_mesh(target.data)
+    editable.free()
+    target.data.update()
+    print(
+        f"[topology] shading smooth_faces={len(target.data.polygons)} "
+        f"hard_edges={hard_edges} angle_degrees={angle_degrees:g}",
+        flush=True,
+    )
+    return len(target.data.polygons), hard_edges
+
+
 def command_rebuild_glb(args: argparse.Namespace) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     bpy.ops.import_scene.gltf(filepath=str(args.source))
@@ -192,6 +216,7 @@ def command_rebuild_glb(args: argparse.Namespace) -> None:
     targets = [item for item in mesh_objects() if item not in source_objects]
     target = join_meshes(targets)
     target.name = "RetopologizedMesh"
+    apply_smooth_shading(target, args.smooth_angle)
     bake_texture(source_objects, target, args.texture_size, args.output.parent)
 
     for item in source_objects:
@@ -210,11 +235,14 @@ def command_inspect_glb(args: argparse.Namespace) -> None:
     vertices = sum(len(item.data.vertices) for item in objects)
     faces = sum(len(item.data.polygons) for item in objects)
     materials = sum(len(item.data.materials) for item in objects)
+    smooth_faces = sum(sum(1 for polygon in item.data.polygons if polygon.use_smooth) for item in objects)
+    flat_faces = faces - smooth_faces
     if not objects or vertices == 0 or faces == 0:
         raise RuntimeError("GLB inspection found no usable mesh")
     print(
         f"[topology] inspect mesh_objects={len(objects)} vertices={vertices} "
-        f"faces={faces} materials={materials} images={len(bpy.data.images)}",
+        f"faces={faces} smooth_faces={smooth_faces} flat_faces={flat_faces} "
+        f"materials={materials} images={len(bpy.data.images)}",
         flush=True,
     )
 
@@ -234,6 +262,7 @@ def parse_args() -> argparse.Namespace:
     rebuild.add_argument("--topology", type=Path, required=True)
     rebuild.add_argument("--output", type=Path, required=True)
     rebuild.add_argument("--texture-size", type=int, default=2048)
+    rebuild.add_argument("--smooth-angle", type=float, default=60.0)
     inspect = subparsers.add_parser("inspect-glb")
     inspect.add_argument("--input", type=Path, required=True)
     return parser.parse_args(raw)

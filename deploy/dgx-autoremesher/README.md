@@ -61,7 +61,9 @@ grep -n '^TOPOLOGY_SERVICE_TOKEN=' /etc/autoremesher-api.env
 
 最后两条 `grep` 命令应当没有输出。
 
-健康检查中的 `version` 应至少为 `1.1.0`，`preprocessMaxFaces` 应为 `150000`，`preprocessVoxelResolution` 应为 `256`。如需调整，在 `/etc/autoremesher-api.env` 中修改预处理参数后重启服务；不建议对未经验证的高密度生成模型关闭体素重建。
+健康检查中的 `version` 应至少为 `1.1.1`，`preprocessMaxFaces` 应为 `150000`，`preprocessVoxelResolution` 应为 `256`，`smoothShadingAngle` 应为 `60.0`。如需调整，在 `/etc/autoremesher-api.env` 中修改预处理或平滑着色参数后重启服务；不建议对未经验证的高密度生成模型关闭体素重建。
+
+`1.1.1` 会在回烘和导出前写入平滑顶点法线，并保留边界与夹角超过 60° 的硬边。该处理不会修改 UV 或基础色纹理；三维预览器可以直接使用 GLB 自带法线，不需要在前端合并顶点。
 
 ## 真实模型回归
 
