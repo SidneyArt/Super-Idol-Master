@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 
 type ModelViewerProps = {
   src: string;
@@ -25,8 +26,21 @@ type PoseAxis = "x" | "y" | "z";
 type PoseRotation = Record<PoseAxis, number>;
 type PoseBoneOption = { id: string; name: string };
 type PoseBoneRuntime = { bone: THREE.Bone; restQuaternion: THREE.Quaternion };
+type BonePickerRuntime = {
+  mesh: THREE.Mesh;
+  bone: THREE.Bone;
+  parentBone: THREE.Bone | null;
+  kind: "joint" | "segment";
+};
 
 const EMPTY_POSE_ROTATION: PoseRotation = { x: 0, y: 0, z: 0 };
+
+function rotationFromRestPose(runtime: PoseBoneRuntime): PoseRotation {
+  const delta = runtime.restQuaternion.clone().invert().multiply(runtime.bone.quaternion).normalize();
+  const euler = new THREE.Euler().setFromQuaternion(delta, "XYZ");
+  const degrees = (value: number) => Math.round(THREE.MathUtils.radToDeg(value));
+  return { x: degrees(euler.x), y: degrees(euler.y), z: degrees(euler.z) };
+}
 
 function disposeMaterial(material: THREE.Material) {
   for (const value of Object.values(material)) {
@@ -49,10 +63,12 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   const skeletonRef = useRef<THREE.SkeletonHelper | null>(null);
   const poseBonesRef = useRef<Map<string, PoseBoneRuntime>>(new Map());
   const poseRotationsRef = useRef<Map<string, PoseRotation>>(new Map());
+  const selectedPoseBoneIdRef = useRef("");
+  const transformControlsRef = useRef<TransformControls | null>(null);
   const resetViewRef = useRef<() => void>(() => undefined);
   const setCameraViewRef = useRef<(view: CameraView) => void>(() => undefined);
   const autoRotateRef = useRef(false);
-  const skeletonVisibleRef = useRef(false);
+  const skeletonVisibleRef = useRef(rigged);
   const wireframeRef = useRef(false);
   const showGridRef = useRef(true);
   const environmentColorRef = useRef("#ffffff");
@@ -64,7 +80,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [autoRotate, setAutoRotate] = useState(false);
-  const [showSkeleton, setShowSkeleton] = useState(false);
+  const [showSkeleton, setShowSkeleton] = useState(rigged);
   const [wireframe, setWireframe] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
   const [environmentColor, setEnvironmentColor] = useState("#ffffff");
@@ -104,6 +120,11 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   useEffect(() => {
     skeletonVisibleRef.current = showSkeleton;
     if (skeletonRef.current) skeletonRef.current.visible = showSkeleton;
+    const transformControls = transformControlsRef.current;
+    if (transformControls) {
+      transformControls.enabled = showSkeleton;
+      transformControls.getHelper().visible = showSkeleton && Boolean(selectedPoseBoneIdRef.current);
+    }
   }, [showSkeleton]);
 
   useEffect(() => {
@@ -146,8 +167,18 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   }, [backgroundColor]);
 
   function selectPoseBone(id: string) {
+    selectedPoseBoneIdRef.current = id;
     setSelectedPoseBoneId(id);
     setSelectedPoseRotation({ ...(poseRotationsRef.current.get(id) || EMPTY_POSE_ROTATION) });
+    const runtime = poseBonesRef.current.get(id);
+    const transformControls = transformControlsRef.current;
+    if (runtime && transformControls) {
+      transformControls.attach(runtime.bone);
+      transformControls.enabled = skeletonVisibleRef.current;
+      transformControls.getHelper().visible = skeletonVisibleRef.current;
+    } else {
+      transformControls?.detach();
+    }
   }
 
   function updatePoseRotation(axis: PoseAxis, value: number) {
@@ -194,9 +225,11 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     setLoading(true);
     setError("");
     setStats(null);
-    setShowSkeleton(false);
+    skeletonVisibleRef.current = rigged;
+    setShowSkeleton(rigged);
     setPoseBones([]);
     setSelectedPoseBoneId("");
+    selectedPoseBoneIdRef.current = "";
     setSelectedPoseRotation({ ...EMPTY_POSE_ROTATION });
     poseBonesRef.current = new Map();
     poseRotationsRef.current = new Map();
@@ -221,6 +254,32 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     controls.autoRotateSpeed = 0.8;
     controls.screenSpacePanning = true;
     controlsRef.current = controls;
+
+    const transformControls = new TransformControls(camera, renderer.domElement);
+    transformControls.mode = "rotate";
+    transformControls.space = "local";
+    transformControls.size = 0.78;
+    transformControls.enabled = false;
+    const transformHelper = transformControls.getHelper();
+    transformHelper.visible = false;
+    scene.add(transformHelper);
+    transformControlsRef.current = transformControls;
+    const handleTransformDragging = (event: { value: unknown }) => {
+      controls.enabled = !Boolean(event.value);
+    };
+    const handleTransformChange = () => {
+      if (disposed) return;
+      const bone = transformControls.object;
+      if (!(bone instanceof THREE.Bone)) return;
+      const runtime = poseBonesRef.current.get(bone.uuid);
+      if (!runtime) return;
+      bone.updateMatrixWorld(true);
+      const rotation = rotationFromRestPose(runtime);
+      poseRotationsRef.current.set(bone.uuid, rotation);
+      if (selectedPoseBoneIdRef.current === bone.uuid) setSelectedPoseRotation(rotation);
+    };
+    transformControls.addEventListener("dragging-changed", handleTransformDragging);
+    transformControls.addEventListener("objectChange", handleTransformChange);
 
     const hemisphere = new THREE.HemisphereLight(environmentColorRef.current, 0x18202a, 3.2 * environmentIntensityRef.current);
     scene.add(hemisphere);
@@ -254,6 +313,64 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
       polygonOffsetUnits: -1,
       toneMapped: false,
     });
+    const bonePickerGroup = new THREE.Group();
+    bonePickerGroup.name = "BonePickerGroup";
+    scene.add(bonePickerGroup);
+    const bonePickerSphereGeometry = new THREE.SphereGeometry(1, 8, 6);
+    const bonePickerSegmentGeometry = new THREE.CylinderGeometry(1, 1, 1, 8);
+    const bonePickerMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      depthTest: false,
+      depthWrite: false,
+      colorWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const bonePickers: BonePickerRuntime[] = [];
+    const bonePickerMeshes: THREE.Mesh[] = [];
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const pickerStart = new THREE.Vector3();
+    const pickerEnd = new THREE.Vector3();
+    const pickerDirection = new THREE.Vector3();
+    const pickerMidpoint = new THREE.Vector3();
+    const pickerUp = new THREE.Vector3(0, 1, 0);
+    let bonePickerRadius = 0.01;
+
+    const updateBonePickers = () => {
+      for (const picker of bonePickers) {
+        picker.bone.getWorldPosition(pickerEnd);
+        if (picker.kind === "joint") {
+          picker.mesh.position.copy(pickerEnd);
+          picker.mesh.quaternion.identity();
+          picker.mesh.scale.setScalar(bonePickerRadius * 1.35);
+          continue;
+        }
+        picker.parentBone?.getWorldPosition(pickerStart);
+        pickerDirection.subVectors(pickerEnd, pickerStart);
+        const length = Math.max(pickerDirection.length(), bonePickerRadius * 2);
+        pickerMidpoint.addVectors(pickerStart, pickerEnd).multiplyScalar(0.5);
+        picker.mesh.position.copy(pickerMidpoint);
+        picker.mesh.quaternion.setFromUnitVectors(pickerUp, pickerDirection.normalize());
+        picker.mesh.scale.set(bonePickerRadius, length, bonePickerRadius);
+      }
+    };
+
+    const handleBonePointerDown = (event: PointerEvent) => {
+      if (event.button !== 0 || !skeletonVisibleRef.current || transformControls.dragging || transformControls.axis) return;
+      const bounds = renderer.domElement.getBoundingClientRect();
+      pointer.set(
+        ((event.clientX - bounds.left) / Math.max(bounds.width, 1)) * 2 - 1,
+        -((event.clientY - bounds.top) / Math.max(bounds.height, 1)) * 2 + 1,
+      );
+      raycaster.setFromCamera(pointer, camera);
+      const hit = raycaster.intersectObjects(bonePickerMeshes, false)[0];
+      const boneId = hit?.object.userData.poseBoneId;
+      if (typeof boneId !== "string") return;
+      selectPoseBone(boneId);
+      setOpenPanel("skeleton");
+    };
+    renderer.domElement.addEventListener("pointerdown", handleBonePointerDown);
 
     const resize = () => {
       const width = Math.max(host.clientWidth, 1);
@@ -312,6 +429,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
         const size = bounds.getSize(new THREE.Vector3());
         const center = bounds.getCenter(new THREE.Vector3());
         const maxDimension = Math.max(size.x, size.y, size.z, 0.1);
+        bonePickerRadius = maxDimension * 0.018;
         grid.position.y = bounds.min.y;
         grid.scale.setScalar(Math.max(maxDimension / 6, 0.25));
 
@@ -346,9 +464,24 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
           skeleton.visible = skeletonVisibleRef.current;
           scene.add(skeleton);
           skeletonRef.current = skeleton;
+          for (const runtime of poseBonesRef.current.values()) {
+            const joint = new THREE.Mesh(bonePickerSphereGeometry, bonePickerMaterial);
+            joint.userData = { poseBoneId: runtime.bone.uuid, bonePicker: true };
+            bonePickerGroup.add(joint);
+            bonePickerMeshes.push(joint);
+            bonePickers.push({ mesh: joint, bone: runtime.bone, parentBone: null, kind: "joint" });
+            const parentBone = runtime.bone.parent instanceof THREE.Bone ? runtime.bone.parent : null;
+            if (parentBone) {
+              const segment = new THREE.Mesh(bonePickerSegmentGeometry, bonePickerMaterial);
+              segment.userData = { poseBoneId: runtime.bone.uuid, bonePicker: true };
+              bonePickerGroup.add(segment);
+              bonePickerMeshes.push(segment);
+              bonePickers.push({ mesh: segment, bone: runtime.bone, parentBone, kind: "segment" });
+            }
+          }
+          updateBonePickers();
           setPoseBones(poseBoneOptions);
-          setSelectedPoseBoneId(poseBoneOptions[0]?.id || "");
-          setSelectedPoseRotation({ ...EMPTY_POSE_ROTATION });
+          selectPoseBone(poseBoneOptions[0]?.id || "");
         }
 
         setStats({ meshes, bones, vertices, triangles: Math.round(triangles) });
@@ -365,6 +498,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     const animate = () => {
       frameId = window.requestAnimationFrame(animate);
       controls.update();
+      updateBonePickers();
       renderer.render(scene, camera);
     };
     animate();
@@ -377,11 +511,23 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
       setCameraViewRef.current = () => undefined;
       controls.dispose();
       controlsRef.current = null;
+      renderer.domElement.removeEventListener("pointerdown", handleBonePointerDown);
+      transformControls.removeEventListener("dragging-changed", handleTransformDragging);
+      transformControls.removeEventListener("objectChange", handleTransformChange);
+      transformControls.detach();
+      transformControls.dispose();
+      scene.remove(transformHelper);
+      transformControlsRef.current = null;
+      scene.remove(bonePickerGroup);
+      bonePickerSphereGeometry.dispose();
+      bonePickerSegmentGeometry.dispose();
+      bonePickerMaterial.dispose();
       sceneRef.current = null;
       gridRef.current = null;
       lightsRef.current = null;
       poseBonesRef.current = new Map();
       poseRotationsRef.current = new Map();
+      selectedPoseBoneIdRef.current = "";
       wireframeOverlaysRef.current = new Set();
       if (skeletonRef.current) {
         skeletonRef.current.geometry.dispose();
@@ -444,7 +590,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
               <Bone size={16} />
             </button>
             {openPanel === "skeleton" && <div className="viewer-options viewer-pose-panel" role="dialog" aria-label="临时姿态编辑器">
-              <div className="viewer-pose-heading"><span><Bone size={15} />临时姿态预览</span><small>不会保存或修改模型</small></div>
+              <div className="viewer-pose-heading"><span><Bone size={15} />临时姿态预览</span><small>点击骨骼后拖动旋转环，不会保存或修改模型</small></div>
               <button className={`viewer-pose-visibility ${showSkeleton ? "active" : ""}`} onClick={() => setShowSkeleton((value) => !value)} type="button"><Check size={14} />{showSkeleton ? "隐藏骨骼线" : "显示骨骼线"}</button>
               <label className="viewer-pose-bone-select">
                 <span>选择骨骼</span>
@@ -511,7 +657,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
         </div>}
       </div>
 
-      <div className="model-viewer-help">{openPanel === "skeleton" ? "姿态调整仅用于当前预览，不会保存" : wireframe ? "拓扑模式：原材质 + 白色线框" : "左键旋转 · 滚轮缩放 · 右键平移"}</div>
+      <div className="model-viewer-help">{showSkeleton && rigged ? "点击骨骼选择 · 拖动彩色旋转环摆姿态 · 不会保存" : wireframe ? "拓扑模式：原材质 + 白色线框" : "左键旋转 · 滚轮缩放 · 右键平移"}</div>
       {stats && (
         <div className="model-viewer-stats">
           <span>{stats.meshes} MESH</span>
