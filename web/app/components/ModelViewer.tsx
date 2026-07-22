@@ -1,6 +1,6 @@
 "use client";
 
-import { Bone, Check, CloudSun, Focus, Grid3X3, Lightbulb, Orbit, Palette, SunMedium, Triangle } from "lucide-react";
+import { Bone, Check, CloudSun, Focus, Grid3X3, Lightbulb, Orbit, Palette, RotateCcw, SunMedium, Triangle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -21,6 +21,12 @@ type ModelStats = {
 
 type ViewerPanel = "render" | "rotation" | "skeleton" | "grid" | "view" | "lighting";
 type CameraView = "default" | "front" | "back" | "left" | "right";
+type PoseAxis = "x" | "y" | "z";
+type PoseRotation = Record<PoseAxis, number>;
+type PoseBoneOption = { id: string; name: string };
+type PoseBoneRuntime = { bone: THREE.Bone; restQuaternion: THREE.Quaternion };
+
+const EMPTY_POSE_ROTATION: PoseRotation = { x: 0, y: 0, z: 0 };
 
 function disposeMaterial(material: THREE.Material) {
   for (const value of Object.values(material)) {
@@ -41,6 +47,8 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     fill: THREE.DirectionalLight;
   } | null>(null);
   const skeletonRef = useRef<THREE.SkeletonHelper | null>(null);
+  const poseBonesRef = useRef<Map<string, PoseBoneRuntime>>(new Map());
+  const poseRotationsRef = useRef<Map<string, PoseRotation>>(new Map());
   const resetViewRef = useRef<() => void>(() => undefined);
   const setCameraViewRef = useRef<(view: CameraView) => void>(() => undefined);
   const autoRotateRef = useRef(false);
@@ -65,6 +73,9 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
   const [directionalIntensity, setDirectionalIntensity] = useState(0.5);
   const [backgroundColor, setBackgroundColor] = useState("#464646");
   const [stats, setStats] = useState<ModelStats | null>(null);
+  const [poseBones, setPoseBones] = useState<PoseBoneOption[]>([]);
+  const [selectedPoseBoneId, setSelectedPoseBoneId] = useState("");
+  const [selectedPoseRotation, setSelectedPoseRotation] = useState<PoseRotation>(EMPTY_POSE_ROTATION);
   const [openPanel, setOpenPanel] = useState<ViewerPanel | null>(null);
 
   useEffect(() => {
@@ -134,6 +145,46 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     scene.background = new THREE.Color(backgroundColor);
   }, [backgroundColor]);
 
+  function selectPoseBone(id: string) {
+    setSelectedPoseBoneId(id);
+    setSelectedPoseRotation({ ...(poseRotationsRef.current.get(id) || EMPTY_POSE_ROTATION) });
+  }
+
+  function updatePoseRotation(axis: PoseAxis, value: number) {
+    const runtime = poseBonesRef.current.get(selectedPoseBoneId);
+    if (!runtime) return;
+    const current = poseRotationsRef.current.get(selectedPoseBoneId) || EMPTY_POSE_ROTATION;
+    const next = { ...current, [axis]: value };
+    poseRotationsRef.current.set(selectedPoseBoneId, next);
+    const delta = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+      THREE.MathUtils.degToRad(next.x),
+      THREE.MathUtils.degToRad(next.y),
+      THREE.MathUtils.degToRad(next.z),
+      "XYZ",
+    ));
+    runtime.bone.quaternion.copy(runtime.restQuaternion).multiply(delta);
+    runtime.bone.updateMatrixWorld(true);
+    setSelectedPoseRotation(next);
+  }
+
+  function resetSelectedPoseBone() {
+    const runtime = poseBonesRef.current.get(selectedPoseBoneId);
+    if (!runtime) return;
+    runtime.bone.quaternion.copy(runtime.restQuaternion);
+    runtime.bone.updateMatrixWorld(true);
+    poseRotationsRef.current.set(selectedPoseBoneId, { ...EMPTY_POSE_ROTATION });
+    setSelectedPoseRotation({ ...EMPTY_POSE_ROTATION });
+  }
+
+  function resetEntirePose() {
+    for (const [id, runtime] of poseBonesRef.current) {
+      runtime.bone.quaternion.copy(runtime.restQuaternion);
+      runtime.bone.updateMatrixWorld(true);
+      poseRotationsRef.current.set(id, { ...EMPTY_POSE_ROTATION });
+    }
+    setSelectedPoseRotation({ ...EMPTY_POSE_ROTATION });
+  }
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -144,6 +195,11 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
     setError("");
     setStats(null);
     setShowSkeleton(false);
+    setPoseBones([]);
+    setSelectedPoseBoneId("");
+    setSelectedPoseRotation({ ...EMPTY_POSE_ROTATION });
+    poseBonesRef.current = new Map();
+    poseRotationsRef.current = new Map();
     wireframeOverlaysRef.current = new Set();
 
     const scene = new THREE.Scene();
@@ -220,6 +276,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
         let bones = 0;
         let vertices = 0;
         let triangles = 0;
+        const poseBoneOptions: PoseBoneOption[] = [];
         const wireframeOverlays: Array<{ source: THREE.Mesh; overlay: THREE.Mesh }> = [];
         model.traverse((object) => {
           if (object instanceof THREE.Mesh) {
@@ -237,7 +294,13 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
             overlay.userData = { ...overlay.userData, wireframeOverlay: true };
             wireframeOverlays.push({ source: object, overlay });
           }
-          if (object instanceof THREE.Bone) bones += 1;
+          if (object instanceof THREE.Bone) {
+            bones += 1;
+            const id = object.uuid;
+            poseBoneOptions.push({ id, name: object.name || `Bone ${bones}` });
+            poseBonesRef.current.set(id, { bone: object, restQuaternion: object.quaternion.clone() });
+            poseRotationsRef.current.set(id, { ...EMPTY_POSE_ROTATION });
+          }
         });
         for (const { source, overlay } of wireframeOverlays) {
           source.parent?.add(overlay);
@@ -283,6 +346,9 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
           skeleton.visible = skeletonVisibleRef.current;
           scene.add(skeleton);
           skeletonRef.current = skeleton;
+          setPoseBones(poseBoneOptions);
+          setSelectedPoseBoneId(poseBoneOptions[0]?.id || "");
+          setSelectedPoseRotation({ ...EMPTY_POSE_ROTATION });
         }
 
         setStats({ meshes, bones, vertices, triangles: Math.round(triangles) });
@@ -314,6 +380,8 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
       sceneRef.current = null;
       gridRef.current = null;
       lightsRef.current = null;
+      poseBonesRef.current = new Map();
+      poseRotationsRef.current = new Map();
       wireframeOverlaysRef.current = new Set();
       if (skeletonRef.current) {
         skeletonRef.current.geometry.dispose();
@@ -372,12 +440,30 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
         </div>
         {rigged && stats && stats.bones > 0 && (
           <div className="model-viewer-menu">
-            <button className={`viewer-tool-button ${showSkeleton ? "active" : ""}`} onClick={() => togglePanel("skeleton")} type="button" title="骨骼显示" aria-label="骨骼显示" aria-expanded={openPanel === "skeleton"} aria-haspopup="menu">
+            <button className={`viewer-tool-button ${showSkeleton || openPanel === "skeleton" ? "active" : ""}`} onClick={() => { togglePanel("skeleton"); setShowSkeleton(true); }} type="button" title="骨骼与临时姿态" aria-label="骨骼与临时姿态" aria-expanded={openPanel === "skeleton"} aria-haspopup="dialog">
               <Bone size={16} />
             </button>
-            {openPanel === "skeleton" && <div className="viewer-options" role="menu" aria-label="骨骼显示选项">
-              <button className={!showSkeleton ? "active" : ""} onClick={() => chooseOption(() => setShowSkeleton(false))} type="button" role="menuitem"><Check size={14} />隐藏骨骼</button>
-              <button className={showSkeleton ? "active" : ""} onClick={() => chooseOption(() => setShowSkeleton(true))} type="button" role="menuitem"><Check size={14} />显示骨骼</button>
+            {openPanel === "skeleton" && <div className="viewer-options viewer-pose-panel" role="dialog" aria-label="临时姿态编辑器">
+              <div className="viewer-pose-heading"><span><Bone size={15} />临时姿态预览</span><small>不会保存或修改模型</small></div>
+              <button className={`viewer-pose-visibility ${showSkeleton ? "active" : ""}`} onClick={() => setShowSkeleton((value) => !value)} type="button"><Check size={14} />{showSkeleton ? "隐藏骨骼线" : "显示骨骼线"}</button>
+              <label className="viewer-pose-bone-select">
+                <span>选择骨骼</span>
+                <select value={selectedPoseBoneId} onChange={(event) => selectPoseBone(event.target.value)}>
+                  {poseBones.map((bone) => <option value={bone.id} key={bone.id}>{bone.name}</option>)}
+                </select>
+              </label>
+              <div className="viewer-pose-axes">
+                {(["x", "y", "z"] as const).map((axis) => (
+                  <label key={axis}>
+                    <span><b>{axis.toUpperCase()}</b> 旋转<output>{selectedPoseRotation[axis]}°</output></span>
+                    <input type="range" min="-180" max="180" step="1" value={selectedPoseRotation[axis]} onChange={(event) => updatePoseRotation(axis, Number(event.target.value))} aria-label={`${axis.toUpperCase()} 轴旋转`} />
+                  </label>
+                ))}
+              </div>
+              <div className="viewer-pose-actions">
+                <button type="button" onClick={resetSelectedPoseBone}><RotateCcw size={13} />复位当前骨骼</button>
+                <button type="button" onClick={resetEntirePose}><RotateCcw size={13} />复位全部姿态</button>
+              </div>
             </div>}
           </div>
         )}
@@ -425,7 +511,7 @@ export default function ModelViewer({ src, label, rigged = false }: ModelViewerP
         </div>}
       </div>
 
-      <div className="model-viewer-help">{wireframe ? "拓扑模式：GLB 三角面" : "左键旋转 · 滚轮缩放 · 右键平移"}</div>
+      <div className="model-viewer-help">{openPanel === "skeleton" ? "姿态调整仅用于当前预览，不会保存" : wireframe ? "拓扑模式：原材质 + 白色线框" : "左键旋转 · 滚轮缩放 · 右键平移"}</div>
       {stats && (
         <div className="model-viewer-stats">
           <span>{stats.meshes} MESH</span>

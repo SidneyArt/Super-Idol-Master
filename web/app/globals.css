@@ -1147,6 +1147,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .viewer-options button svg { opacity: 0; }
 .viewer-options button.active { color: #fff; background: rgba(79,140,255,.18); }
 .viewer-options button.active svg { opacity: 1; }
+.viewer-pose-panel { width: min(320px, calc(100vw - 24px)); gap: 11px; padding: 12px; color: #d4dae2; }
+.viewer-pose-heading { display: grid; gap: 3px; padding-bottom: 9px; border-bottom: 1px solid rgba(190,199,211,.2); }
+.viewer-pose-heading > span { display: flex; align-items: center; gap: 7px; color: #fff; font-size: 13px; font-weight: 700; }
+.viewer-pose-heading small { color: #8f99a6; font-size: 10px; }
+.viewer-options .viewer-pose-visibility { border: 1px solid rgba(190,199,211,.18); background: rgba(255,255,255,.035); }
+.viewer-options .viewer-pose-visibility svg, .viewer-pose-actions button svg { flex: 0 0 auto; opacity: 1; }
+.viewer-pose-bone-select { display: grid; gap: 6px; }
+.viewer-pose-bone-select > span { color: #aeb7c2; font-size: 11px; }
+.viewer-pose-bone-select select { width: 100%; height: 34px; padding: 0 28px 0 9px; border: 1px solid rgba(190,199,211,.28); border-radius: 5px; outline: 0; background: #181d25; color: #f0f3f7; font-size: 12px; cursor: pointer; }
+.viewer-pose-bone-select select:focus { border-color: #6da0ff; }
+.viewer-pose-axes { display: grid; gap: 10px; }
+.viewer-pose-axes label { display: grid; gap: 5px; }
+.viewer-pose-axes label > span { display: flex; align-items: center; gap: 6px; color: #aeb7c2; font-size: 11px; }
+.viewer-pose-axes b { width: 19px; color: #fff; font-size: 10px; }
+.viewer-pose-axes output { min-width: 42px; margin-left: auto; color: #fff; font-variant-numeric: tabular-nums; text-align: right; }
+.viewer-pose-axes input { width: 100%; min-width: 0; accent-color: #6da0ff; cursor: pointer; }
+.viewer-pose-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-top: 9px; border-top: 1px solid rgba(190,199,211,.2); }
+.viewer-options .viewer-pose-actions button { min-width: 0; justify-content: center; padding-inline: 7px; border: 1px solid rgba(190,199,211,.18); font-size: 10px; }
 .model-viewer-lighting { position: absolute; z-index: 3; top: 12px; right: 12px; }
 .viewer-lighting-panel { position: absolute; top: 40px; right: 0; width: min(310px, calc(100vw - 24px)); display: grid; gap: 13px; padding: 13px; border: 1px solid rgba(190,199,211,.3); border-radius: 6px; background: rgba(13,17,23,.96); color: #d4dae2; box-shadow: 0 14px 36px rgba(0,0,0,.38); backdrop-filter: blur(14px); }
 .viewer-lighting-heading { min-height: 24px; display: flex; align-items: center; gap: 8px; padding-bottom: 9px; border-bottom: 1px solid rgba(190,199,211,.2); }
