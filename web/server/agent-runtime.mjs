@@ -39,8 +39,10 @@ const REQUIRED_TPOSE_CONSTRAINTS = [
   { label: "双手完全空置", pattern: /双手(?:完全)?空置|双手空手|不拿任何物品|不持有任何道具|empty[- ]?hands|no (?:held )?(?:items|props|weapons)/i },
   { label: "纯白背景", pattern: /纯白背景|白色背景|white background/i },
 ];
-const REQUIRED_TPOSE_SUFFIX = "最高优先级：只保留角色身份、脸部、发型、服装和穿戴式配饰；忽略参考图及原描述中的姿势、场景和手持装备。单人主体，完整全身，严格正视，标准 T-Pose，双臂呈一条水平直线，肘部完全伸直，肢体无遮挡，双手张开且完全空置，不拿任何武器、盾牌、法杖、工具或其他物品。背景必须是均匀纯白 RGB(255,255,255)，无渐变、无米白色、无阴影、无地面、无地平线";
-const REQUIRED_TPOSE_NEGATIVE_SUFFIX = "手持物，道具，武器，盾牌，法杖，锤子，刀剑，枪械，球，滑板，工具，弯曲手臂，肘部弯曲，肩线倾斜，灰色背景，彩色背景，米白背景，奶油色背景，暖白背景，渐变背景，背景阴影，场景地面，地平线";
+const REQUIRED_TPOSE_SUFFIX = "严格正视标准 T-Pose，单人完整全身，双臂水平伸直，双手完全空置且不拿任何道具，纯白背景 RGB(255,255,255)";
+const REQUIRED_TPOSE_NEGATIVE_SUFFIX = "非T-Pose，A-Pose，V-Pose，手臂下垂，手臂倾斜，弯肘，手持物，道具，武器，非纯白背景，阴影，裁切";
+const MAX_SAVED_POSITIVE_PROMPT = 600;
+const MAX_SAVED_NEGATIVE_PROMPT = 250;
 
 const PROMPT_PLAN_SCHEMA = Type.Object({
   positivePrompt: Type.String({ minLength: 1, maxLength: 4000 }),
@@ -183,25 +185,43 @@ function imageContent(filePath) {
   return { type: "image", data: readFileSync(filePath).toString("base64"), mimeType };
 }
 
-function mergePrompt(original, reviewed, maxLength) {
-  const source = typeof original === "string" ? original.trim() : "";
-  const candidate = typeof reviewed === "string" ? reviewed.trim() : "";
-  const merged = source && candidate && !candidate.includes(source) ? `${source}，${candidate}` : candidate || source;
-  return merged.slice(0, maxLength);
+function stripGeneratedTposePolicy(value) {
+  const text = String(value || "").replace(/\s+/g, " ").trim();
+  const marker = text.search(/(?:QA\s*自动修复第\s*\d+\s*轮|(?:严格正视)?标准\s*T-Pose|\bT-Pose\b|最高优先级\s*[:：]|【最高优先级)/i);
+  return (marker >= 0 ? text.slice(0, marker) : text).replace(/[，,。；;\s]+$/g, "").trim();
+}
+
+function uniquePromptTerms(value) {
+  const seen = new Set();
+  return String(value || "")
+    .split(/[，,。；;\n]+/)
+    .map((item) => item.trim())
+    .filter((item) => item && !seen.has(item) && seen.add(item));
+}
+
+function identityPromptOnly(value) {
+  return uniquePromptTerms(stripGeneratedTposePolicy(value))
+    .filter((item) => !/(?:手持|拿着|握着|持有|携带|背着|武器|盾牌|法杖|匕首|刀剑|枪械|锤子|工具包|道具)/i.test(item))
+    .join("，");
+}
+
+function withRequiredSuffix(value, suffix, maxLength) {
+  const base = stripGeneratedTposePolicy(value);
+  const available = Math.max(0, maxLength - suffix.length - (base ? 1 : 0));
+  const trimmed = base.slice(0, available).replace(/[，,。；;\s]+$/g, "");
+  return `${trimmed}${trimmed ? "，" : ""}${suffix}`;
 }
 
 function normalizePromptPlan(report, candidate) {
-  const originalPositive = candidate.positivePrompt || "";
-  const mergedPositive = mergePrompt(originalPositive, report.positivePrompt, 4000);
-  const missing = REQUIRED_TPOSE_CONSTRAINTS.filter((item) => !item.pattern.test(mergedPositive));
-  const canonicalPolicyMissing = !mergedPositive.includes("RGB(255,255,255)") || !mergedPositive.includes("最高优先级");
-  const suffix = missing.length || canonicalPolicyMissing ? `，${REQUIRED_TPOSE_SUFFIX}` : "";
-  const positivePrompt = `${mergedPositive.slice(0, 4000 - suffix.length)}${suffix}`;
-  const reviewedNegative = mergePrompt(candidate.negativePrompt || "", report.negativePrompt, 2000);
-  const negativeSuffix = reviewedNegative.includes(REQUIRED_TPOSE_NEGATIVE_SUFFIX)
-    ? ""
-    : `${reviewedNegative ? "，" : ""}${REQUIRED_TPOSE_NEGATIVE_SUFFIX}`;
-  const negativePrompt = `${reviewedNegative.slice(0, 2000 - negativeSuffix.length)}${negativeSuffix}`;
+  const reviewedPositive = identityPromptOnly(report.positivePrompt || candidate.positivePrompt || "");
+  const missing = REQUIRED_TPOSE_CONSTRAINTS.filter((item) => !item.pattern.test(reviewedPositive));
+  const canonicalPolicyMissing = !reviewedPositive.includes("RGB(255,255,255)");
+  const positivePrompt = withRequiredSuffix(reviewedPositive, REQUIRED_TPOSE_SUFFIX, MAX_SAVED_POSITIVE_PROMPT);
+  const reviewedNegative = stripGeneratedTposePolicy(report.negativePrompt || candidate.negativePrompt || "");
+  const negativeBase = uniquePromptTerms(reviewedNegative)
+    .filter((item) => !REQUIRED_TPOSE_NEGATIVE_SUFFIX.includes(item))
+    .join("，");
+  const negativePrompt = withRequiredSuffix(negativeBase, REQUIRED_TPOSE_NEGATIVE_SUFFIX, MAX_SAVED_NEGATIVE_PROMPT);
   const issues = [...new Set([
     ...(Array.isArray(report.issues) ? report.issues : []),
     ...missing.map((item) => `缺少“${item.label}”约束，已由 PromptPolicy 自动补齐`),
@@ -211,7 +231,7 @@ function normalizePromptPlan(report, candidate) {
     ...REQUIRED_TPOSE_CONSTRAINTS.map((item) => item.label),
   ])].slice(0, 20);
   const policyNote = missing.length || canonicalPolicyMissing
-    ? ` PromptPolicy 已补齐 ${missing.length} 项缺失约束并写入最高优先级 T-Pose/纯白背景策略。`
+    ? ` PromptPolicy 已补齐精简的 T-Pose、空手和纯白背景约束。`
     : "";
   return {
     ...report,
@@ -225,19 +245,15 @@ function normalizePromptPlan(report, candidate) {
 }
 
 export function buildQaRepairPrompts(run, failureReason, attempt) {
-  const reason = String(failureReason || "T-Pose 质量门禁未通过").trim().slice(0, 900);
-  const repairDirective = [
-    `QA 自动修复第 ${attempt} 轮，失败证据：${reason}`,
-    "本轮必须重新构图，不得沿用上一版姿势或背景",
-    "角色严格正视镜头并呈大写字母 T，绝对不是 A-Pose 或 V-Pose；左手腕、左肘、左肩、右肩、右肘、右手腕六个关节点处于同一水平直线，手腕不得低于或高于肩关节，双臂与躯干形成清晰 90 度夹角，肘部完全伸直",
-    "角色完整全身居中，头顶、手指和双脚四周均有充足留白",
-    "丢弃参考图的原背景并替换为均匀纯白 RGB(255,255,255)，禁止米白、奶油色、暖白、灰色、渐变、投影、地面和地平线",
-    "双手完全空置；删除原描述或参考图中的武器、盾牌、法杖、匕首、工具包及其他手持装备",
-  ].join("。") + "。";
-  const negativeRepair = "非标准T-Pose，A-Pose，V-Pose，手臂下垂，手臂斜向下，手臂斜向上，手腕低于肩膀，手腕高于肩膀，肘部弯曲，肩线倾斜，身体侧转，透视姿势，裁切，贴边，手持物，武器，盾牌，法杖，匕首，工具包，米白背景，奶油色背景，暖白背景，灰色背景，彩色背景，渐变背景，背景阴影，场景地面，地平线";
+  void failureReason;
+  void attempt;
+  const positiveBase = identityPromptOnly(run.positivePrompt);
+  const negativeBase = uniquePromptTerms(stripGeneratedTposePolicy(run.negativePrompt))
+    .filter((item) => !REQUIRED_TPOSE_NEGATIVE_SUFFIX.includes(item))
+    .join("，");
   return {
-    positivePrompt: `${String(run.positivePrompt || "").trim()}，${repairDirective}`.slice(0, 4000),
-    negativePrompt: `${String(run.negativePrompt || "").trim()}${run.negativePrompt ? "，" : ""}${negativeRepair}`.slice(0, 2000),
+    positivePrompt: withRequiredSuffix(positiveBase, REQUIRED_TPOSE_SUFFIX, MAX_SAVED_POSITIVE_PROMPT),
+    negativePrompt: withRequiredSuffix(negativeBase, REQUIRED_TPOSE_NEGATIVE_SUFFIX, MAX_SAVED_NEGATIVE_PROMPT),
   };
 }
 
@@ -758,7 +774,7 @@ export function createAssetAgentRuntime({
       triggerType: "supervisor_prompt_update",
       sourceKey: randomUUID(),
       reportType: "prompt_plan",
-      systemPrompt: `你是 Super Idol Master 的 Art Director。你没有项目写权限，只负责检查并修订角色图生成提示词。\n\n规则：\n1. 保留用户的角色身份、服装、体型、风格和配色，不得擅自改设定。\n2. T-Pose 资产必须强调单人、完整全身、严格正视、双臂水平、肘部伸直、肢体无遮挡、双手完全空置以及纯白无渐变背景；原画中的武器、法杖、工具和运动器材在 T-Pose 阶段必须移除。\n3. 检查正向与负向提示词冲突、缺失约束和不可执行描述。\n4. 在报告中给出可直接用于生成的最终提示词。\n5. 只能通过 submit_prompt_plan 提交报告，不得调用其他能力。`,
+      systemPrompt: `你是 Super Idol Master 的 Art Director。你没有项目写权限，只负责检查并修订角色图生成提示词。\n\n规则：\n1. 保留用户的角色身份、服装、体型、风格和配色，不得擅自改设定。\n2. T-Pose 只需明确：单人完整全身、严格正视、双臂水平伸直、双手完全空置不拿任何道具、纯白背景。\n3. 提示词必须简练，不得写 QA 过程、失败证据或解释，不得重复候选提示词；正向提示词不超过 600 字，负向提示词不超过 300 字。\n4. 检查正向与负向提示词冲突后，给出可直接生成的最终提示词。\n5. 只能通过 submit_prompt_plan 提交报告，不得调用其他能力。`,
       input: {
         run: context,
         candidate: {

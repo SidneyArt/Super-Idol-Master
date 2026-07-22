@@ -80,14 +80,12 @@ class StepFunImageApiTests(unittest.TestCase):
         self.assertLessEqual(len(prompt), MAX_PROMPT_CHARS)
         self.assertTrue(prompt.startswith(TPOSE_POSITIVE_CONSTRAINTS))
         self.assertIn("原始提示补充：", prompt)
-        self.assertIn("左手腕、左肘、左肩、右肩、右肘、右手腕", prompt)
-        self.assertIn("不得低于或高于肩关节", prompt)
-        self.assertIn("不是A-Pose或V-Pose", prompt)
-        self.assertIn("左右手", prompt)
+        self.assertIn("标准T-Pose", prompt)
+        self.assertIn("双臂水平伸直", prompt)
         self.assertIn("完全空置", prompt)
-        self.assertIn("所有手持物", prompt)
+        self.assertIn("不拿任何道具", prompt)
         self.assertIn("RGB(255,255,255)", prompt)
-        self.assertIn("至少12%留白", prompt)
+        self.assertIn("四周留白", prompt)
 
     def test_tpose_source_replaces_connected_cream_background_with_white(self):
         with TemporaryDirectory() as directory:
@@ -203,9 +201,9 @@ class StepFunImageApiTests(unittest.TestCase):
         )
 
         retry_body = session.calls[1][1]["json"]
-        self.assertIn("双臂斜向下", retry_body["negative_prompt"])
-        self.assertIn("手腕低于肩膀", retry_body["negative_prompt"])
-        self.assertIn("米白背景", retry_body["negative_prompt"])
+        self.assertIn("手臂倾斜", retry_body["negative_prompt"])
+        self.assertIn("手持物", retry_body["negative_prompt"])
+        self.assertIn("非纯白背景", retry_body["negative_prompt"])
 
     def test_second_content_block_returns_clear_error_without_more_retries(self):
         blocked = {"error": {"message": "The content you provided or machine outputted is blocked."}}

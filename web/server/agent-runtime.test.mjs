@@ -109,21 +109,26 @@ test("coordinator session deletion removes its timeline metadata without deletin
   db.close();
 });
 
-test("QA repair prompts prioritize exact white background and pose corrections", () => {
+test("QA repair prompts stay concise and replace prior repair text", () => {
   const prompts = buildQaRepairPrompts({
-    positivePrompt: "蓝色王国法师，手持法杖",
-    negativePrompt: "低画质",
+    positivePrompt: "蓝色王国法师，手持法杖，T-Pose，单人全身，QA 自动修复第 1 轮，失败证据：旧错误，双臂不够水平",
+    negativePrompt: "低画质，武器，武器，A-Pose",
   }, "双臂不够水平；背景不是纯白", 2);
 
-  assert.match(prompts.positivePrompt, /第 2 轮/);
+  assert.doesNotMatch(prompts.positivePrompt, /第 [12] 轮|失败证据/);
+  assert.doesNotMatch(prompts.positivePrompt, /法杖/);
   assert.match(prompts.positivePrompt, /RGB\(255,255,255\)/);
-  assert.match(prompts.positivePrompt, /双臂与躯干形成清晰 90 度夹角/);
-  assert.match(prompts.positivePrompt, /左手腕、左肘、左肩、右肩、右肘、右手腕/);
-  assert.match(prompts.positivePrompt, /绝对不是 A-Pose 或 V-Pose/);
-  assert.match(prompts.positivePrompt, /删除.*法杖/);
-  assert.match(prompts.negativePrompt, /米白背景/);
-  assert.match(prompts.negativePrompt, /手腕低于肩膀/);
-  assert.match(prompts.negativePrompt, /肘部弯曲/);
+  assert.match(prompts.positivePrompt, /标准 T-Pose/);
+  assert.match(prompts.positivePrompt, /双手完全空置且不拿任何道具/);
+  assert.equal((prompts.positivePrompt.match(/T-Pose/g) || []).length, 1);
+  assert.match(prompts.negativePrompt, /手持物/);
+  assert.equal((prompts.negativePrompt.match(/武器/g) || []).length, 1);
+  assert.ok(prompts.positivePrompt.length <= 600);
+  assert.ok(prompts.negativePrompt.length <= 250);
+
+  const secondRepair = buildQaRepairPrompts(prompts, "仍未通过", 3);
+  assert.equal(secondRepair.positivePrompt, prompts.positivePrompt);
+  assert.equal(secondRepair.negativePrompt, prompts.negativePrompt);
 });
 
 test("failed T-Pose QA repairs prompts and regenerates instead of blocking", async () => {
@@ -197,7 +202,9 @@ test("failed T-Pose QA repairs prompts and regenerates instead of blocking", asy
   assert.equal(plan.status, "running");
   assert.equal(run.jobStatus, "running");
   assert.match(run.positivePrompt, /RGB\(255,255,255\)/);
-  assert.match(run.negativePrompt, /米白背景/);
+  assert.match(run.positivePrompt, /双手完全空置且不拿任何道具/);
+  assert.doesNotMatch(run.positivePrompt, /法杖/);
+  assert.match(run.negativePrompt, /非纯白背景/);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM run_events WHERE event_type = 'agent_qa_repair_started'").get().count, 1);
   assert.match(runtime.getConversation("run-repair").messages.at(-1).content, /自动修复/);
   db.close();
