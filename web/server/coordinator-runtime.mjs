@@ -111,6 +111,7 @@ export function createCoordinatorRuntime({
   generateCharacterSheet,
   getLatestGeneratedImage,
   getLatestCharacterSheetRequest,
+  getCharacterSheetRequest,
   getLatestTaskBatch,
   getImageModelStatus,
   getPermissionMode,
@@ -608,6 +609,21 @@ ${transcript.slice(-12000)}
     };
   }
 
+  function regenerateCharacterSheet({ workspaceId, sessionId, generationId }) {
+    if (activeAgent) throw new Error("总调度 Agent 正在处理上一条消息");
+    if (!getWorkspaces().some((item) => item.id === workspaceId)) throw new Error("工作空间不存在");
+    const currentSessionId = ensureSession(workspaceId);
+    if (sessionId !== currentSessionId) throw new Error("当前会话已切换，请刷新后重试");
+    const previousRequest = getCharacterSheetRequest?.(workspaceId, sessionId, generationId) || null;
+    if (!previousRequest) throw new Error("未找到可重新生成的合集图设定");
+
+    const userText = `重新生成“${previousRequest.title || "角色合集图"}”，保留这张图的原始角色设定。`;
+    addMessage(workspaceId, "user", userText);
+    const regeneration = regenerateLatestCharacterSheet(workspaceId, sessionId, "直接重新生成一版，保留所选图片的原始角色设定", previousRequest);
+    addMessage(workspaceId, "assistant", regeneration.assistantText);
+    return { ...getConversation(workspaceId), actions: regeneration.actions, workspaces: getWorkspaces() };
+  }
+
   async function run({ workspaceId = null, message, image }) {
     const config = getAgentConfig();
     if (!config.apiKey) throw new Error("总调度 Agent 未配置 API Key");
@@ -695,5 +711,5 @@ ${transcript.slice(-12000)}
     return true;
   }
 
-  return { run, cancel, getMessages, getConversation, startSession, activateSession, deleteSession, status: () => ({ running: Boolean(activeAgent) }) };
+  return { run, regenerateCharacterSheet, cancel, getMessages, getConversation, startSession, activateSession, deleteSession, status: () => ({ running: Boolean(activeAgent) }) };
 }

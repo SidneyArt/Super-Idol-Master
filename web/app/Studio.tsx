@@ -855,6 +855,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [dispatcherSessionBusy, setDispatcherSessionBusy] = useState(false);
   const [dispatcherInput, setDispatcherInput] = useState("");
   const [dispatcherBusy, setDispatcherBusy] = useState(false);
+  const [dispatcherRegeneratingId, setDispatcherRegeneratingId] = useState<string | null>(null);
   const [dispatcherAttachment, setDispatcherAttachment] = useState<AgentAttachment | null>(null);
   const [dispatcherDragging, setDispatcherDragging] = useState(false);
   const [dispatcherGenerations, setDispatcherGenerations] = useState<DispatcherGeneration[]>([]);
@@ -2022,6 +2023,30 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     }
   }
 
+  async function regenerateDispatcherGeneration(generation: DispatcherGeneration) {
+    if (dispatcherBusy || dispatcherRegeneratingId !== null || !selectedWorkspaceId || !dispatcherSessionId) return;
+    const workspaceId = selectedWorkspaceId;
+    const sessionId = dispatcherSessionId;
+    setDispatcherRegeneratingId(generation.id);
+    setError("");
+    try {
+      const data = await api<ConversationPayload & { workspaces: Workspace[] }>(`/api/dispatcher/generations/${encodeURIComponent(generation.id)}/regenerate`, {
+        method: "POST",
+        body: JSON.stringify({ workspaceId, sessionId }),
+      });
+      if (selectedWorkspaceIdRef.current === workspaceId && dispatcherSessionIdRef.current === sessionId) {
+        applyDispatcherConversation(data);
+      }
+      setWorkspaces(data.workspaces);
+      await refreshActivity(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "合集图重新生成失败");
+      await refreshActivity(false).catch(() => undefined);
+    } finally {
+      setDispatcherRegeneratingId(null);
+    }
+  }
+
   async function startDispatcherSession() {
     if (dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId) return;
     setDispatcherSessionBusy(true);
@@ -2600,7 +2625,23 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                       <div className="dispatcher-timeline-card-row" key={`generation-${generation.id}`}>
                         <section className={`dispatcher-generation ${generation.status}`} id={`dispatcher-generation-${generation.id}`}>
                           <header><span><ImageIcon size={16} /></span><div><strong>{generation.title}</strong><small>单张合集图 · {generation.characterCount} 个角色</small></div><em>{generation.status === "running" ? <><LoaderCircle className="spinning" size={13} />生成中</> : generation.status === "succeeded" ? "已完成" : "失败"}</em></header>
-                          {generation.previewPath && <Image src={generation.previewPath} alt={generation.title} width={1024} height={1024} unoptimized />}
+                          {generation.previewPath && (
+                            <div className="dispatcher-generation-preview">
+                              <Image src={generation.previewPath} alt={generation.title} width={1024} height={1024} unoptimized />
+                              {generation.status === "succeeded" && (
+                                <button
+                                  type="button"
+                                  className="dispatcher-generation-regenerate"
+                                  disabled={dispatcherBusy || dispatcherRegeneratingId !== null}
+                                  onClick={() => void regenerateDispatcherGeneration(generation)}
+                                  title="重新生成这张合集图"
+                                  aria-label={`重新生成：${generation.title}`}
+                                >
+                                  {dispatcherRegeneratingId === generation.id ? <LoaderCircle className="spinning" size={17} /> : <RefreshCw size={17} />}
+                                </button>
+                              )}
+                            </div>
+                          )}
                           <p>{generation.message}</p>
                           <details><summary>查看生成要求</summary><p>{generation.prompt}</p></details>
                         </section>

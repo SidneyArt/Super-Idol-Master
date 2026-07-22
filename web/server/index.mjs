@@ -1840,6 +1840,32 @@ function normalizeCharacterSheetRequest(value) {
   };
 }
 
+function getCharacterSheetRequest(workspaceId, sessionId, generationId) {
+  const generation = db.prepare(`
+    SELECT title, character_count AS characterCount, prompt, request_json AS requestJson
+    FROM dispatcher_generations
+    WHERE id = ? AND workspace_id = ? AND session_id = ? AND status = 'succeeded'
+  `).get(generationId, workspaceId, sessionId);
+  if (!generation) return null;
+
+  try {
+    const normalized = normalizeCharacterSheetRequest(JSON.parse(generation.requestJson || "{}"));
+    if (normalized) return normalized;
+  } catch {
+    // Older completed generations may not have structured request data.
+  }
+
+  const characterCount = Math.max(1, Math.min(12, Number(generation.characterCount) || 1));
+  return {
+    title: String(generation.title || "角色合集图").slice(0, 80),
+    characterCount,
+    styleDescription: "保持所选版本的角色身份、统一美术风格与整体设计语言",
+    characterDescriptions: Array.from({ length: characterCount }, (_, index) => `保持所选版本第 ${index + 1} 个角色的身份、服装、配色和职业特征`),
+    additionalPrompt: `所选版本完整生成要求：${String(generation.prompt || "").slice(0, 1900)}`,
+    negativePrompt: "缺少角色，多余角色，角色重复，角色融合，人物重叠，裁切身体，风格不一致，低质量，模糊，文字，水印",
+  };
+}
+
 function getLatestCharacterSheetRequest(workspaceId, sessionId) {
   const generations = db.prepare(`
     SELECT title, character_count AS characterCount, prompt, request_json AS requestJson
@@ -1989,6 +2015,7 @@ const coordinatorAgent = createCoordinatorRuntime({
   generateCharacterSheet: startCharacterSheetGeneration,
   getLatestGeneratedImage: getLatestDispatcherGenerationImage,
   getLatestCharacterSheetRequest,
+  getCharacterSheetRequest,
   getLatestTaskBatch: (workspaceId, sessionId) => listDispatcherTaskBatches(workspaceId, sessionId)[0] || null,
   delegateTask: (runId, target) => delegateCoordinatorTask(runId, target),
   getImageModelStatus: () => {
@@ -2254,6 +2281,15 @@ const server = createServer(async (req, res) => {
       const sessionId = url.searchParams.get("sessionId") || "";
       if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
       json(res, 200, { generations: listDispatcherGenerations(workspaceId, sessionId) });
+      return;
+    }
+    if (req.method === "POST" && parts[0] === "api" && parts[1] === "dispatcher" && parts[2] === "generations" && parts[3] && parts[4] === "regenerate") {
+      const body = await readBody(req);
+      json(res, 200, coordinatorAgent.regenerateCharacterSheet({
+        workspaceId: cleanText(body.workspaceId, 80, "工作空间 ID", true),
+        sessionId: cleanText(body.sessionId, 80, "会话 ID", true),
+        generationId: cleanText(decodeURIComponent(parts[3]), 80, "生成任务 ID", true),
+      }));
       return;
     }
     if (req.method === "GET" && url.pathname === "/api/dispatcher/task-batches") {

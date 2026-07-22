@@ -95,6 +95,57 @@ test("coordinator session deletion removes its timeline metadata without deletin
   db.close();
 });
 
+test("coordinator regenerates the selected character sheet with its saved request", () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE workspaces (id TEXT PRIMARY KEY); INSERT INTO workspaces (id) VALUES ('workspace-1')");
+  let generated = null;
+  const runtime = createCoordinatorRuntime({
+    db,
+    getAgentConfig: () => ({ apiKey: "", model: "step-3.7-flash" }),
+    getWorkspaces: () => [{ id: "workspace-1", name: "测试空间" }],
+    createWorkspace: () => {},
+    createCharacterTasks: () => {},
+    delegateTask: () => {},
+    generateCharacterSheet: (params) => {
+      generated = params;
+      return { id: "regenerated-1" };
+    },
+    getLatestGeneratedImage: () => null,
+    getLatestCharacterSheetRequest: () => null,
+    getCharacterSheetRequest: (workspaceId, sessionId, generationId) => {
+      assert.equal(workspaceId, "workspace-1");
+      assert.equal(generationId, "generation-older");
+      assert.ok(sessionId);
+      return {
+        title: "三人骑士合集",
+        characterCount: 3,
+        styleDescription: "统一卡通风格",
+        characterDescriptions: ["蓝甲骑士", "森林游侠", "白甲骑士"],
+        additionalPrompt: "三人横向排列",
+        negativePrompt: "角色重复",
+      };
+    },
+    getLatestTaskBatch: () => null,
+    getImageModelStatus: () => ({}),
+    getPermissionMode: () => "auto",
+    requestApproval: () => {},
+  });
+  const initial = runtime.getConversation("workspace-1");
+
+  const result = runtime.regenerateCharacterSheet({
+    workspaceId: "workspace-1",
+    sessionId: initial.sessionId,
+    generationId: "generation-older",
+  });
+
+  assert.equal(generated.characterCount, 3);
+  assert.deepEqual(generated.characterDescriptions, ["蓝甲骑士", "森林游侠", "白甲骑士"]);
+  assert.match(generated.styleDescription, /统一卡通风格/);
+  assert.deepEqual(result.messages.map((message) => message.role), ["user", "assistant"]);
+  assert.match(result.messages[1].content, /regenerated-1/);
+  db.close();
+});
+
 test("visual QA cannot pass when its own summary identifies held weapons", () => {
   const report = normalizeVisualQaReport({
     assetKind: "humanoid",
