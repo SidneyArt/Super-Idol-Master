@@ -1,8 +1,14 @@
-# Super Idol Master：数字偶像资产管家
+# Super Idol Master：多智能体数字角色资产生产线
 
-Super Idol Master 是一套运行在 Windows 本地控制台与 NVIDIA DGX 生成节点之间的角色资产生产系统。首页以工作空间组织不同项目和任务，并提供总调度 Agent；用户可以从角色描述、单体原画或多角色合集原画开始，把角色持续推进为通过质检的 T-Pose、静态 3D 模型和带骨骼 GLB。
+> 第二届 **NVIDIA DGX Spark Hackathon 十日黑客松**参赛作品
 
-系统同时接入 StepFun 云端模型，以及自部署的 Qwen Image、SDPose、Pixal3D、AutoRemesher 和 SkinTokens 服务，并以状态机、质量门禁和产物校验约束自动化过程。
+![多智能体数字角色资产生产线](docs/assets/multi-agent-character-asset-pipeline.png)
+
+Super Idol Master 是一套端到端数字角色资产生产系统。用户可以从角色描述、单体原画或多角色合集原画开始，持续生成通过质量检查的 T-Pose 原画、静态 3D 模型和带骨骼 GLB 资产。
+
+系统以 **Pi** 作为智能体运行时与模型适配层，接入 **StepFun step-3.7-flash** 模型，并结合自研状态机、质量门禁和持久化机制，构建受控、可恢复的多智能体闭环。系统共包含九种逻辑角色：由 `Coordinator` 负责跨任务调度，`Supervisor` 负责任务流程编排，并协同七个专业 Agent 完成规划、质检、反馈与自动修复。
+
+项目以 **NVIDIA DGX Spark** 作为核心本地算力底座，将部分 2D 资源生成以及 3D 模型生成、自动拓扑和骨骼绑定等 GPU 重计算任务部署在本地。系统能够根据专业 Agent 的评审结果与确定性质量门禁，自主判断流程应该继续、重试、回退还是修复，最终形成一条可持续推进、可自动质检、可从中断与异常中恢复的数字角色资产生产线。
 
 ## 核心能力
 
