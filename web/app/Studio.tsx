@@ -1252,9 +1252,15 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
 
   useEffect(() => {
     if (!toastNotification) return;
-    const timer = window.setTimeout(() => setToastQueue((items) => items.slice(1)), 8000);
+    const timer = window.setTimeout(() => setToastQueue((items) => items.slice(1)), 10000);
     return () => window.clearTimeout(timer);
   }, [toastNotification]);
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = window.setTimeout(() => setError(""), 10000);
+    return () => window.clearTimeout(timer);
+  }, [error]);
 
   useEffect(() => {
     if (!showNotifications) return;
@@ -1307,6 +1313,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const selectedPlanIsRunning = selectedDetail?.agentWorkflowPlan?.status === "running";
   const agentOperationalBusy = agentBusy || selectedRoleIsRunning || selectedPlanIsRunning;
 
+  // 轮询快照:用 JSON 指纹比较新旧数据,内容相同则跳过 setState,避免无意义重渲染。
+  // 仅记录与重渲染相关的字段,排除 updatedAt / createdAt / previewPath 缓存参数。
+  const pollSnapshotRef = useRef({ runs: "", detail: "", messages: "" });
   useEffect(() => {
     if (!hasRunningTask && !selectedRoleIsRunning && !selectedPlanIsRunning) return;
     const timer = window.setInterval(() => {
@@ -1320,15 +1329,68 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         : Promise.resolve(null);
       void Promise.all([api<{ runs: Run[] }>("/api/runs"), detailRequest, messagesRequest])
         .then(([runData, detailData, messagesData]) => {
-          setRuns(runData.runs);
+          // runs 指纹:只比较 UI 展示相关的字段,忽略 updatedAt / createdAt。
+          const runsFingerprint = JSON.stringify(runData.runs.map((item) => [
+            item.id,
+            item.status,
+            item.currentStage,
+            item.jobStatus,
+            item.jobProgress,
+            item.jobMessage,
+            item.jobPromptId,
+            item.jobCurrentNode,
+            item.qaStatus,
+            item.qaScore,
+            item.qaSummary,
+            item.positivePrompt,
+            item.negativePrompt,
+          ]));
+          if (runsFingerprint !== pollSnapshotRef.current.runs) {
+            pollSnapshotRef.current.runs = runsFingerprint;
+            setRuns(runData.runs);
+          }
           if (requestedRunId !== selectedIdRef.current) return;
-          if (messagesData) applyTaskConversation(messagesData);
+          if (messagesData) {
+            const messagesFingerprint = JSON.stringify([
+              messagesData.sessionId,
+              messagesData.context?.usagePercent ?? 0,
+              messagesData.messages.map((m) => [m.id, m.role, m.content, m.attachmentName ?? ""]),
+              messagesData.sessions.map((s) => [s.id, s.title, s.messageCount, s.isCurrent]),
+            ]);
+            if (messagesFingerprint !== pollSnapshotRef.current.messages) {
+              pollSnapshotRef.current.messages = messagesFingerprint;
+              applyTaskConversation(messagesData);
+            }
+          }
           if (!detailData) return;
-          setDetail(detailData);
-          setViewStage(detailData.run.currentStage);
+          const detailFingerprint = JSON.stringify([
+            detailData.run.id,
+            detailData.run.status,
+            detailData.run.currentStage,
+            detailData.run.jobStatus,
+            detailData.run.jobProgress,
+            detailData.run.jobMessage,
+            detailData.run.qaStatus,
+            detailData.run.qaScore,
+            detailData.run.qaSummary,
+            detailData.run.positivePrompt,
+            detailData.run.negativePrompt,
+            detailData.run.previewPath,
+            detailData.run.qaOverlayPath,
+            detailData.events.length,
+            detailData.events[detailData.events.length - 1]?.id ?? 0,
+            detailData.agentWorkflowPlan?.status ?? "idle",
+            detailData.agentWorkflowPlan?.message ?? "",
+            (detailData.agentRoleRuns ?? []).map((r) => [r.id, r.status, r.reportType, r.errorMessage]),
+          ]);
+          if (detailFingerprint !== pollSnapshotRef.current.detail) {
+            pollSnapshotRef.current.detail = detailFingerprint;
+            setDetail(detailData);
+            setViewStage(detailData.run.currentStage);
+          }
         })
         .catch((reason) => setError(reason instanceof Error ? reason.message : "DGX 状态读取失败"));
-    }, 1000);
+    }, 2500);
     return () => window.clearInterval(timer);
   }, [hasRunningTask, selectedId, selectedPlanIsRunning, selectedRoleIsRunning, selectedTaskIsRunning]);
 
@@ -1338,7 +1400,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     && item.workspaceId === selectedWorkspaceId
     && item.sessionId === dispatcherSessionId
   ));
-  const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
+  const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id && item.status === "pending");
   const dispatcherTimeline = buildDispatcherTimeline(dispatcherMessages, dispatcherGenerations, coordinatorApprovals, dispatcherTaskBatches);
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
 
@@ -1540,16 +1602,12 @@ ${qaFeedbackLines.join("\n")}
       tone: "danger",
       action: async () => {
         setBusy(true);
+        setError("");
         try {
           await api(`/api/runs/${runId}`, { method: "DELETE" });
-          // Clear local state so the task screen doesn't keep an empty shell.
-          selectRun(null);
-          setDetail(null);
-          clearTaskConversation();
-          setError("");
-          // refreshRuns() updates the runs list and the cleanup effect above
-          // will swap the screen back to home once the deleted run drops out.
-          await refreshRuns();
+          // 删除成功后立即跳转到首页，避免页面停留在已删除项目中。
+          openHome();
+          return;
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : "删除失败");
         } finally {
