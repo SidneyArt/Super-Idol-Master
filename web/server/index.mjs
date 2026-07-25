@@ -20,7 +20,7 @@ import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { loadEnvFile } from "node:process";
-import { createAssetAgentRuntime } from "./agent-runtime.mjs";
+import { createAssetAgentRuntime, imageContent } from "./agent-runtime.mjs";
 import { createApprovalRuntime } from "./approval-runtime.mjs";
 import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
 import { jobStartMessage } from "./job-messages.mjs";
@@ -72,6 +72,15 @@ mkdirSync(dataDir, { recursive: true });
 mkdirSync(generatedDir, { recursive: true });
 mkdirSync(runtimeWorkflowDir, { recursive: true });
 mkdirSync(animationDir, { recursive: true });
+
+// Hard cap for a single source-image payload. Mirrors the 12 MB limit enforced
+// in the Studio UI (`readImage(file, 12 * 1024 * 1024, ...)`); the create-run
+// handler below also reads it before persisting.
+const SOURCE_IMAGE_MAX_BYTES = 12 * 1024 * 1024;
+// Base64 inflates binary payloads by ~4/3, so a 12 MB image can produce a
+// ~16 MB string. Add headroom for the JSON wrapper, mimeType, file name and
+// the rest of the request body before we hit the request body cap.
+const CREATE_RUN_BODY_MAX_BYTES = Math.ceil(SOURCE_IMAGE_MAX_BYTES * 4 / 3) + 2 * 1024 * 1024;
 
 const db = new DatabaseSync(dbPath);
 db.exec("PRAGMA journal_mode = WAL");
@@ -464,8 +473,13 @@ function revertRun(runId, targetStage) {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
   if (activeJobs.has(runId) || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能回退");
-  if (!Number.isInteger(targetStage) || targetStage < 0 || targetStage >= run.currentStage) {
-    throw new Error("只能回退到当前阶段之前的已完成阶段");
+  if (!Number.isInteger(targetStage)) throw new Error("回退阶段必须是整数");
+  if (targetStage < 0) throw new Error("回退阶段不能小于 0");
+  if (targetStage >= run.currentStage) throw new Error("只能回退到当前阶段之前的已完成阶段");
+  if (run.pipelineType === "image_to_model" && targetStage === 0 && run.sourceImagePathInternal) {
+    // Image-to-model runs require the source image as the stage-0 anchor; if
+    // it has been removed, refuse to silently drop into a frozen stage 0.
+    if (!existsSync(run.sourceImagePathInternal)) throw new Error("角色原画文件已丢失，请重新创建任务");
   }
 
   const now = new Date().toISOString();
@@ -636,12 +650,25 @@ function setCors(req, res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / (1024 ** 2)).toFixed(1)} MB`;
+  return `${(bytes / (1024 ** 3)).toFixed(1)} GB`;
+}
+
 async function readBody(req, maxBytes = 1_000_000) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > maxBytes) throw new Error("请求内容过大");
+    if (size > maxBytes) {
+      const detail = maxBytes >= 1024 * 1024
+        ? `请求内容不能超过 ${formatBytes(maxBytes)}（约 ${formatBytes(Math.max(0, maxBytes - size + chunk.length))} 可用，已超过上限）`
+        : `请求内容不能超过 ${formatBytes(maxBytes)}`;
+      throw new Error(detail);
+    }
     chunks.push(chunk);
   }
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
@@ -842,7 +869,7 @@ function saveSourceImage(image, prefix = randomUUID()) {
   const raw = typeof image.data === "string" ? image.data.replace(/^data:[^;]+;base64,/, "") : "";
   if (!raw || !/^[a-zA-Z0-9+/=\r\n]+$/.test(raw)) throw new Error("原画数据无效");
   const data = Buffer.from(raw, "base64");
-  if (!data.length || data.length > 12 * 1024 * 1024) throw new Error("原画不能超过 12 MB");
+  if (!data.length || data.length > SOURCE_IMAGE_MAX_BYTES) throw new Error(`原画不能超过 ${formatBytes(SOURCE_IMAGE_MAX_BYTES)}`);
   const isPng = data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   const isJpeg = data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
   const isWebp = data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
@@ -1347,6 +1374,7 @@ function workflowClasses(graph) {
 }
 
 const workspaceAssetDefinitions = {
+  source: { column: "sourceImagePathInternal", group: "2d", label: "原始原画", downloadKind: "source", rigged: false },
   image: { column: "imagePathInternal", group: "2d", label: "2D 概念图", downloadKind: "image", rigged: false },
   model: { column: "modelPathInternal", group: "3d", label: "静态 GLB", downloadKind: "model", rigged: false },
   topology: { column: "topologyPathInternal", group: "3d", label: "拓扑 GLB", downloadKind: "topology", rigged: false },
@@ -1354,6 +1382,7 @@ const workspaceAssetDefinitions = {
 };
 
 const workspaceAssetCascade = {
+  source: ["source", "image", "model", "topology", "rigged"],
   image: ["image", "model", "topology", "rigged"],
   model: ["model", "topology", "rigged"],
   topology: ["topology", "rigged"],
@@ -1376,7 +1405,7 @@ function listWorkspaceAssets(workspaceId) {
       group: definition.group,
       label: definition.label,
       downloadUrl: `/api/runs/${row.id}/download/${definition.downloadKind}`,
-      previewUrl: kind === "image" ? `/api/runs/${row.id}/preview/image` : `/api/runs/${row.id}/download/${definition.downloadKind}`,
+      previewUrl: definition.group === "3d" ? `/api/runs/${row.id}/download/${definition.downloadKind}` : `/api/runs/${row.id}/preview/${definition.downloadKind}`,
       filename: basename(filePath),
       size: file.size,
       createdAt: file.mtime.toISOString(),
@@ -1416,13 +1445,25 @@ function deleteWorkspaceAsset(workspaceId, runId, kind) {
     const definition = workspaceAssetDefinitions[cascadeKind];
     deleteControlledAssetFile(run[definition.column]);
   }
+  if (kind === "source") {
+    deleteControlledAssetFile(generatedFileFromPreviewUrl(run.sourcePreviewPath));
+  }
   if (kind === "image") {
     deleteControlledAssetFile(generatedFileFromPreviewUrl(run.previewPath));
     deleteControlledAssetFile(generatedFileFromPreviewUrl(run.qaOverlayPath));
   }
 
   const now = new Date().toISOString();
-  if (kind === "image") {
+  if (kind === "source") {
+    db.prepare(`
+      UPDATE runs SET current_stage = 0, status = 'active',
+        source_image_path = NULL, source_preview_path = NULL,
+        image_path = NULL, preview_path = NULL, model_path = NULL, topology_path = NULL, rigged_model_path = NULL,
+        qa_status = 'pending', qa_score = NULL, qa_summary = '', qa_metrics = '{}', qa_overlay_path = NULL,
+        job_type = 'none', generation_status = 'idle', generation_message = '', generation_progress = 0,
+        generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ? WHERE id = ?
+    `).run(now, runId);
+  } else if (kind === "image") {
     db.prepare(`
       UPDATE runs SET current_stage = MIN(current_stage, 1), status = 'active',
         image_path = NULL, preview_path = NULL, model_path = NULL, topology_path = NULL, rigged_model_path = NULL,
@@ -1451,7 +1492,7 @@ function deleteWorkspaceAsset(workspaceId, runId, kind) {
         generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ? WHERE id = ?
     `).run(now, runId);
   }
-  addEvent(runId, "asset_deleted", Math.min(run.currentStage, { image: 1, model: 3, topology: 4, rigged: 5 }[kind]), `从资产库删除 ${workspaceAssetDefinitions[kind].label}`, now);
+  addEvent(runId, "asset_deleted", Math.min(run.currentStage, { source: 0, image: 1, model: 3, topology: 4, rigged: 5 }[kind]), `从资产库删除 ${workspaceAssetDefinitions[kind].label}`, now);
   return { ok: true, deletedKinds: cascadeKinds, assets: listWorkspaceAssets(workspaceId) };
 }
 
@@ -2482,7 +2523,10 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (req.method === "POST" && url.pathname === "/api/runs") {
-      const body = await readBody(req);
+      // The image-to-model workflow uploads a base64-encoded source art that
+      // can inflate to ~16 MB; bump the body cap to CREATE_RUN_BODY_MAX_BYTES
+      // so the legacy 1 MB default does not reject legitimate uploads.
+      const body = await readBody(req, CREATE_RUN_BODY_MAX_BYTES);
       json(res, 201, createRunRecord(body));
       return;
     }
@@ -2530,15 +2574,19 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "POST" && parts[3] === "start") {
         const body = await readBody(req);
-        let input = body;
+        // Art Director 只生成检查报告（保存到 agent_role_runs），不再自动用修订后的提示词覆盖用户输入。
+        // 用户原始的正向/负向提示词直接进入 confirmCharacterIdea，由用户自己决定是否采纳 Art Director 的建议。
         if (assetAgent.status().configured) {
-          const prepared = await assetAgent.prepareCharacterPrompts(id, body, "确认角色设定前检查提示词");
-          input = {
-            positivePrompt: prepared.promptPlan.positivePrompt,
-            negativePrompt: prepared.promptPlan.negativePrompt,
-          };
+          const referenceImage = existing.pipelineType === "image_to_model" && existing.sourceImagePathInternal && existsSync(existing.sourceImagePathInternal)
+            ? imageContent(existing.sourceImagePathInternal)
+            : null;
+          try {
+            await assetAgent.reviewPromptsOnly(id, body, "确认角色设定前检查提示词", referenceImage);
+          } catch (reviewError) {
+            console.warn("[art-director] 检查提示词失败，已忽略：", reviewError?.message || reviewError);
+          }
         }
-        json(res, 200, { ...confirmCharacterIdea(id, input), agentRoleRuns: assetAgent.getRoleRuns(id) });
+        json(res, 200, { ...confirmCharacterIdea(id, body), agentRoleRuns: assetAgent.getRoleRuns(id) });
         return;
       }
       if (req.method === "POST" && parts[3] === "generate-2d") {
@@ -2572,6 +2620,7 @@ const server = createServer(async (req, res) => {
       }
       if (req.method === "GET" && parts[3] === "preview" && parts[4]) {
         const paths = {
+          source: existing.sourceImagePathInternal,
           image: existing.imagePathInternal,
           model: existing.modelPathInternal,
           topology: existing.topologyPathInternal,

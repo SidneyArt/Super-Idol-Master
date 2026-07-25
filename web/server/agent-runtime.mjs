@@ -185,6 +185,8 @@ function imageContent(filePath) {
   return { type: "image", data: readFileSync(filePath).toString("base64"), mimeType };
 }
 
+export { imageContent };
+
 function stripGeneratedTposePolicy(value) {
   const text = String(value || "").replace(/\s+/g, " ").trim();
   const marker = text.search(/(?:QA\s*自动修复第\s*\d+\s*轮|(?:严格正视)?标准\s*T-Pose|\bT-Pose\b|最高优先级\s*[:：]|【最高优先级)/i);
@@ -766,7 +768,7 @@ export function createAssetAgentRuntime({
     }
   }
 
-  async function reviewPrompts(runId, candidate, reason) {
+  async function reviewPrompts(runId, candidate, reason, image = null) {
     const context = compactRunContext(getRunDetail(runId));
     return runStructuredRole({
       runId,
@@ -790,16 +792,27 @@ export function createAssetAgentRuntime({
         positivePrompt: candidate.positivePrompt ?? context.positivePrompt,
         negativePrompt: candidate.negativePrompt ?? context.negativePrompt,
       }),
+      image,
+      images: image ? [image] : null,
     });
   }
 
-  async function prepareCharacterPrompts(runId, candidate, reason = "Art Director 检查角色提示词") {
-    const promptPlan = await reviewPrompts(runId, candidate, reason);
+  async function prepareCharacterPrompts(runId, candidate, reason = "Art Director 检查角色提示词", image = null) {
+    const promptPlan = await reviewPrompts(runId, candidate, reason, image);
     const detail = updatePrompts(runId, {
       positivePrompt: promptPlan.positivePrompt,
       negativePrompt: promptPlan.negativePrompt,
       reason,
     });
+    addRunEvent(runId, "art_director_completed", detail.run.currentStage, `Art Director：${promptPlan.summary}`);
+    return { promptPlan, detail };
+  }
+
+  // 只调用 Art Director 生成检查报告（保存到 agent_role_runs），不修改 run 表中的提示词。
+  // 用于"确认角色设定"时让用户保留对正负提示词的控制权。
+  async function reviewPromptsOnly(runId, candidate, reason = "Art Director 检查角色提示词", image = null) {
+    const promptPlan = await reviewPrompts(runId, candidate, reason, image);
+    const detail = getRunDetail(runId);
     addRunEvent(runId, "art_director_completed", detail.run.currentStage, `Art Director：${promptPlan.summary}`);
     return { promptPlan, detail };
   }
@@ -1715,6 +1728,7 @@ export function createAssetAgentRuntime({
     handleJobCompleted,
     handleJobFailed,
     prepareCharacterPrompts,
+    reviewPromptsOnly,
     isBusy: (runId) => activeAgents.has(runId)
       || drivingPlans.has(runId)
       || [...activeRoleRuns].some((key) => key.startsWith(`${runId}:`)),

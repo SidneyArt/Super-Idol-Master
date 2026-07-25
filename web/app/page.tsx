@@ -20,17 +20,30 @@ export default async function Page({ searchParams }: PageProps) {
   let initialRuns: Run[] = [];
   let initialWorkspaces: Workspace[] = [];
 
-  if (initialRunId) {
-    try {
-      const [runsResponse, workspacesResponse] = await Promise.all([
-        fetch(`${API_BASE}/api/runs`, { cache: "no-store" }),
-        fetch(`${API_BASE}/api/workspaces`, { cache: "no-store" }),
-      ]);
-      if (runsResponse.ok) initialRuns = (await runsResponse.json() as { runs: Run[] }).runs;
-      if (workspacesResponse.ok) initialWorkspaces = (await workspacesResponse.json() as { workspaces: Workspace[] }).workspaces;
-    } catch {
-      // The client performs the same requests and shows the normal connection error if the backend is unavailable.
-    }
+  try {
+    const [runsResponse, workspacesResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/runs`, { cache: "no-store" }),
+      fetch(`${API_BASE}/api/workspaces`, { cache: "no-store" }),
+    ]);
+    if (runsResponse.ok) initialRuns = (await runsResponse.json() as { runs: Run[] }).runs;
+    if (workspacesResponse.ok) initialWorkspaces = (await workspacesResponse.json() as { workspaces: Workspace[] }).workspaces;
+  } catch {
+    // The client performs the same requests and shows the normal connection error if the backend is unavailable.
+  }
+
+  // Drop any task ID that is no longer in the run list (e.g.: a deleted task
+  // revisited via a stale URL).  Passing null here lets the Studio component
+  // land on the home screen instead of a "任务不存在" stub.
+  if (initialRunId && !initialRuns.find((run) => run.id === initialRunId)) {
+    return (
+      <Studio
+        initialRunId={null}
+        initialWorkspaceId={initialWorkspaceId || null}
+        initialNotificationId={initialNotificationId}
+        initialRuns={initialRuns}
+        initialWorkspaces={initialWorkspaces}
+      />
+    );
   }
 
   return (

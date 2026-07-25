@@ -41,7 +41,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, PointerEvent as ReactPointerEvent, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, PointerEvent as ReactPointerEvent, Suspense, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -165,7 +165,7 @@ export type Workspace = {
   createdAt: string;
   updatedAt: string;
 };
-type WorkspaceAssetKind = "image" | "model" | "topology" | "rigged";
+type WorkspaceAssetKind = "source" | "image" | "model" | "topology" | "rigged";
 type WorkspaceAssetFilter = "all" | "2d" | "3d" | WorkspaceAssetKind;
 type WorkspaceAsset = {
   id: string;
@@ -552,12 +552,37 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function formatTime(value: string) {
+  // Always render in UTC so the server-rendered HTML matches the client even
+  // when the browser runs in a different timezone. Callers that need the
+  // user's local time wrap this with <LocalTime> to upgrade after mount.
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "UTC",
+  }).format(new Date(value));
+}
+
+function formatLocalTime(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+function LocalTime({ value }: { value: string }) {
+  // SSR renders the UTC text (deterministic across server/client zones).
+  // After hydration we upgrade to the user's local timezone via a passive
+  // subscription that fires once on first client subscribe.
+  const isClient = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+  return <>{isClient ? formatLocalTime(value) : formatTime(value)}</>;
 }
 
 function formatMemory(value: number | null | undefined) {
@@ -578,10 +603,11 @@ function workspaceAssetsFromRuns(items: Run[], workspaceId: string): WorkspaceAs
   const definitions: Array<{
     kind: WorkspaceAssetKind;
     label: string;
-    ready: keyof Pick<Assets, "imageReady" | "modelReady" | "topologyReady" | "riggedReady">;
-    download: keyof Pick<Assets, "imageDownloadUrl" | "modelDownloadUrl" | "topologyDownloadUrl" | "riggedDownloadUrl">;
+    ready: keyof Pick<Assets, "sourceImageReady" | "imageReady" | "modelReady" | "topologyReady" | "riggedReady">;
+    download: keyof Pick<Assets, "sourceImageDownloadUrl" | "imageDownloadUrl" | "modelDownloadUrl" | "topologyDownloadUrl" | "riggedDownloadUrl">;
     rigged: boolean;
   }> = [
+    { kind: "source", label: "原始原画", ready: "sourceImageReady", download: "sourceImageDownloadUrl", rigged: false },
     { kind: "image", label: "2D 概念图", ready: "imageReady", download: "imageDownloadUrl", rigged: false },
     { kind: "model", label: "静态 GLB", ready: "modelReady", download: "modelDownloadUrl", rigged: false },
     { kind: "topology", label: "拓扑 GLB", ready: "topologyReady", download: "topologyDownloadUrl", rigged: false },
@@ -590,7 +616,7 @@ function workspaceAssetsFromRuns(items: Run[], workspaceId: string): WorkspaceAs
   return items.filter((run) => run.workspaceId === workspaceId).flatMap((run) => definitions.flatMap((definition) => {
     const downloadUrl = run.assets[definition.download];
     if (!run.assets[definition.ready] || !downloadUrl) return [];
-    const group = definition.kind === "image" ? "2d" : "3d";
+    const group = definition.kind === "source" || definition.kind === "image" ? "2d" : "3d";
     return [{
       id: `${run.id}:${definition.kind}`,
       workspaceId,
@@ -600,8 +626,12 @@ function workspaceAssetsFromRuns(items: Run[], workspaceId: string): WorkspaceAs
       group,
       label: definition.label,
       downloadUrl,
-      previewUrl: definition.kind === "image" && run.previewPath ? run.previewPath : downloadUrl,
-      filename: `${run.name}.${definition.kind === "image" ? "png" : "glb"}`,
+      previewUrl: definition.kind === "source" && run.sourcePreviewPath
+        ? run.sourcePreviewPath
+        : definition.kind === "image" && run.previewPath
+          ? run.previewPath
+          : downloadUrl,
+      filename: `${run.name}.${definition.kind === "source" || definition.kind === "image" ? "png" : "glb"}`,
       size: null,
       createdAt: run.updatedAt,
       rigged: definition.rigged,
@@ -698,6 +728,7 @@ function formatSessionTime(value: string) {
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "UTC",
   }).format(date);
 }
 
@@ -798,9 +829,15 @@ type StudioProps = {
 };
 
 export default function Studio({ initialRunId, initialWorkspaceId: requestedWorkspaceId, initialNotificationId, initialRuns, initialWorkspaces }: StudioProps) {
-  const screen: "home" | "task" = initialRunId ? "task" : "home";
+  // If the SSR-provided task ID doesn't exist in the SSR-fetched run list,
+  // drop it instead of landing on an empty task screen. This covers deleted
+  // tasks visited via a stale URL.
   const initialRun = initialRuns.find((item) => item.id === initialRunId);
-  const startingWorkspaceId = initialRun?.workspaceId
+  const safeInitialRunId = initialRun ? initialRunId : null;
+  const [activeRunId, setActiveRunId] = useState<string | null>(safeInitialRunId);
+  const screen: "home" | "task" = activeRunId ? "task" : "home";
+  const initialRunResolved = initialRuns.find((item) => item.id === activeRunId);
+  const startingWorkspaceId = initialRunResolved?.workspaceId
     || requestedWorkspaceId
     || initialWorkspaces.find((item) => item.id === "default")?.id
     || initialWorkspaces[0]?.id
@@ -809,7 +846,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(startingWorkspaceId);
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set(["default"]));
   const [runs, setRuns] = useState<Run[]>(initialRuns);
-  const [selectedId, setSelectedId] = useState<string | null>(initialRunId);
+  // selectedId tracks the active task. It mirrors activeRunId (which drives the
+  // home/task screen switch) so deleting the current run takes the user back
+  // to the workspace home instead of leaving them on a "任务不存在" stub.
+  const selectedId = activeRunId;
+  const setSelectedId = setActiveRunId;
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [viewStage, setViewStage] = useState(0);
   const [system, setSystem] = useState<SystemState | null>(null);
@@ -884,6 +925,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     positivePrompt: DEFAULT_POSITIVE_PROMPT,
     negativePrompt: DEFAULT_NEGATIVE_PROMPT,
   });
+  const [showAllEvents, setShowAllEvents] = useState(false);
   const agentDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const dispatcherSessionIdRef = useRef("");
   const agentQueueRef = useRef<AgentQueueItem[]>([]);
@@ -913,9 +955,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }
 
   function selectTask(run: Run) {
-    window.history.replaceState(null, "", `/?task=${encodeURIComponent(run.id)}`);
     selectWorkspace(run.workspaceId);
     selectRun(run.id);
+    window.requestAnimationFrame(() => window.history.replaceState(null, "", `/?task=${encodeURIComponent(run.id)}`));
   }
 
   useEffect(() => {
@@ -927,7 +969,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }, [selectedWorkspaceId]);
 
   function selectRun(runId: string | null) {
-    if (selectedIdRef.current !== runId) clearTaskConversation();
+    if (selectedIdRef.current !== runId) { clearTaskConversation(); setShowAllEvents(false); }
     selectedIdRef.current = runId;
     setSelectedId(runId);
   }
@@ -1031,6 +1073,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
 
   function requestDeleteWorkspaceAsset(asset: WorkspaceAsset) {
     const dependencyText = {
+      source: "删除原始原画会清空任务及其下游所有产物。",
       image: "删除概念图也会删除由它生成的静态模型、拓扑模型和绑定模型。",
       model: "删除静态模型也会删除由它生成的拓扑模型和绑定模型。",
       topology: "删除拓扑模型也会删除由它生成的绑定模型。",
@@ -1042,17 +1085,17 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       confirmLabel: "删除资产",
       tone: "danger",
       action: async () => {
+        setBusy(true);
+        setError("");
         try {
-          const data = await api<{ assets: WorkspaceAsset[] }>(`/api/workspaces/${encodeURIComponent(asset.workspaceId)}/assets/${encodeURIComponent(asset.runId)}/${asset.kind}`, { method: "DELETE" });
-          setWorkspaceAssets(data.assets);
-          setSelectedWorkspaceAssetId((current) => current === asset.id ? data.assets[0]?.id || null : current);
-          const [runData] = await Promise.all([
-            api<{ runs: Run[] }>("/api/runs"),
-            refreshWorkspaces(asset.workspaceId),
-          ]);
-          setRuns(runData.runs);
+          await api<{ workspaces: Workspace[] }>(`/api/workspaces/${encodeURIComponent(workspace.id)}`, { method: "DELETE" });
+          // 无论删除的是否为当前工作空间，都立即跳转到首页，避免页面停留在已删除项目中。
+          openHome();
+          return;
         } catch (reason) {
-          setError(reason instanceof Error ? reason.message : "资产删除失败");
+          setError(reason instanceof Error ? reason.message : "工作空间删除失败");
+        } finally {
+          setBusy(false);
         }
       },
     });
@@ -1151,7 +1194,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         selectedWorkspaceIdRef.current = nextWorkspaceId;
         selectedIdRef.current = nextRunId;
         setSelectedWorkspaceId(nextWorkspaceId);
-        setSelectedId(nextRunId);
+        setActiveRunId(nextRunId);
         setSettings(settingsData);
       } catch (reason) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "无法连接本地后端");
@@ -1170,7 +1213,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [initialRunId, requestedWorkspaceId]);
+  }, [initialRunId, requestedWorkspaceId, setActiveRunId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1424,6 +1467,57 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     }
   }
 
+  async function optimizePromptFromQA() {
+    if (!run || busy || agentBusy) return;
+    if (run.qaStatus !== "failed") return;
+    if (system?.agent.configured === false) {
+      setError("Asset Agent 未配置 API Key，无法智能优化提示词");
+      return;
+    }
+    if (agentQueueRef.current.length >= MAX_AGENT_QUEUE_ITEMS) {
+      setError(`Agent 待发送队列最多保留 ${MAX_AGENT_QUEUE_ITEMS} 条消息`);
+      return;
+    }
+    setError("");
+    const visualQaReport = visualQaRun?.report || null;
+    const characterConsistencyReport = characterConsistencyRun?.report || null;
+    const qaFeedbackLines = [
+      `- QA 评分：${run.qaScore ?? "-"}/100`,
+      `- QA 摘要：${run.qaSummary || "无"}`,
+      `- QA 指标：${JSON.stringify(run.qaMetrics || {})}`,
+    ];
+    if (visualQaReport) qaFeedbackLines.push(`- Visual QA 报告：${JSON.stringify(visualQaReport)}`);
+    if (characterConsistencyReport) qaFeedbackLines.push(`- Character Consistency 报告：${JSON.stringify(characterConsistencyReport)}`);
+    const message = `T-Pose 质检未通过，请根据以下 QA 反馈数据智能优化提示词。当前任务处于 T-Pose 检查阶段（阶段 2），修改提示词前必须先回退到概念图生成阶段。
+
+请按以下顺序操作：
+1. 先调用 revert_workflow 工具回退到阶段 1（概念图生成），reason 填写"QA 未通过，回退以优化提示词"
+2. 再调用 update_character_prompts 工具保存优化后的正向提示词，reason 填写"根据 QA 反馈优化提示词"
+3. 不要重新生成图片，只优化并保存提示词，用户会自行决定何时重新生成
+
+QA 反馈数据：
+${qaFeedbackLines.join("\n")}
+
+当前正向提示词：${run.positivePrompt}
+当前负向提示词：${run.negativePrompt}
+
+请分析失败原因，针对性增强提示词，重点关注：
+1. 严格正视图，完全正面朝向镜头
+2. 严格的 T-Pose：双臂水平伸展，与肩膀成 180 度
+3. 肘部伸直，手臂完全展开
+4. 左右对称，身体居中
+5. 全身出镜，从头顶到脚底都在画面内`;
+    const queueItem: AgentQueueItem = {
+      id: ++agentQueueIdRef.current,
+      runId: run.id,
+      runName: run.name,
+      message,
+      attachment: null,
+    };
+    replaceAgentQueue([...agentQueueRef.current, queueItem]);
+    void processNextAgentMessage();
+  }
+
   function resetRun() {
     if (!run || busy) return;
     setUiConfirmation({
@@ -1448,9 +1542,13 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         setBusy(true);
         try {
           await api(`/api/runs/${runId}`, { method: "DELETE" });
+          // Clear local state so the task screen doesn't keep an empty shell.
           selectRun(null);
           setDetail(null);
           clearTaskConversation();
+          setError("");
+          // refreshRuns() updates the runs list and the cleanup effect above
+          // will swap the screen back to home once the deleted run drops out.
           await refreshRuns();
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : "删除失败");
@@ -1531,7 +1629,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       });
       setDetail(data);
       setViewStage(0);
-      openTask(data.run.id);
+      selectTask(data.run);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "创建失败");
     } finally {
@@ -1571,22 +1669,10 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         setBusy(true);
         setError("");
         try {
-          const data = await api<{ workspaces: Workspace[] }>(`/api/workspaces/${encodeURIComponent(workspace.id)}`, { method: "DELETE" });
-          const runData = await api<{ runs: Run[] }>("/api/runs");
-          const fallbackId = data.workspaces.find((item) => item.id === "default")?.id || data.workspaces[0]?.id || "default";
-          const nextWorkspaceId = selectedWorkspaceIdRef.current === workspace.id ? fallbackId : selectedWorkspaceIdRef.current;
-          setWorkspaces(data.workspaces);
-          setRuns(runData.runs);
-          selectWorkspace(nextWorkspaceId);
-          selectRun(null);
-          setDetail(null);
-          setForm((current) => ({ ...current, workspaceId: nextWorkspaceId }));
-          setExpandedWorkspaceIds((current) => {
-            const next = new Set(current);
-            next.delete(workspace.id);
-            return next;
-          });
-          if (assetLibraryWorkspaceId === workspace.id) setAssetLibraryWorkspaceId(null);
+          await api<{ workspaces: Workspace[] }>(`/api/workspaces/${encodeURIComponent(workspace.id)}`, { method: "DELETE" });
+          // 无论删除的是否为当前工作空间，都立即跳转到首页，避免页面停留在已删除项目中。
+          openHome();
+          return;
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : "工作空间删除失败");
         } finally {
@@ -1895,27 +1981,32 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     document.body.style.userSelect = "";
   }
 
-  function readImage(file: File, maxBytes: number, label: string, onReady: (image: AgentAttachment) => void) {
+  function readImage(file: File, maxBytes: number, label: string, onReady: (image: AgentAttachment) => void, onError?: (message: string) => void) {
+    const report = onError
+      ? (message: string) => { onError(message); setError(message); }
+      : setError;
     if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
-      setError(`${label}只支持 PNG、JPEG 或 WebP`);
+      report(`${label}只支持 PNG、JPEG 或 WebP`);
       return;
     }
     if (file.size > maxBytes) {
-      setError(`${label}不能超过 ${Math.round(maxBytes / 1024 / 1024)} MB`);
+      const limitMb = Math.round(maxBytes / 1024 / 1024);
+      const sizeMb = (file.size / 1024 / 1024).toFixed(1);
+      report(`${label}不能超过 ${limitMb} MB（当前文件 ${sizeMb} MB）`);
       return;
     }
-    setError("");
+    report("");
     const reader = new FileReader();
     reader.onload = () => {
       const value = typeof reader.result === "string" ? reader.result : "";
       const data = value.split(",", 2)[1];
       if (!data) {
-        setError(`${label}读取失败`);
+        report(`${label}读取失败`);
         return;
       }
       onReady({ name: file.name, mimeType: file.type, data, size: file.size });
     };
-    reader.onerror = () => setError(`${label}读取失败`);
+    reader.onerror = () => report(`${label}读取失败`);
     reader.readAsDataURL(file);
   }
 
@@ -2497,7 +2588,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   {notifications.map((notification) => (
                     <article className={notification.readAt ? "read" : "unread"} key={notification.id}>
                       <span><Bell size={15} /></span>
-                      <div><strong>{notification.title}</strong><p>{notification.message}</p><small>{formatTime(notification.createdAt)}</small></div>
+                      <div><strong>{notification.title}</strong><p>{notification.message}</p><small><LocalTime value={notification.createdAt} /></small></div>
                       <div className="notification-item-actions">
                         <button type="button" onClick={() => void viewNotification(notification)}>查看</button>
                         <button className="delete" type="button" disabled={notificationAction !== null} onClick={() => void deleteNotification(notification.id)} title="删除通知" aria-label={`删除通知：${notification.title}`}><Trash2 size={14} /></button>
@@ -2592,7 +2683,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     <div className="workspace-task-list">
                       {runs.filter((item) => item.workspaceId === workspace.id).map((item) => (
                         <button type="button" key={item.id} onClick={() => openTask(item.id)}>
-                          <span>{item.name.slice(0, 1).toUpperCase()}</span>
+                          <span>{(Array.from(item.name)[0] || "R").toUpperCase()}</span>
                           <div><strong>{item.name}</strong><small>{item.pipelineType === "image_to_model" ? "图生模型" : "文生模型"} · {stages[item.currentStage].title}</small></div>
                           {item.jobStatus === "running" && <LoaderCircle className="spinning" size={14} />}
                         </button>
@@ -2763,10 +2854,10 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 <span className={`run-avatar ${item.jobStatus === "running" ? "running" : ""}`}>
                   {item.jobStatus === "running"
                     ? <LoaderCircle size={18} aria-hidden="true" />
-                    : item.name.trim().slice(0, 1).toUpperCase() || "R"}
+                    : (Array.from(item.name.trim())[0] || "R").toUpperCase()}
                 </span>
                 <span className="run-copy">
-                  <span className="run-row"><strong>{item.name}</strong><time>{formatTime(item.updatedAt)}</time></span>
+                  <span className="run-row"><strong>{item.name}</strong><time><LocalTime value={item.updatedAt} /></time></span>
                   <span className="run-meta">{item.jobStatus === "running" ? `${jobName(item.jobType)} 执行中` : stages[item.currentStage].title}</span>
                   <span className="run-progress"><i style={{ width: `${Math.round((item.currentStage / (stages.length - 1)) * 100)}%` }} /></span>
                 </span>
@@ -2793,7 +2884,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 <div className="workspace-heading">
                   <span className="workspace-kicker">当前任务</span>
                   <h1>{run.name}</h1>
-                  <p><span className="pipeline-type-badge">{run.pipelineType === "image_to_model" ? "图生模型" : "文生模型"}</span>更新于 {formatTime(run.updatedAt)} · {progress}% 完成</p>
+                  <p><span className="pipeline-type-badge">{run.pipelineType === "image_to_model" ? "图生模型" : "文生模型"}</span>更新于 <LocalTime value={run.updatedAt} /> · {progress}% 完成</p>
                 </div>
                 <div className="workspace-actions">
                   <button className="secondary-button workspace-asset-library-button" type="button" onClick={() => void openAssetLibrary(run.workspaceId)}><Library size={16} />资产库</button>
@@ -2971,6 +3062,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                           {isCurrentView && current === 1 && run.assets.imageReady && <button className="secondary-button" onClick={() => runAction("generate-2d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />{run.pipelineType === "image_to_model" ? "重新转换 T-Pose" : "重新生成 2D"}</button>}
                           {isCurrentView && current === 1 && run.assets.imageReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy || run.jobStatus === "running"}><Check size={16} />确认 {run.pipelineType === "image_to_model" ? "T-Pose" : "2D"} 完成，进入检查</button>}
                           {isCurrentView && current === 2 && run.qaStatus === "failed" && <button className="warning-button" onClick={() => runAction("generate-2d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新生成 2D</button>}
+                          {isCurrentView && current === 2 && run.qaStatus === "failed" && <button className="primary-button" onClick={() => void optimizePromptFromQA()} disabled={busy || agentBusy || run.jobStatus === "running" || system?.agent.configured === false} title="根据 QA 反馈自动优化提示词"><Sparkles size={16} />智能优化提示词</button>}
                           {isCurrentView && current === 2 && run.qaStatus !== "passed" && run.jobStatus !== "running" && <button className="secondary-button" onClick={() => runAction("check-tpose", "姿态检查启动失败")} disabled={busy}><RefreshCw size={16} />{run.qaStatus === "failed" ? "重新检查姿态" : "运行姿态检查"}</button>}
                           {isCurrentView && current === 2 && run.qaStatus === "passed" && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认检查通过，进入 3D</button>}
                           {isCurrentView && current === 3 && !run.assets.modelReady && <button className="primary-button" onClick={() => runAction("generate-3d", "3D 任务提交失败")} disabled={busy || run.jobStatus === "running"}><Box size={16} />生成静态 GLB</button>}
@@ -3031,12 +3123,19 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   </section>}
 
                   <section className="event-panel event-panel-full">
-                    <div className="section-heading"><div><span>活动</span><strong>任务记录</strong></div><MoreHorizontal size={18} /></div>
+                    <div className="section-heading">
+                      <div><span>活动</span><strong>任务记录</strong></div>
+                      {(selectedDetail?.events?.length ?? 0) > 8 && (
+                        <button type="button" className="text-icon-button" onClick={() => setShowAllEvents((value) => !value)} aria-expanded={showAllEvents} title={showAllEvents ? "收起记录" : "查看更多"}>
+                          {showAllEvents ? <ChevronDown size={15} /> : <MoreHorizontal size={18} />}{showAllEvents ? "收起" : "查看更多"}
+                        </button>
+                      )}
+                    </div>
                     <div className="event-list">
-                      {(selectedDetail?.events || []).slice(0, 8).map((item) => (
+                      {(showAllEvents ? (selectedDetail?.events || []) : (selectedDetail?.events || []).slice(0, 8)).map((item) => (
                         <div className="event-item" key={item.id}>
                           <span className="event-dot" />
-                          <div><strong>{item.message}</strong><span>{activeStages[item.stage]?.title || "流程"} · {formatTime(item.createdAt)}</span></div>
+                          <div><strong>{item.message}</strong><span>{activeStages[item.stage]?.title || "流程"} · <LocalTime value={item.createdAt} /></span></div>
                         </div>
                       ))}
                     </div>
@@ -3443,6 +3542,8 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     ["all", "全部"],
                     ["2d", "2D 图片"],
                     ["3d", "全部 3D"],
+                    ["source", "原始原画"],
+                    ["image", "2D 概念图"],
                     ["model", "静态模型"],
                     ["topology", "拓扑模型"],
                     ["rigged", "绑定模型"],
@@ -3461,9 +3562,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                         {asset.group === "2d"
                           ? <Image src={workspaceAssetPreviewUrl(asset.previewUrl)} alt={asset.runName} width={160} height={100} unoptimized />
                           : <Box size={24} />}
-                        <small>{asset.kind === "image" ? "PNG" : "GLB"}</small>
+                        <small>{asset.group === "2d" ? "PNG" : "GLB"}</small>
                       </span>
-                      <span className="asset-library-card-copy"><strong>{asset.runName}</strong><small>{asset.label} · {formatFileSize(asset.size)}</small><time>{formatTime(asset.createdAt)}</time></span>
+                      <span className="asset-library-card-copy"><strong>{asset.runName}</strong><small>{asset.label} · {formatFileSize(asset.size)}</small><time><LocalTime value={asset.createdAt} /></time></span>
                     </button>
                   ))}
                   {!workspaceAssetsLoading && !filteredWorkspaceAssets.length && <div className="asset-library-empty"><Library size={24} /><strong>暂无此类资产</strong><span>完成对应生成阶段后，资产会自动出现在这里。</span></div>}
