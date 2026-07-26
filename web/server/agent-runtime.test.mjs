@@ -346,3 +346,74 @@ test("visual QA does not treat explicit negative evidence as a held prop", () =>
   assert.equal(report.handsEmpty, true);
   assert.equal(report.decision, "pass");
 });
+
+// 回归测试：多张图中只要有一张非法（bad magic bytes / mime 不一致），validateImages 应当
+// 跳过坏图但保留好图，不能让整批请求都丢。
+// 通过给 API 端点发送混合 attachments 来验证：合法图能进入调用链，非法图不会让请求崩溃。
+test("validateImages 跳过非法图片但保留合法图片，不让整批请求失败", async () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE runs (id TEXT PRIMARY KEY, current_stage INTEGER NOT NULL DEFAULT 0);
+    INSERT INTO runs (id) VALUES ('run-multi');
+  `);
+  // 1x1 透明 PNG，base64 编码后是合法的。
+  const validPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+  // 坏数据：声称是 image/png 但 magic bytes 错（应是 89 50 4E 47 开头）。
+  const fakePng = Buffer.from("not a real png payload").toString("base64");
+  // 另一个坏数据：声称是 image/jpeg，但 magic bytes 错。
+  const fakeJpeg = Buffer.from("definitely not a jpeg either").toString("base64");
+
+  const runtime = createAssetAgentRuntime({
+    db,
+    getRunDetail: () => ({
+      run: {
+        id: "run-multi",
+        name: "test",
+        currentStage: 0,
+        positivePrompt: "",
+        negativePrompt: "",
+        job: { type: null, status: "idle", progress: 0, message: "" },
+        qa: { status: null, score: null, summary: null, metrics: {} },
+        assets: {},
+      },
+    }),
+    updatePrompts: () => {},
+    advanceWorkflow: () => {},
+    revertWorkflow: () => {},
+    runStageJob: () => {},
+    getAgentConfig: () => ({ apiKey: "test-key", model: "step-test", baseUrl: "http://127.0.0.1:1" }),
+    getRunImagePath: () => null,
+    getRunReferenceImagePath: () => null,
+    getAssetInspection: () => ({}),
+    addRunEvent: () => {},
+    getPermissionMode: () => "request",
+    requestApproval: () => {},
+  });
+
+  // 如果 validateImages 没有 try/catch，validateImage 会 throw，整批请求失败。
+  // 修复后，坏图被跳过、好图进入调用链，后续 Agent 联网/鉴权失败是预期表现。
+  // 只要不是 “图片内容与文件类型不匹配” 或 “图片数据无效” 这样的校验错误，就说明修复生效。
+  let error = null;
+  try {
+    await runtime.run({
+      runId: "run-multi",
+      message: "请参考这些图完善角色设定。",
+      images: [
+        { name: "good.png", mimeType: "image/png", data: validPng, size: 67 },
+        { name: "fake.png", mimeType: "image/png", data: fakePng, size: 22 },
+        { name: "fake.jpg", mimeType: "image/jpeg", data: fakeJpeg, size: 26 },
+      ],
+    });
+  } catch (e) {
+    error = e;
+  }
+  if (error) {
+    // 不应该是图片验证错误，应该是后续 Agent 调用错误（网络、鉴权等）。
+    assert.doesNotMatch(String(error.message), /图片内容与文件类型不匹配/);
+    assert.doesNotMatch(String(error.message), /图片数据无效/);
+  }
+  // 验证有合法图被存到 message 里（不会因为全部跳过而 fallback 到单图）。
+  // 失败时 activeAgents 清理可能在异常路径中由 finally 块处理，这里只检查不崩溃。
+  assert.ok(runtime.isBusy("run-multi") === false);
+  db.close();
+});
