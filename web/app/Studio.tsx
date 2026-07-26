@@ -62,13 +62,13 @@ const DEFAULT_NEGATIVE_PROMPT =
 const MAX_AGENT_QUEUE_ITEMS = 20;
 
 const stages = [
-  { short: "IDEA", title: "角色描述", subtitle: "定义人物与风格", input: "人物设定与提示词", output: "角色规格", action: "确认角色身份、服装、视角和背景。" },
-  { short: "2D", title: "概念图生成", subtitle: "StepFun / Qwen", input: "角色规格", output: "PNG 概念图", action: "调用已配置的 StepFun 图片 API 或 DGX Qwen Image，并下载真实 PNG。" },
-  { short: "QA", title: "T-Pose 检查", subtitle: "SDPose", input: "2D 概念图", output: "关键点与评分", action: "SDPose 检查单人全身、双臂水平、肘部伸直和左右对称。" },
-  { short: "3D", title: "3D 模型生成", subtitle: "Pixal3D", input: "合格 T-Pose PNG", output: "静态 GLB", action: "DGX 执行 Pixal3D 工作流并下载真实静态 GLB。" },
-  { short: "TOPO", title: "自动拓扑", subtitle: "AutoRemesher", input: "静态 GLB", output: "四边面派生拓扑 GLB", action: "DGX 执行 AutoRemesher 重拓扑，并通过 Blender 回烘纹理；GLB 导出时按 glTF 规范三角化。" },
-  { short: "RIG", title: "自动绑骨", subtitle: "SkinTokens", input: "拓扑 GLB", output: "带骨骼 GLB", action: "DGX 使用拓扑模型执行 SkinTokens，生成 Mixamo 骨骼与蒙皮。" },
-  { short: "OUT", title: "资产导出", subtitle: "文件交付", input: "已绑骨 GLB", output: "最终资产", action: "下载后端实际保存的 PNG、静态 GLB 或最终绑骨 GLB。" },
+  { short: "IDEA", title: "角色输入", subtitle: "上传或生成角色参考图", input: "人物设定与提示词", output: "角色规格", action: "确认角色身份、服装、视角和背景。" },
+  { short: "2D", title: "姿态标准化", subtitle: "将角色调整为标准建模姿态", input: "角色规格", output: "PNG 概念图", action: "调用已配置的 StepFun 图片 API 或 DGX Qwen Image，并下载真实 PNG。" },
+  { short: "QA", title: "姿态质量检查", subtitle: "检查对称性、肢体角度与遮挡", input: "2D 概念图", output: "关键点与评分", action: "SDPose 检查单人全身、双臂水平、肘部伸直和左右对称。" },
+  { short: "3D", title: "三维重建", subtitle: "根据角色图生成静态三维模型", input: "合格 T-Pose PNG", output: "静态 GLB", action: "DGX 执行 Pixal3D 工作流并下载真实静态 GLB。" },
+  { short: "TOPO", title: "网格优化", subtitle: "降低面数并优化模型拓扑", input: "静态 GLB", output: "四边面派生拓扑 GLB", action: "DGX 执行 AutoRemesher 重拓扑，并通过 Blender 回烘纹理；GLB 导出时按 glTF 规范三角化。" },
+  { short: "RIG", title: "骨骼绑定", subtitle: "生成人体骨骼与蒙皮权重", input: "拓扑 GLB", output: "带骨骼 GLB", action: "DGX 使用拓扑模型执行 SkinTokens，生成 Mixamo 骨骼与蒙皮。" },
+  { short: "OUT", title: "资产导出", subtitle: "校验并导出可用的 3D 文件", input: "已绑骨 GLB", output: "最终资产", action: "下载后端实际保存的 PNG、静态 GLB 或最终绑骨 GLB。" },
 ];
 
 type JobType = "none" | "2d" | "qa" | "3d" | "topology" | "rig";
@@ -941,6 +941,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [notificationAction, setNotificationAction] = useState<number | "read-all" | "clear" | null>(null);
   const [notificationFocusId, setNotificationFocusId] = useState<number | null>(initialNotificationId);
   const [toastQueue, setToastQueue] = useState<AppNotification[]>([]);
+  const [showFullEvents, setShowFullEvents] = useState(false);
   const [approvalBusyId, setApprovalBusyId] = useState<number | null>(null);
   const [promptDraft, setPromptDraft] = useState({
     positivePrompt: DEFAULT_POSITIVE_PROMPT,
@@ -1476,9 +1477,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const current = run?.currentStage ?? 0;
   const activeStages = run?.pipelineType === "image_to_model"
     ? stages.map((item, index) => index === 0
-      ? { ...item, title: "角色原画", subtitle: "单体输入", input: "拆分后的单体原画", output: "角色规格", action: "确认单体原画、角色身份、服装和 T-Pose 转换提示词。" }
+      ? { ...item, title: "角色输入", subtitle: "上传角色原画", input: "单体角色原画", output: "角色规格", action: "确认单体原画、角色身份、服装和 T-Pose 转换提示词。" }
       : index === 1
-        ? { ...item, title: "T-Pose 图生成", subtitle: "Stepfun 图生图", input: "单体角色原画", output: "T-Pose PNG", action: "使用图生图模型保持角色身份并转换为标准 T-Pose。" }
+        ? { ...item, title: "姿态标准化", subtitle: "将角色调整为标准建模姿态", input: "单体角色原画", output: "T-Pose PNG", action: "使用图生图模型保持角色身份并转换为标准 T-Pose。" }
         : item)
     : stages;
   const stage = activeStages[viewStage];
@@ -3246,7 +3247,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   </section>}
 
                   <section className="event-panel event-panel-full">
-                    <div className="section-heading"><div><span>活动</span><strong>任务记录</strong></div><MoreHorizontal size={18} /></div>
+                    <div className="section-heading"><div><span>活动</span><strong>任务记录</strong></div><button type="button" className="icon-button" onClick={() => setShowFullEvents(true)} title="查看全部历史任务记录" aria-label="查看全部历史任务记录"><MoreHorizontal size={18} /></button></div>
                     <div className="event-list">
                       {(selectedDetail?.events || []).slice(0, 8).map((item) => (
                         <div className="event-item" key={item.id}>
@@ -3923,6 +3924,27 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             <label>说明<textarea rows={4} maxLength={500} value={workspaceForm.description} onChange={(event) => setWorkspaceForm({ ...workspaceForm, description: event.target.value })} placeholder="描述该工作空间要管理的角色、风格或交付目标" /></label>
             <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowWorkspaceCreate(false)}>取消</button><button className="primary-button" disabled={busy}>{busy ? "创建中…" : "创建工作空间"}</button></div>
           </form>
+        </div>
+      )}
+
+      {showFullEvents && selectedDetail && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowFullEvents(false); }}>
+          <div className="create-modal" style={{ width: "min(760px, 100%)" }}>
+            <div className="modal-header"><div><span>活动历史</span><h2>全部历史任务记录</h2></div><button className="icon-button" type="button" onClick={() => setShowFullEvents(false)} aria-label="关闭"><X size={19} /></button></div>
+            <p style={{ margin: "-8px 0 16px", color: "var(--muted)", fontSize: "13px" }}>共 {selectedDetail.events.length} 条记录，按时间倒序排列。</p>
+            <div className="event-list" style={{ maxHeight: "min(62vh, 520px)", overflowY: "auto" }}>
+              {selectedDetail.events.length === 0 && <p className="notification-empty">暂无任务记录。</p>}
+              {selectedDetail.events.map((item) => (
+                <div className="event-item" key={item.id}>
+                  <span className="event-dot" />
+                  <div><strong>{item.message}</strong><span>{activeStages[item.stage]?.title || "流程"} · <ClientTime value={item.createdAt} /></span></div>
+                </div>
+              ))}
+            </div>
+            <div className="modal-actions" style={{ marginTop: "12px" }}>
+              <button type="button" className="secondary-button" onClick={() => setShowFullEvents(false)}>关闭</button>
+            </div>
+          </div>
         </div>
       )}
 

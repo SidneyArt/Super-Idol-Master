@@ -112,7 +112,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .notification-center { position: relative; }
 .notification-button { position: relative; }
 .notification-button > span { position: absolute; top: -5px; right: -6px; min-width: 17px; height: 17px; display: grid; place-items: center; padding: 0 4px; border: 2px solid var(--surface); border-radius: 9px; background: var(--danger); color: #fff; font-size: 9px; font-weight: 700; }
-.notification-menu { position: absolute; z-index: 80; top: 43px; right: 0; width: min(410px, calc(100vw - 24px)); border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-raised); box-shadow: var(--shadow); overflow: hidden; }
+.notification-menu { position: absolute; z-index: 80; top: 43px; right: 0; width: min(410px, calc(100vw - 24px)); border: 1px solid var(--border-strong); border-radius: 9px; background: rgba(22, 24, 32, 0.96); box-shadow: var(--shadow); overflow: hidden; }
 .notification-menu-header { min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 13px; border-bottom: 1px solid var(--border); }
 .notification-menu-header strong { font-size: 13px; }
 .notification-menu-actions { min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
@@ -249,7 +249,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .conversation-manager-trigger:disabled, .conversation-create-button:disabled { opacity: .5; cursor: not-allowed; }
 .conversation-create-button { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); color: var(--text-secondary); cursor: pointer; }
 .conversation-create-button:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.conversation-menu { position: absolute; z-index: 130; bottom: calc(100% + 8px); left: 0; width: min(360px, calc(100vw - 32px)); max-height: min(420px, 62vh); display: grid; grid-template-rows: auto minmax(0, 1fr); padding: 6px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface-raised); box-shadow: 0 18px 48px rgba(0,0,0,.32); overflow: hidden; }
+.conversation-menu { position: absolute; z-index: 130; bottom: calc(100% + 8px); left: 0; width: min(360px, calc(100vw - 32px)); max-height: min(420px, 62vh); display: grid; grid-template-rows: auto minmax(0, 1fr); padding: 6px; border: 1px solid var(--border-strong); border-radius: 9px; background: rgba(22, 24, 32, 0.96); box-shadow: 0 18px 48px rgba(0,0,0,.32); overflow: hidden; }
 .conversation-menu > header { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 5px 8px 8px; border-bottom: 1px solid var(--border); }
 .conversation-menu > header strong, .conversation-menu > header small { display: block; }
 .conversation-menu > header strong { font-size: 12px; }
@@ -1948,7 +1948,6 @@ body {
 
 .notification-menu,
 .notification-toast,
-.conversation-menu,
 .styled-select-options,
 .context-usage-tooltip,
 .viewer-options,
@@ -2541,4 +2540,11 @@ body {
   .home-conversation-manager .conversation-create-button span {
     display: none;
   }
+}
+
+.notification-menu,
+.conversation-menu {
+  background: rgba(22, 24, 32, 0.96);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
