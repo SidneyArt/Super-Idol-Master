@@ -41,9 +41,10 @@ import {
   User,
   X,
 } from "lucide-react";
-import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, PointerEvent as ReactPointerEvent, Suspense, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, PointerEvent as ReactPointerEvent, Suspense, UIEvent as ReactUIEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { chatMessagesEqual, isChatNearBottom } from "./chat-scroll";
 
 const ModelViewer = lazy(() => import("./components/ModelViewer"));
 
@@ -864,6 +865,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [chatSessions, setChatSessions] = useState<ConversationSession[]>([]);
   const [chatContext, setChatContext] = useState<ConversationContext | null>(null);
   const [chatSessionBusy, setChatSessionBusy] = useState(false);
+  const [chatScrollRequest, setChatScrollRequest] = useState(0);
   const [agentBusy, setAgentBusy] = useState(false);
   const [activeAgentRunId, setActiveAgentRunId] = useState<string | null>(null);
   const [agentQueue, setAgentQueue] = useState<AgentQueueItem[]>([]);
@@ -874,6 +876,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [dispatcherSessions, setDispatcherSessions] = useState<ConversationSession[]>([]);
   const [dispatcherContext, setDispatcherContext] = useState<ConversationContext | null>(null);
   const [dispatcherSessionBusy, setDispatcherSessionBusy] = useState(false);
+  const [dispatcherScrollRequest, setDispatcherScrollRequest] = useState(0);
   const [dispatcherInput, setDispatcherInput] = useState("");
   const [dispatcherBusy, setDispatcherBusy] = useState(false);
   const [dispatcherRegeneratingId, setDispatcherRegeneratingId] = useState<string | null>(null);
@@ -914,8 +917,13 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const selectedWorkspaceIdRef = useRef(selectedWorkspaceId);
   const agentDropDepthRef = useRef(0);
   const dispatcherDropDepthRef = useRef(0);
-  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const chatThreadRef = useRef<HTMLDivElement | null>(null);
+  const chatNearBottomRef = useRef(true);
+  const chatForceScrollRef = useRef(false);
   const dispatcherEndRef = useRef<HTMLDivElement | null>(null);
+  const dispatcherThreadRef = useRef<HTMLDivElement | null>(null);
+  const dispatcherNearBottomRef = useRef(true);
+  const dispatcherForceScrollRef = useRef(false);
   const notificationCenterRef = useRef<HTMLDivElement | null>(null);
   const agentFileRef = useRef<HTMLInputElement | null>(null);
   const dispatcherFileRef = useRef<HTMLInputElement | null>(null);
@@ -969,20 +977,32 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     });
   }
 
-  function applyDispatcherConversation(data: ConversationPayload) {
-    setDispatcherMessages(data.messages);
+  const requestDispatcherScroll = useCallback((force = false) => {
+    if (force) dispatcherForceScrollRef.current = true;
+    setDispatcherScrollRequest((request) => request + 1);
+  }, []);
+
+  const requestChatScroll = useCallback((force = false) => {
+    if (force) chatForceScrollRef.current = true;
+    setChatScrollRequest((request) => request + 1);
+  }, []);
+
+  const applyDispatcherConversation = useCallback((data: ConversationPayload, forceScroll = false) => {
+    setDispatcherMessages((current) => chatMessagesEqual(current, data.messages) ? current : data.messages);
     dispatcherSessionIdRef.current = data.sessionId;
     setDispatcherSessionId(data.sessionId);
     setDispatcherSessions(data.sessions);
     setDispatcherContext(data.context);
-  }
+    if (forceScroll) requestDispatcherScroll(true);
+  }, [requestDispatcherScroll]);
 
-  function applyTaskConversation(data: ConversationPayload) {
-    setChatMessages(data.messages);
+  const applyTaskConversation = useCallback((data: ConversationPayload, forceScroll = false) => {
+    setChatMessages((current) => chatMessagesEqual(current, data.messages) ? current : data.messages);
     setChatSessionId(data.sessionId);
     setChatSessions(data.sessions);
     setChatContext(data.context);
-  }
+    if (forceScroll) requestChatScroll(true);
+  }, [requestChatScroll]);
 
   function clearTaskConversation() {
     setChatMessages([]);
@@ -1197,10 +1217,10 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   useEffect(() => {
     let cancelled = false;
     void api<ConversationPayload>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`)
-      .then((data) => { if (!cancelled) applyDispatcherConversation(data); })
+      .then((data) => { if (!cancelled) applyDispatcherConversation(data, true); })
       .catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : "总调度对话读取失败"); });
     return () => { cancelled = true; };
-  }, [selectedWorkspaceId]);
+  }, [applyDispatcherConversation, selectedWorkspaceId]);
 
   useEffect(() => {
     if (!selectedWorkspaceId || dispatcherBusy) return;
@@ -1218,7 +1238,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [selectedWorkspaceId, dispatcherSessionId, dispatcherBusy]);
+  }, [applyDispatcherConversation, selectedWorkspaceId, dispatcherSessionId, dispatcherBusy]);
 
   useEffect(() => {
     void refreshActivity(false).catch(() => undefined);
@@ -1246,8 +1266,14 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }, [showNotifications]);
 
   useEffect(() => {
-    dispatcherEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [dispatcherMessages, dispatcherBusy, approvalScrollKey, dispatcherGenerationScrollKey]);
+    const container = dispatcherThreadRef.current;
+    if (!container) return;
+    const force = dispatcherForceScrollRef.current;
+    dispatcherForceScrollRef.current = false;
+    if (!force && !dispatcherNearBottomRef.current) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    dispatcherNearBottomRef.current = true;
+  }, [dispatcherMessages, dispatcherBusy, approvalScrollKey, dispatcherGenerationScrollKey, dispatcherScrollRequest]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -1260,7 +1286,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       .then(([data, agentData]) => {
         if (cancelled || selectedIdRef.current !== requestedRunId) return;
         setDetail(data);
-        applyTaskConversation(agentData);
+        applyTaskConversation(agentData, true);
         setAgentAttachment(null);
         setViewStage(data.run.currentStage);
         setQaBlend(0.5);
@@ -1273,11 +1299,17 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         if (!cancelled && selectedIdRef.current === requestedRunId) setError(reason instanceof Error ? reason.message : "任务读取失败");
       });
     return () => { cancelled = true; };
-  }, [selectedId]);
+  }, [applyTaskConversation, selectedId]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [chatMessages, agentBusy, agentQueue.length, approvalScrollKey]);
+    const container = chatThreadRef.current;
+    if (!container) return;
+    const force = chatForceScrollRef.current;
+    chatForceScrollRef.current = false;
+    if (!force && !chatNearBottomRef.current) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    chatNearBottomRef.current = true;
+  }, [chatMessages, agentBusy, agentQueue.length, approvalScrollKey, chatScrollRequest]);
 
   const selectedDetail = detail?.run.id === selectedId ? detail : null;
   const hasRunningTask = runs.some((item) => item.jobStatus === "running");
@@ -1309,7 +1341,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         .catch((reason) => setError(reason instanceof Error ? reason.message : "DGX 状态读取失败"));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [hasRunningTask, selectedId, selectedPlanIsRunning, selectedRoleIsRunning, selectedTaskIsRunning]);
+  }, [applyTaskConversation, hasRunningTask, selectedId, selectedPlanIsRunning, selectedRoleIsRunning, selectedTaskIsRunning]);
 
   const run = selectedDetail?.run || runs.find((item) => item.id === selectedId) || null;
   const coordinatorApprovals = approvals.filter((item) => (
@@ -2024,6 +2056,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       createdAt: new Date().toISOString(),
     };
     setDispatcherMessages((items) => [...items, optimistic]);
+    requestDispatcherScroll(true);
     const attachment = dispatcherAttachment;
     setDispatcherInput("");
     setDispatcherAttachment(null);
@@ -2102,14 +2135,14 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         method: "POST",
         body: JSON.stringify({ workspaceId: selectedWorkspaceId }),
       });
-      applyDispatcherConversation(data);
+      applyDispatcherConversation(data, true);
       setDispatcherInput("");
       setDispatcherAttachment(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "新建总调度会话失败");
       try {
         const history = await api<ConversationPayload>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`);
-        applyDispatcherConversation(history);
+        applyDispatcherConversation(history, true);
       } catch {
         // Keep the cleared state when the current conversation cannot be restored.
       }
@@ -2133,12 +2166,12 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         method: "PUT",
         body: JSON.stringify({ workspaceId: selectedWorkspaceId, sessionId }),
       });
-      applyDispatcherConversation(data);
+      applyDispatcherConversation(data, true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "切换总调度会话失败");
       try {
         const history = await api<ConversationPayload>(`/api/dispatcher/messages?workspaceId=${encodeURIComponent(selectedWorkspaceId)}`);
-        applyDispatcherConversation(history);
+        applyDispatcherConversation(history, true);
       } catch {
         // Keep the cleared state when the current conversation cannot be restored.
       }
@@ -2162,7 +2195,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         try {
           const data = await api<ConversationPayload>(`/api/dispatcher/sessions/${encodeURIComponent(session.id)}?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "DELETE" });
           if (selectedWorkspaceIdRef.current !== workspaceId) return;
-          applyDispatcherConversation(data);
+          applyDispatcherConversation(data, deletingCurrent);
           if (deletingCurrent) {
             setDispatcherInput("");
             setDispatcherAttachment(null);
@@ -2372,7 +2405,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     try {
       const data = await api<ConversationPayload>(`/api/runs/${runId}/agent/sessions`, { method: "POST" });
       if (selectedIdRef.current === runId) {
-        applyTaskConversation(data);
+        applyTaskConversation(data, true);
         setChatInput("");
         setAgentAttachment(null);
       }
@@ -2393,7 +2426,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         method: "PUT",
         body: JSON.stringify({ sessionId }),
       });
-      if (selectedIdRef.current === runId) applyTaskConversation(data);
+      if (selectedIdRef.current === runId) applyTaskConversation(data, true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "切换任务 Agent 会话失败");
     } finally {
@@ -2416,7 +2449,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         try {
           const data = await api<ConversationPayload>(`/api/runs/${runId}/agent/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
           if (selectedIdRef.current !== runId) return;
-          applyTaskConversation(data);
+          applyTaskConversation(data, deletingCurrent);
           if (deletingCurrent) {
             setChatInput("");
             setAgentAttachment(null);
@@ -2452,6 +2485,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       attachment: agentAttachment,
     };
     replaceAgentQueue([...agentQueueRef.current, queueItem]);
+    requestChatScroll(true);
     setChatInput("");
     setAgentAttachment(null);
     void processNextAgentMessage();
@@ -2653,7 +2687,13 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               <button type="button" className={settings?.coordinator.agent.apiKeyConfigured ? "configured" : "missing"} onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Bot size={16} /><span><small>调度模型</small><strong>{settings?.coordinator.agent.model || "未读取"}</strong></span><em>{settings?.coordinator.agent.apiKeyConfigured ? "已配置" : "待配置"}</em></button>
             </div>
 
-            <div className="dispatcher-thread">
+            <div
+              className="dispatcher-thread"
+              ref={dispatcherThreadRef}
+              onScroll={(event: ReactUIEvent<HTMLDivElement>) => {
+                dispatcherNearBottomRef.current = isChatNearBottom(event.currentTarget);
+              }}
+            >
               <div className="dispatcher-thread-content">
                 {!dispatcherTimeline.length && (
                   <div className="dispatcher-welcome"><span><ImageIcon size={28} /></span><h2>从一个目标开始整个角色项目</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分。总调度 Agent 会根据你的目标选择单图生成或任务编排。</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传并拆分</button></div></div>
@@ -3121,7 +3161,14 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </section>
             )}
           </div>
-          <div className="chat-thread" key={selectedId || "no-run"}>
+          <div
+            className="chat-thread"
+            key={selectedId || "no-run"}
+            ref={chatThreadRef}
+            onScroll={(event: ReactUIEvent<HTMLDivElement>) => {
+              chatNearBottomRef.current = isChatNearBottom(event.currentTarget);
+            }}
+          >
             {visibleChatMessages.map((message) => (
               <div className={`chat-message ${message.role}`} key={message.id}>
                 <span className="chat-avatar">{message.role === "assistant" ? <Bot size={16} /> : <User size={16} />}</span>
@@ -3190,7 +3237,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 <div className="approval-actions"><button type="button" className="secondary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "reject")}>拒绝</button><button type="button" className="primary-button" disabled={approvalBusyId !== null} onClick={() => void resolveApproval(approval.id, "approve")}>{approvalBusyId === approval.id ? <LoaderCircle className="spinning" size={14} /> : <Check size={14} />}批准</button></div>
               </section>
             ))}
-            <div ref={chatEndRef} />
           </div>
           {agentImageDragging && !agentCollapsed && (
             <div className="agent-drop-overlay" aria-hidden="true"><ImageIcon size={26} /><strong>松开以添加图片</strong></div>
