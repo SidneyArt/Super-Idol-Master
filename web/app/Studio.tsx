@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import {
   Bell,
   Bot,
@@ -820,6 +821,7 @@ type StudioProps = {
 };
 
 export default function Studio({ initialRunId, initialWorkspaceId: requestedWorkspaceId, initialNotificationId, initialRuns, initialWorkspaces }: StudioProps) {
+  const router = useRouter();
   const screen: "home" | "task" = initialRunId ? "task" : "home";
   const initialRun = initialRuns.find((item) => item.id === initialRunId);
   const startingWorkspaceId = initialRun?.workspaceId
@@ -935,11 +937,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const toastNotification = toastQueue[0] || null;
 
   function openHome() {
-    window.location.assign("/");
+    router.push("/");
   }
 
   function openTask(runId: string) {
-    window.location.assign(`/?task=${encodeURIComponent(runId)}`);
+    router.push(`/?task=${encodeURIComponent(runId)}`);
   }
 
   function selectTask(run: Run) {
