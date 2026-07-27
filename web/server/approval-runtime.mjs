@@ -50,14 +50,60 @@ export function createApprovalRuntime({ db }) {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS app_notifications_created_idx ON app_notifications(id DESC);
+    CREATE TABLE IF NOT EXISTS app_preferences (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
   db.prepare("UPDATE approval_requests SET status = 'failed', error_message = '本地服务重启，审批执行已中断', resolved_at = ? WHERE status = 'executing'").run(new Date().toISOString());
 
   let executor = null;
 
+  function preferences() {
+    const rows = db.prepare(`
+      SELECT key, value FROM app_preferences
+      WHERE key IN ('notifications_enabled', 'default_approval_mode')
+    `).all();
+    const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+    const coordinatorMode = db.prepare(
+      "SELECT mode FROM agent_permission_modes WHERE scope_type = 'coordinator' AND scope_id = 'global'",
+    ).get()?.mode;
+    return {
+      notificationsEnabled: values.notifications_enabled !== "false",
+      defaultApprovalMode: values.default_approval_mode === "auto" || values.default_approval_mode === "request"
+        ? values.default_approval_mode
+        : coordinatorMode === "auto" ? "auto" : "request",
+    };
+  }
+
+  function updatePreferences(input = {}) {
+    if (input.notificationsEnabled !== undefined && typeof input.notificationsEnabled !== "boolean") {
+      throw new Error("通知设置必须为布尔值");
+    }
+    const current = preferences();
+    const next = {
+      notificationsEnabled: typeof input.notificationsEnabled === "boolean"
+        ? input.notificationsEnabled
+        : current.notificationsEnabled,
+      defaultApprovalMode: input.defaultApprovalMode === undefined
+        ? current.defaultApprovalMode
+        : normalizeMode(input.defaultApprovalMode),
+    };
+    const now = new Date().toISOString();
+    const upsert = db.prepare(`
+      INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `);
+    upsert.run("notifications_enabled", String(next.notificationsEnabled), now);
+    upsert.run("default_approval_mode", next.defaultApprovalMode, now);
+    setPermission("coordinator", "global", next.defaultApprovalMode);
+    return next;
+  }
+
   function permission(scopeType, scopeId) {
     const row = db.prepare("SELECT mode FROM agent_permission_modes WHERE scope_type = ? AND scope_id = ?").get(scopeType, scopeId);
-    return row?.mode === "auto" ? "auto" : "request";
+    return row?.mode === "auto" || row?.mode === "request" ? row.mode : preferences().defaultApprovalMode;
   }
 
   function setPermission(scopeType, scopeId, mode) {
@@ -238,6 +284,8 @@ export function createApprovalRuntime({ db }) {
   }
 
   return {
+    preferences,
+    updatePreferences,
     permission,
     setPermission,
     requestApproval,

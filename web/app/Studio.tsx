@@ -9,6 +9,8 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Cpu,
+  Database,
   Download,
   Expand,
   FileJson,
@@ -32,6 +34,7 @@ import {
   RotateCcw,
   Save,
   Send,
+  Server,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -71,6 +74,10 @@ type JobType = "none" | "2d" | "qa" | "3d" | "topology" | "rig";
 type JobStatus = "idle" | "running" | "succeeded" | "failed";
 type Theme = "light" | "dark";
 type ApprovalMode = "request" | "auto";
+type GlobalPreferences = {
+  notificationsEnabled: boolean;
+  defaultApprovalMode: ApprovalMode;
+};
 type ChatMessage = {
   id: number;
   role: "assistant" | "user";
@@ -209,6 +216,11 @@ type AppNotification = {
   approvalId: number | null;
   readAt: string | null;
   createdAt: string;
+};
+
+const DEFAULT_GLOBAL_PREFERENCES: GlobalPreferences = {
+  notificationsEnabled: true,
+  defaultApprovalMode: "request",
 };
 type ConversationSession = {
   id: string;
@@ -383,7 +395,13 @@ type RunDetail = {
   agentRoleRuns?: AgentRoleRun[];
   agentWorkflowPlan?: AgentWorkflowPlan | null;
 };
-type WorkflowCheck = { ready: boolean; missing: string[] };
+type WorkflowCheck = {
+  ready: boolean;
+  online?: boolean;
+  missing: string[];
+  url?: string;
+  latencyMs?: number;
+};
 type ProcessKind = "2d" | "qa" | "3d" | "rig";
 type ProcessSettings = {
   label: string;
@@ -847,12 +865,18 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [settingsForm, setSettingsForm] = useState<SettingsDraft | null>(null);
-  const [settingsTab, setSettingsTab] = useState<ProcessKind | "topology" | "agent" | "coordinator">("2d");
+  const [settingsTab, setSettingsTab] = useState<ProcessKind | "status" | "topology" | "agent" | "coordinator">("status");
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [systemRefreshing, setSystemRefreshing] = useState(false);
   const [agentModelsLoading, setAgentModelsLoading] = useState(false);
   const [agentModels, setAgentModels] = useState<AgentModelOption[]>([]);
   const [coordinatorModels, setCoordinatorModels] = useState<AgentModelOption[]>([]);
+  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
+  const [globalPreferences, setGlobalPreferences] = useState<GlobalPreferences>(DEFAULT_GLOBAL_PREFERENCES);
+  const [globalPreferencesDraft, setGlobalPreferencesDraft] = useState<GlobalPreferences>(DEFAULT_GLOBAL_PREFERENCES);
+  const [globalSettingsLoading, setGlobalSettingsLoading] = useState(false);
+  const [globalSettingsSaving, setGlobalSettingsSaving] = useState(false);
   const [workflowPreviewOpen, setWorkflowPreviewOpen] = useState(false);
   const [workflowDragging, setWorkflowDragging] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -934,6 +958,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const workflowDirectoryRef = useRef<HTMLInputElement | null>(null);
   const latestNotificationIdRef = useRef(0);
   const notificationsInitializedRef = useRef(false);
+  const notificationsEnabledRef = useRef(DEFAULT_GLOBAL_PREFERENCES.notificationsEnabled);
   const toastNotification = toastQueue[0] || null;
 
   function openHome() {
@@ -1125,7 +1150,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     }
     const newest = notificationData.notifications[0];
     if (newest) {
-      if (showToast && notificationsInitializedRef.current && newest.id > latestNotificationIdRef.current) {
+      if (showToast && notificationsEnabledRef.current && notificationsInitializedRef.current && newest.id > latestNotificationIdRef.current) {
         const incoming = notificationData.notifications.filter((item) => item.id > latestNotificationIdRef.current).sort((a, b) => a.id - b.id);
         setToastQueue((items) => [...items, ...incoming.filter((item) => !items.some((queued) => queued.id === item.id))]);
       }
@@ -1162,6 +1187,20 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }, [showSettings]);
 
   useEffect(() => {
+    if (!showGlobalSettings) return;
+    const previousOverflow = document.body.style.overflow;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowGlobalSettings(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [showGlobalSettings]);
+
+  useEffect(() => {
     if (revertStage === null) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setRevertStage(null);
@@ -1174,10 +1213,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     let cancelled = false;
     async function initialize() {
       try {
-        const [runData, workspaceData, settingsData] = await Promise.all([
+        const [runData, workspaceData, settingsData, preferencesData] = await Promise.all([
           api<{ runs: Run[] }>("/api/runs"),
           api<{ workspaces: Workspace[] }>("/api/workspaces"),
           api<AppSettings>("/api/settings"),
+          api<GlobalPreferences>("/api/ui-preferences"),
         ]);
         if (cancelled) return;
         setRuns(runData.runs);
@@ -1197,6 +1237,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         setSelectedWorkspaceId(nextWorkspaceId);
         setSelectedId(nextRunId);
         setSettings(settingsData);
+        setGlobalPreferences(preferencesData);
+        setGlobalPreferencesDraft(preferencesData);
+        notificationsEnabledRef.current = preferencesData.notificationsEnabled;
       } catch (reason) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "无法连接本地后端");
       } finally {
@@ -1652,10 +1695,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     });
   }
 
-  function workflowReady(kind: "2d" | "qa" | "3d" | "rig") {
-    return system?.comfyui.workflows?.[kind]?.ready === true;
-  }
-
   function downloadUrl(value: string | null) {
     return value ? `${API_BASE}${value}` : "#";
   }
@@ -1673,11 +1712,27 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     });
   }
 
+  async function refreshSystemStatus(reportError = true) {
+    if (systemRefreshing) return;
+    setSystemRefreshing(true);
+    if (reportError) setError("");
+    try {
+      setSystem(await api<SystemState>("/api/system?force=1"));
+    } catch (reason) {
+      setSystem(null);
+      if (reportError) setError(reason instanceof Error ? reason.message : "服务联通检测失败");
+    } finally {
+      setSystemRefreshing(false);
+    }
+  }
+
   async function openSettings() {
+    setShowGlobalSettings(false);
     setShowSettings(true);
     setSettingsLoading(true);
     setWorkflowPreviewOpen(false);
     setError("");
+    void refreshSystemStatus(false);
     try {
       const data = await api<AppSettings>("/api/settings");
       setSettings(data);
@@ -1689,6 +1744,51 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       setShowSettings(false);
     } finally {
       setSettingsLoading(false);
+    }
+  }
+
+  async function openGlobalSettings() {
+    setShowSettings(false);
+    setShowGlobalSettings(true);
+    setGlobalSettingsLoading(true);
+    setError("");
+    try {
+      const data = await api<GlobalPreferences>("/api/ui-preferences");
+      setGlobalPreferences(data);
+      setGlobalPreferencesDraft(data);
+      notificationsEnabledRef.current = data.notificationsEnabled;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "全局设置读取失败");
+      setShowGlobalSettings(false);
+    } finally {
+      setGlobalSettingsLoading(false);
+    }
+  }
+
+  async function saveGlobalSettings(event: FormEvent) {
+    event.preventDefault();
+    if (globalSettingsSaving) return;
+    setGlobalSettingsSaving(true);
+    setError("");
+    try {
+      const data = await api<GlobalPreferences>("/api/ui-preferences", {
+        method: "PUT",
+        body: JSON.stringify(globalPreferencesDraft),
+      });
+      setGlobalPreferences(data);
+      setGlobalPreferencesDraft(data);
+      notificationsEnabledRef.current = data.notificationsEnabled;
+      if (!data.notificationsEnabled) {
+        setShowNotifications(false);
+        setToastQueue([]);
+      }
+      setCoordinatorMode(data.defaultApprovalMode);
+      setShowGlobalSettings(false);
+      void refreshActivity(false).catch(() => undefined);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "全局设置保存失败");
+    } finally {
+      setGlobalSettingsSaving(false);
     }
   }
 
@@ -2514,9 +2614,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const dgxDevice = system?.comfyui.devices?.[0] || null;
   const dgxMemoryTotal = formatMemory(dgxDevice?.vramTotal ?? dgxDevice?.torchVramTotal);
   const dgxMemoryFree = formatMemory(dgxDevice?.vramFree ?? dgxDevice?.torchVramFree);
-  const dgxDeviceSummary = dgxDevice
-    ? `${dgxDevice.name}${dgxMemoryTotal ? ` · GPU／统一内存 ${dgxMemoryFree || "-"} / ${dgxMemoryTotal} 可用` : ""}`
-    : "尚未读取到 DGX 设备信息";
 
   return (
     <main
@@ -2531,13 +2628,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
           </button>
         </div>
         <div className="topbar-right">
-          <div className="system-status">
-            <span className="status-pill healthy"><i />API</span>
-            <span className={`status-pill ${system?.comfyui.pipelineReady ? "healthy" : "unhealthy"}`} title={dgxDeviceSummary}>
-              <i />DGX {system?.comfyui.online ? `${system.comfyui.latencyMs} ms` : "离线"}
-            </span>
-          </div>
-          <div className="notification-center" ref={notificationCenterRef}>
+          {globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
             <button className="icon-button notification-button" type="button" onClick={() => setShowNotifications((value) => !value)} title="通知" aria-label={`通知，${unreadNotificationCount} 条未读`}>
               <Bell size={18} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
             </button>
@@ -2566,17 +2657,17 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 </div>
               </div>
             )}
-          </div>
+          </div>}
           <button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
             {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
           </button>
-          <button className="icon-button" type="button" onClick={() => void openSettings()} title="请求设置" aria-label="打开请求设置面板">
+          <button className="icon-button" type="button" onClick={() => void openGlobalSettings()} title="全局设置" aria-label="打开全局设置面板">
             <Settings size={18} />
           </button>
         </div>
       </header>
 
-      {toastNotification && (
+      {globalPreferences.notificationsEnabled && toastNotification && (
         <aside className={`notification-toast ${toastNotification.kind}`} role="status">
           <span><Bell size={18} /></span>
           <div><strong>{toastNotification.title}</strong><p>{toastNotification.message}</p></div>
@@ -2679,15 +2770,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               <div className="dispatcher-actions">
                 <button className="secondary-button" type="button" disabled={!selectedWorkspace} onClick={() => { if (selectedWorkspace) void openAssetLibrary(selectedWorkspace.id); }}><Library size={16} />资产库</button>
                 <button className="secondary-button" type="button" onClick={() => { setForm({ name: "", workspaceId: selectedWorkspaceId, pipelineType: "text_to_model" }); setShowCreate(true); }}><Plus size={16} />新建任务</button>
-                <button className="secondary-button" type="button" onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Settings size={16} />模型配置</button>
+                <button className="secondary-button" type="button" onClick={() => { setSettingsTab("status"); void openSettings(); }}><Settings size={16} />模型配置</button>
               </div>
             </header>
-
-            <div className="dispatcher-models">
-              <button type="button" className={settings?.coordinator.imageModels.textToImage.apiKeyConfigured ? "configured" : "missing"} onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Sparkles size={16} /><span><small>文生图 API</small><strong>{settings?.coordinator.imageModels.textToImage.model || "未读取"}</strong></span><em>{settings?.coordinator.imageModels.textToImage.apiKeyConfigured ? "已配置" : "待配置"}</em></button>
-              <button type="button" className={settings?.coordinator.imageModels.imageToImage.apiKeyConfigured ? "configured" : "missing"} onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><ImageIcon size={16} /><span><small>图生图 API</small><strong>{settings?.coordinator.imageModels.imageToImage.model || "未读取"}</strong></span><em>{settings?.coordinator.imageModels.imageToImage.apiKeyConfigured ? "已配置" : "待配置"}</em></button>
-              <button type="button" className={settings?.coordinator.agent.apiKeyConfigured ? "configured" : "missing"} onClick={() => { setSettingsTab("coordinator"); void openSettings(); }}><Bot size={16} /><span><small>调度模型</small><strong>{settings?.coordinator.agent.model || "未读取"}</strong></span><em>{settings?.coordinator.agent.apiKeyConfigured ? "已配置" : "待配置"}</em></button>
-            </div>
 
             <div
               className="dispatcher-thread"
@@ -2837,10 +2922,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </button>
             ))}
           </div>
-          <div className="sidebar-footer">
-            <span className="database-dot" />
-            <span className="sidebar-copy"><strong>SQLite</strong><small>本地持久化</small></span>
-          </div>
         </aside>
 
         <section className="workspace">
@@ -2864,18 +2945,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   <button className="icon-button" type="button" onClick={resetRun} disabled={busy || run.jobStatus === "running"} title="重置任务" aria-label="重置任务"><RotateCcw size={17} /></button>
                   <button className="icon-button danger" type="button" onClick={deleteRun} disabled={busy || run.jobStatus === "running"} title="删除任务" aria-label="删除任务"><Trash2 size={17} /></button>
                 </div>
-              </div>
-
-              <div className="pipeline-bar">
-                <div className="pipeline-health">
-                  {(["2d", "qa", "3d", "rig"] as const).map((kind) => (
-                    <span key={kind} className={workflowReady(kind) ? "ready" : "missing"}><i />{jobName(kind)}</span>
-                  ))}
-                  <span className={system?.comfyui.topology?.ready ? "ready" : "missing"}><i />AutoRemesher</span>
-                </div>
-                <span className="queue-status" title={dgxDeviceSummary}>
-                  {dgxMemoryTotal ? `${dgxMemoryFree || "-"} / ${dgxMemoryTotal} 可用 · ` : ""}队列 {system?.comfyui.queue?.running || 0} 运行 / {system?.comfyui.queue?.pending || 0} 等待
-                </span>
               </div>
 
               <div className="production-board">
@@ -3286,11 +3355,89 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         </div>
       )}
 
+      {showGlobalSettings && (
+        <div className="settings-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowGlobalSettings(false); }}>
+          <form className="global-settings-panel" onSubmit={saveGlobalSettings} aria-label="全局设置">
+            <div className="settings-header">
+              <div><span>Website Preferences</span><h2>全局设置</h2></div>
+              <button className="icon-button" type="button" onClick={() => setShowGlobalSettings(false)} aria-label="关闭全局设置面板"><X size={19} /></button>
+            </div>
+
+            {globalSettingsLoading ? (
+              <div className="settings-loading"><LoaderCircle size={20} /><span>正在读取全局设置</span></div>
+            ) : (
+              <div className="global-settings-content">
+                <section className="global-settings-section" aria-labelledby="global-notification-title">
+                  <div className="global-settings-section-heading">
+                    <span className="global-settings-icon"><Bell size={18} /></span>
+                    <div>
+                      <h3 id="global-notification-title">通知</h3>
+                      <p>控制顶部通知中心和实时弹出的站内提醒。</p>
+                    </div>
+                  </div>
+                  <label className="global-setting-row">
+                    <span>
+                      <strong>展示通知</strong>
+                      <small>关闭后保留通知记录，但不显示铃铛入口和弹出提醒。</small>
+                    </span>
+                    <input
+                      className="settings-switch-input"
+                      type="checkbox"
+                      checked={globalPreferencesDraft.notificationsEnabled}
+                      onChange={(event) => setGlobalPreferencesDraft((current) => ({ ...current, notificationsEnabled: event.target.checked }))}
+                    />
+                    <i className="settings-switch" aria-hidden="true" />
+                  </label>
+                </section>
+
+                <section className="global-settings-section" aria-labelledby="global-permission-title">
+                  <div className="global-settings-section-heading">
+                    <span className="global-settings-icon"><ShieldCheck size={18} /></span>
+                    <div>
+                      <h3 id="global-permission-title">默认执行权限</h3>
+                      <p>应用于总调度 Agent，并作为尚未单独设置权限的新任务默认值。</p>
+                    </div>
+                  </div>
+                  <div className="default-permission-options" role="radiogroup" aria-label="默认执行权限">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={globalPreferencesDraft.defaultApprovalMode === "request"}
+                      className={globalPreferencesDraft.defaultApprovalMode === "request" ? "active" : ""}
+                      onClick={() => setGlobalPreferencesDraft((current) => ({ ...current, defaultApprovalMode: "request" }))}
+                    >
+                      <ShieldCheck size={17} />
+                      <span><strong>请求批准</strong><small>执行关键操作前先征求确认</small></span>
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={globalPreferencesDraft.defaultApprovalMode === "auto"}
+                      className={globalPreferencesDraft.defaultApprovalMode === "auto" ? "active" : ""}
+                      onClick={() => setGlobalPreferencesDraft((current) => ({ ...current, defaultApprovalMode: "auto" }))}
+                    >
+                      <Play size={17} />
+                      <span><strong>自动执行</strong><small>符合流程的操作无需逐次批准</small></span>
+                    </button>
+                  </div>
+                  <p className="global-settings-note">已有任务若设置过独立权限，将继续使用各自的设置。</p>
+                </section>
+              </div>
+            )}
+
+            <div className="settings-actions">
+              <button type="button" className="secondary-button" onClick={() => setShowGlobalSettings(false)}>取消</button>
+              <button type="submit" className="primary-button" disabled={globalSettingsLoading || globalSettingsSaving}><Save size={16} />{globalSettingsSaving ? "保存中…" : "保存设置"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {showSettings && (
         <div className="settings-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowSettings(false); }}>
-          <form className="settings-panel" onSubmit={saveSettings} aria-label="请求设置">
+          <form className="settings-panel" onSubmit={saveSettings} aria-label="模型配置">
             <div className="settings-header">
-              <div><span>运行配置</span><h2>请求设置</h2></div>
+              <div><span>Model & Service Configuration</span><h2>模型配置</h2></div>
               <button className="icon-button" type="button" onClick={() => setShowSettings(false)} aria-label="关闭设置面板"><X size={19} /></button>
             </div>
 
@@ -3299,6 +3446,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             ) : (
               <>
                 <div className="settings-tabs" role="tablist" aria-label="配置分类">
+                  <button type="button" role="tab" aria-selected={settingsTab === "status"} className={settingsTab === "status" ? "active" : ""} onClick={() => { setSettingsTab("status"); setWorkflowPreviewOpen(false); }}>服务状态</button>
                   {PROCESS_KINDS.map((kind) => (
                     <button key={kind} type="button" role="tab" aria-selected={settingsTab === kind} className={settingsTab === kind ? "active" : ""} onClick={() => { setSettingsTab(kind); setWorkflowPreviewOpen(false); }}>
                       {kind === "qa" ? "QA" : kind.toUpperCase()}
@@ -3310,7 +3458,77 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 </div>
 
                 <div className="settings-content">
-                  {settingsTab === "topology" ? (
+                  {settingsTab === "status" ? (
+                    <section className="connection-settings" aria-label="服务联通状态">
+                      <div className="settings-section-heading">
+                        <div><span>Connectivity</span><h3>服务联通状态</h3></div>
+                        <button className="text-icon-button" type="button" onClick={() => void refreshSystemStatus()} disabled={systemRefreshing}>
+                          <RefreshCw className={systemRefreshing ? "spinning" : ""} size={15} />{systemRefreshing ? "检测中" : "重新检测"}
+                        </button>
+                      </div>
+                      <p className="connection-settings-intro">模型、工作流和外部服务的联通检测集中显示在这里，不再占用主界面空间。</p>
+
+                      <div className="connection-summary-grid">
+                        <article className="connection-summary-card">
+                          <header>
+                            <span><Server size={18} /></span>
+                            <div><strong>本地服务</strong><small>Web API 与数据存储</small></div>
+                          </header>
+                          <div className="connection-summary-rows">
+                            <div><span>本地 API</span><em className={system?.api ? "ready" : "missing"}><i />{system?.api ? "正常" : "不可用"}</em></div>
+                            <div><span>SQLite</span><em className={system?.database ? "ready" : "missing"}><i />{system?.database ? "正常" : "不可用"}</em></div>
+                          </div>
+                        </article>
+
+                        <article className="connection-summary-card">
+                          <header>
+                            <span><Cpu size={18} /></span>
+                            <div><strong>DGX / ComfyUI</strong><small>{system?.comfyui.url || "尚未读取服务地址"}</small></div>
+                          </header>
+                          <div className="connection-summary-rows">
+                            <div><span>联通状态</span><em className={system?.comfyui.online ? "ready" : "missing"}><i />{system?.comfyui.online ? `${system.comfyui.latencyMs} ms` : "离线"}</em></div>
+                            <div><span>工作流</span><em className={system?.comfyui.pipelineReady ? "ready" : "missing"}><i />{system?.comfyui.pipelineReady ? "全部就绪" : "存在缺失"}</em></div>
+                            <div><span>设备</span><b>{dgxDevice?.name || "未检测到 GPU"}</b></div>
+                            <div><span>显存/统一内存</span><b>{dgxMemoryTotal ? `${dgxMemoryFree || "-"} / ${dgxMemoryTotal} 可用` : "暂无数据"}</b></div>
+                            <div><span>任务队列</span><b>{system?.comfyui.queue?.running || 0} 运行 / {system?.comfyui.queue?.pending || 0} 等待</b></div>
+                          </div>
+                        </article>
+                      </div>
+
+                      <div className="connection-service-heading">
+                        <div><Database size={17} /><span><strong>工作流与外部服务</strong><small>检测请求地址、节点依赖和服务就绪状态</small></span></div>
+                      </div>
+                      <div className="connection-service-list">
+                        {PROCESS_KINDS.map((kind) => {
+                          const check = system?.comfyui.workflows?.[kind];
+                          const process = settings.processes[kind];
+                          const ready = check?.ready === true;
+                          const detail = ready
+                            ? check?.latencyMs ? `${check.latencyMs} ms` : process.mode === "api" ? "API 凭据已配置" : "节点依赖完整"
+                            : check?.missing?.length ? `缺少：${check.missing.join("、")}` : "服务不可用";
+                          return (
+                            <article key={kind}>
+                              <span className="connection-service-icon"><i className={ready ? "ready" : "missing"} /></span>
+                              <div><strong>{jobName(kind)}</strong><small>{check?.url || process.url}</small><p>{detail}</p></div>
+                              <em className={ready ? "ready" : "missing"}>{ready ? "已就绪" : "未就绪"}</em>
+                            </article>
+                          );
+                        })}
+                        {(() => {
+                          const topology = system?.comfyui.topology;
+                          const ready = topology?.ready === true;
+                          const detail = !topology?.configured ? "尚未配置服务地址" : topology.online ? `${topology.latencyMs} ms${topology.architecture ? ` · ${topology.architecture}` : ""}` : "服务离线";
+                          return (
+                            <article>
+                              <span className="connection-service-icon"><i className={ready ? "ready" : "missing"} /></span>
+                              <div><strong>AutoRemesher</strong><small>{topology?.url || settings.topology.url || "未配置"}</small><p>{detail}</p></div>
+                              <em className={ready ? "ready" : "missing"}>{ready ? "已就绪" : "未就绪"}</em>
+                            </article>
+                          );
+                        })()}
+                      </div>
+                    </section>
+                  ) : settingsTab === "topology" ? (
                     <section className="process-settings" aria-label="自动拓扑 API 配置">
                       <div className="settings-section-heading">
                         <div><span>External Service</span><h3>自动拓扑 API</h3></div>

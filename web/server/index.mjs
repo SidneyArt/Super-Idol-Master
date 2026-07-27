@@ -2425,6 +2425,15 @@ const server = createServer(async (req, res) => {
       json(res, 200, result);
       return;
     }
+    if (req.method === "GET" && url.pathname === "/api/ui-preferences") {
+      json(res, 200, approvalRuntime.preferences());
+      return;
+    }
+    if (req.method === "PUT" && url.pathname === "/api/ui-preferences") {
+      const body = await readBody(req, 50_000);
+      json(res, 200, approvalRuntime.updatePreferences(body));
+      return;
+    }
     if (req.method === "GET" && url.pathname === "/api/agent-controls") {
       const runId = url.searchParams.get("runId");
       const workspaceId = url.searchParams.get("workspaceId");
