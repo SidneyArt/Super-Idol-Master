@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./docs/assets/branding/super-idol-master-logo.png" alt="Super Idol Master" width="760">
+  <img src="./docs/assets/branding/super-idol-master-logo-bright.png" alt="Super Idol Master" width="760">
 
   <p><strong>面向数字角色资产的质量门禁式多智能体生产线</strong></p>
   <p>

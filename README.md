@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./docs/assets/branding/super-idol-master-logo.png" alt="Super Idol Master" width="760">
+  <img src="./docs/assets/branding/super-idol-master-logo-bright.png" alt="Super Idol Master" width="760">
 
   <p><strong>A quality-gated, multi-agent production line for digital character assets.</strong></p>
   <p>
