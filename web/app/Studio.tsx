@@ -2746,7 +2746,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     return (
                       <div className="dispatcher-timeline-card-row" key={`task-batch-${batch.id}`}>
                         <section className="dispatcher-task-batch">
-                          <header><span><Box size={16} /></span><div><strong>角色拆分结果</strong><small>{batch.tasks.length} 个独立任务 · 目标：{targetLabel}</small></div></header>
+                          <header><span><Box size={16} /></span><div><strong>{batch.tasks.length === 1 ? "单角色任务" : "角色拆分结果"}</strong><small>{batch.tasks.length} 个独立任务 · 目标：{targetLabel}</small></div></header>
                           <div className="dispatcher-task-grid">
                             {batch.tasks.map((task) => {
                               const preview = task.sourcePreviewPath || task.previewPath;

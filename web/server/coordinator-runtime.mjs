@@ -61,6 +61,13 @@ export function classifyCoordinatorIntent(message, hasAttachment) {
   );
   const asksForTasks = /(拆分|拆成|分成).{0,12}(任务|角色)|创建.{0,8}(多个|数个|\d+\s*个).{0,8}任务|分别.{0,20}(模型|绑骨)|每个角色.{0,20}(任务|模型|绑骨)/i.test(text);
   const asksForSplit = /(拆分|拆开|分拆)(?:吧|一下|角色|任务|这张|上(?:一张|图)|合集|原画)?/i.test(text);
+  const asksForSingleCharacter = !hasAttachment && (
+    /(?:生成|创建|制作|画|绘制|做).{0,20}(?:一个|1\s*个|单个|单一).{0,4}(?:角色|人物)/i.test(text)
+    || /(?:生成|创建|制作|画|绘制|做).{0,20}(?:单角色|单人)(?:图|图片|原画|概念图)?/i.test(text)
+    || /(?:生成|创建|制作|画|绘制|做).{0,20}(?:角色|人物)(?:的)?(?:图|图片|原画|概念图)/i.test(text)
+    || /(?:只要|仅要|只有|仅生成).{0,8}(?:一个|1\s*个|单个)?(?:角色|人物)/i.test(text)
+  );
+  const asksForMultipleCharacters = /(?:多个|数个|若干|两|二|三|四|五|六|七|八|九|十|[2-9]\d*)\s*(?:个|名|位)?(?:不同)?(?:角色|人物)/i.test(text);
   const asksToAdvanceExistingTasks = (
     /(?:继续|接着|推进|往下).{0,24}(?:这些|这几个|上述|刚才|已有|现有)?(?:角色)?任务/i.test(text)
     || /(?:这些|这几个|上述|刚才|已有|现有).{0,12}(?:角色)?任务.{0,24}(?:继续|推进|做到|生成到|进入)/i.test(text)
@@ -97,8 +104,22 @@ export function classifyCoordinatorIntent(message, hasAttachment) {
     requestedTarget,
     asksAboutImage,
     asksForRegeneration,
+    singleCharacterRequest: asksForSingleCharacter
+      && !asksForSingleSheet
+      && !asksForTasks
+      && !asksForSplit
+      && !asksForMultipleCharacters,
     singleSheetOnly: asksForSingleSheet && !asksForTasks && !asksForSplit && !asksToAdvanceExistingTasks && !asksAboutImage && !asksForRegeneration,
   };
+}
+
+export function validateSingleCharacterTaskRequest(intent, params) {
+  if (!intent?.singleCharacterRequest) return;
+  const expectedTarget = intent.requestedTarget || "concept_image";
+  if (params.tasks.length !== 1) throw new Error("单角色请求必须且只能创建一个角色任务");
+  if (params.tasks[0].pipelineType !== "text_to_model") throw new Error("文本描述的单角色请求必须创建 text_to_model 任务");
+  if (!params.delegateToAgents) throw new Error("单角色出图请求必须委派该任务的 Asset Agent 执行");
+  if (params.target !== expectedTarget) throw new Error(`单角色请求的执行目标必须为 ${expectedTarget}`);
 }
 
 export function createCoordinatorRuntime({
@@ -338,6 +359,7 @@ export function createCoordinatorRuntime({
 规则：
 1. 必须区分“生成一张角色合集图”和“创建多个角色任务”。用户说“创建/生成一张合集图、角色集合图、群像原画，里面有 N 个角色”时，N 只是画面内角色数量，必须只调用 generate_character_sheet，一张图对应一个生成 Job；绝对不要调用 create_character_tasks。
 2. 只有用户明确要求“拆分角色、建立多个任务、分别生成模型/绑骨”，或者上传已有合集原画并要求拆分时，才调用 create_character_tasks。
+2.1 用户要求“生成一个角色的图、单角色原画、只要一个人物”时，这不是合集图：必须调用 create_character_tasks 创建且只创建一个 text_to_model 任务，delegateToAgents 必须为 true。未指定更远目标时 target 使用 concept_image；明确要求 T-Pose、3D、拓扑、绑骨或导出时使用对应目标。绝对不要调用 generate_character_sheet。
 3. 创建任何任务前，先确定目标工作空间；用户未指定时使用当前工作空间，仍不存在则先创建工作空间。
 4. 用户上传包含多个不同角色的合集原画并要求拆分时，视觉分析每个独立角色，为每个角色给出名称、角色描述、提示词和归一化裁切框。裁切框 x/y/width/height 均为 0–1，相对于整张图片。禁止简单按角色数量把画布等宽分栏；必须沿每个目标角色的完整外轮廓单独框选，并包含其头发、帽檐、披风、手脚以及该角色持有或穿戴的全部武器、盾牌、法杖和其他装备。框的四边应尽量留出可见背景间隙；当目标角色与相邻角色或装备在画面中重叠、矩形框无法完全隔离时，优先保证目标角色完整，允许包含少量相邻角色残片，绝对不要裁掉目标角色自身。
 5. 有合集原画的拆分任务使用 image_to_model；纯文本批量任务使用 text_to_model。
@@ -475,11 +497,11 @@ ${transcript.slice(-12000)}
       {
         name: "generate_character_sheet",
         label: "生成单张角色合集图",
-        description: "仅生成一张包含多个不同角色的统一风格合集原画，不创建任何角色任务。用户要求一张合集图，或对上一张合集图提出风格修改、人数纠错、效果重做时必须使用此工具。",
+        description: "仅生成一张包含 2–12 个不同角色的统一风格合集原画，不创建任何角色任务。用户明确要求多人合集图，或对上一张多人合集图提出风格修改、人数纠错、效果重做时使用此工具。单角色请求禁止使用。",
         parameters: Type.Object({
           workspaceId: Type.String({ minLength: 1, maxLength: 80 }),
           title: Type.String({ minLength: 1, maxLength: 80 }),
-          characterCount: Type.Integer({ minimum: 1, maximum: 12 }),
+          characterCount: Type.Integer({ minimum: 2, maximum: 12 }),
           styleDescription: Type.String({ minLength: 1, maxLength: 1000 }),
           characterDescriptions: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 12 }),
           additionalPrompt: Type.String({ maxLength: 2000 }),
@@ -487,6 +509,7 @@ ${transcript.slice(-12000)}
         }),
         executionMode: "sequential",
         execute: async (_id, params) => {
+          if (intent.singleCharacterRequest) throw new Error("用户要求生成单角色图，禁止使用合集图工具；请创建一个 text_to_model 角色任务");
           if (params.characterDescriptions.length !== params.characterCount) throw new Error("角色描述数量必须与合集图角色数量一致");
           if (getPermissionMode() !== "auto") {
             const approval = requestApproval({
@@ -526,8 +549,8 @@ ${transcript.slice(-12000)}
       },
       {
         name: "create_character_tasks",
-        label: "拆分并创建角色任务",
-        description: "批量创建角色任务；有合集图片时会按每个角色的完整外轮廓裁切单体原画，并可委派每个任务的专属 Agent 自动执行。裁切框必须包含目标角色的全部身体、帽檐、披风、武器、盾牌和法杖，禁止用等宽分栏代替轮廓框；发生重叠时优先保全目标角色。",
+        label: "创建单个或多个角色任务",
+        description: "创建角色任务。单角色文生图请求创建一个 text_to_model 任务；有合集图片时按每个角色的完整外轮廓裁切单体原画并创建多个 image_to_model 任务。裁切框必须包含目标角色的全部身体、帽檐、披风、武器、盾牌和法杖，禁止用等宽分栏代替轮廓框；发生重叠时优先保全目标角色。",
         parameters: Type.Object({
           workspaceId: Type.String({ minLength: 1, maxLength: 80 }),
           delegateToAgents: Type.Boolean(),
@@ -553,20 +576,23 @@ ${transcript.slice(-12000)}
         execute: async (_id, params) => {
           if (intent.singleSheetOnly) throw new Error("用户要求的是单张角色合集图，禁止创建多个任务；请改用 generate_character_sheet");
           if (intent.asksToAdvanceExistingTasks) throw new Error("用户要求继续现有任务，禁止重复创建；请改用 continue_latest_tasks");
+          validateSingleCharacterTaskRequest(intent, params);
           if (getPermissionMode() !== "auto") {
             const approval = requestApproval({
               scopeType: "coordinator",
               scopeId: "global",
               workspaceId: params.workspaceId || workspaceId,
               operation: "create_character_tasks",
-              title: `创建并调度 ${params.tasks.length} 个角色任务`,
+              title: params.tasks.length === 1 ? `创建并调度单角色任务“${params.tasks[0].name}”` : `创建并调度 ${params.tasks.length} 个角色任务`,
               description: params.delegateToAgents
                 ? `将创建任务并委派各任务的专属 Asset Agent，目标为 ${params.target}。`
                 : "将按分析结果创建角色任务。",
               payload: { ...params, image: attachment, sessionId: execution.sessionId },
             });
             execution.actions.push({ tool: "approval_required", approvalId: approval.id });
-            return textResult(`批量创建与调度需要批准，已提交审批：“${approval.title}”。`, { approval });
+            return textResult(params.tasks.length === 1
+              ? `单角色任务创建与调度需要批准，已提交审批：“${approval.title}”。`
+              : `批量创建与调度需要批准，已提交审批：“${approval.title}”。`, { approval });
           }
           const tasks = await createCharacterTasks({ ...params, image: attachment, sessionId: execution.sessionId });
           const delegated = [];
@@ -581,7 +607,9 @@ ${transcript.slice(-12000)}
             }
           }
           execution.actions.push({ tool: "create_character_tasks", count: tasks.length, delegated });
-          return textResult(`已创建 ${tasks.length} 个角色任务${params.delegateToAgents ? "，并已委派专属 Agent" : ""}。`, { tasks, delegated });
+          return textResult(tasks.length === 1
+            ? `已创建单角色任务“${params.tasks[0].name}”${params.delegateToAgents ? "，并已委派专属 Agent" : ""}。`
+            : `已创建 ${tasks.length} 个角色任务${params.delegateToAgents ? "，并已委派专属 Agent" : ""}。`, { tasks, delegated });
         },
       },
     ];
@@ -680,7 +708,7 @@ ${transcript.slice(-12000)}
     if (!userText) throw new Error("消息不能为空");
     const sessionId = ensureSession(workspaceId);
     const preliminaryIntent = classifyCoordinatorIntent(userText, Boolean(explicitAttachment));
-    if (preliminaryIntent.asksForRegeneration) {
+    if (preliminaryIntent.asksForRegeneration && !preliminaryIntent.singleCharacterRequest) {
       const previousRequest = getLatestCharacterSheetRequest?.(workspaceId, sessionId) || null;
       if (previousRequest) {
         addMessage(workspaceId, "user", userText, explicitAttachment);
