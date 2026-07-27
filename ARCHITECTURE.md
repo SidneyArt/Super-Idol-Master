@@ -2,7 +2,7 @@
 
 本文档帮助开发者和 Agent 快速理解 Super Idol Master 的代码结构、运行边界和关键数据流。架构或职责发生变化时，应同步更新本文档。
 
-最后更新日期：2026-07-22
+最后更新日期：2026-07-27
 
 ## 1. 项目结构
 
@@ -28,6 +28,7 @@ Super-Idol-Master/
 │   │   ├── agent-runtime.mjs         # Supervisor、多 Agent 与持续执行计划
 │   │   ├── approval-runtime.mjs      # 权限模式、审批队列与全局通知
 │   │   ├── coordinator-runtime.mjs   # 跨工作空间总调度与批量任务委派
+│   │   ├── gpu-resource-scheduler.mjs # 全局 FIFO 生成资源队列与唯一 GPU 槽
 │   │   ├── conversation-context.mjs  # Agent 上下文窗口与 token 用量估算
 │   │   ├── settings.mjs              # 工作流、端点、模型和密钥配置
 │   │   └── pipeline/                 # 后端私有 Python / uv 子项目
@@ -124,6 +125,7 @@ Super-Idol-Master/
 - 提供 Run、Agent、设置、工作流上传和产物下载 API；
 - 执行严格阶段状态机，不允许跳过上游产物或质量门禁；
 - 管理单任务 Job 状态和 Python 子进程；
+- 通过进程级全局 FIFO 调度器统一管理普通任务与合集图生成，任一时刻只允许一个生成任务占用 GPU 资源；
 - 接收 ComfyUI WebSocket 进度，并持久化当前节点；
 - 验证输出路径、图片存在性、GLB 头、mesh、skin 和 joints；
 - 在 Job 完成或失败后触发 Agent 持续执行计划。

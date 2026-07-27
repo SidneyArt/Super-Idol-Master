@@ -707,7 +707,8 @@ function formatSessionTime(value: string) {
 function ClientTime({ value, fallback = "" }: { value: string; fallback?: string }) {
   const [text, setText] = useState(fallback);
   useEffect(() => {
-    setText(formatTime(value));
+    const timer = window.setTimeout(() => setText(formatTime(value)), 0);
+    return () => window.clearTimeout(timer);
   }, [value]);
   return <time suppressHydrationWarning>{text}</time>;
 }
@@ -715,7 +716,8 @@ function ClientTime({ value, fallback = "" }: { value: string; fallback?: string
 function ClientSessionTime({ value, fallback = "" }: { value: string; fallback?: string }) {
   const [text, setText] = useState(fallback);
   useEffect(() => {
-    setText(formatSessionTime(value));
+    const timer = window.setTimeout(() => setText(formatSessionTime(value)), 0);
+    return () => window.clearTimeout(timer);
   }, [value]);
   return <small suppressHydrationWarning>{text}</small>;
 }

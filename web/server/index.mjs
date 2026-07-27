@@ -23,6 +23,7 @@ import { loadEnvFile } from "node:process";
 import { createAssetAgentRuntime, imageContent } from "./agent-runtime.mjs";
 import { createApprovalRuntime } from "./approval-runtime.mjs";
 import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
+import { createGpuResourceScheduler } from "./gpu-resource-scheduler.mjs";
 import { jobStartMessage } from "./job-messages.mjs";
 import { createSettingsStore, PROCESS_KINDS } from "./settings.mjs";
 
@@ -997,6 +998,7 @@ function inspectGlb(filePath, requireRig = false) {
 
 const activeJobs = new Map();
 const activeDispatcherJobs = new Map();
+const gpuScheduler = createGpuResourceScheduler({ capacity: 1 });
 
 function persistJobProgress(runId, jobType, progress, message, node = null) {
   db.prepare(`
@@ -1167,7 +1169,7 @@ function failJob(runId, jobType, errorMessage) {
   addEvent(runId, `${jobType}_failed`, { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType], `${jobType.toUpperCase()} 任务失败：${message}`, now);
 }
 
-function launchJob(run, jobType, processConfig) {
+function launchJob(run, jobType, processConfig, lease) {
   const usesImageApi = jobType === "2d" && processConfig.mode === "api";
   const usesTopologyApi = jobType === "topology";
   const workflowPath = usesImageApi || usesTopologyApi ? null : join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
@@ -1213,7 +1215,7 @@ function launchJob(run, jobType, processConfig) {
     if (workflowPath && existsSync(workflowPath)) unlinkSync(workflowPath);
     throw error;
   }
-  const activeJob = { runId: run.id, jobType, child, socket: null, workflowPath };
+  const activeJob = { runId: run.id, jobType, child, socket: null, workflowPath, lease };
   activeJobs.set(run.id, activeJob);
   let stdout = "";
   let stderr = "";
@@ -1278,11 +1280,19 @@ function launchJob(run, jobType, processConfig) {
       void assetAgent.handleJobFailed({ runId: run.id, jobType, message }).catch((diagnosisError) => {
         console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, diagnosisError);
       });
+    } finally {
+      lease.release();
     }
   };
 
   child.on("error", (error) => finalize(false, error.message));
   child.on("close", (code) => finalize(code === 0, code === 0 ? "" : stderr || `Python 退出代码 ${code}`));
+  return {
+    cancel: () => {
+      if (activeJob.socket) activeJob.socket.close();
+      child.kill();
+    },
+  };
 }
 
 function startJob(runId, jobType) {
@@ -1315,6 +1325,7 @@ function startJob(runId, jobType) {
 
   const stage = { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType];
   const message = jobStartMessage(jobType, processConfig);
+  const schedulerId = `run:${runId}`;
   const now = new Date().toISOString();
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -1337,17 +1348,43 @@ function startJob(runId, jobType) {
       UPDATE runs SET job_type = ?, generation_status = 'running', generation_message = ?,
         generation_progress = 1, generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ?
       WHERE id = ?
-    `).run(jobType, message, now, runId);
-    addEvent(runId, `${jobType}_started`, stage, `启动${message.replace("正在调用 ", "")}`, now);
+    `).run(jobType, `已加入全局 GPU 队列：${message}`, now, runId);
+    addEvent(runId, `${jobType}_queued`, stage, `已加入全局 GPU 队列：${message.replace("正在调用 ", "")}`, now);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
   try {
-    launchJob(getRunRow(runId), jobType, processConfig);
+    gpuScheduler.schedule({
+      id: schedulerId,
+      label: `${getRunRow(runId).name} · ${jobType}`,
+      onQueued: ({ position }) => {
+        db.prepare(`
+          UPDATE runs SET generation_message = ?, updated_at = ?
+          WHERE id = ? AND generation_status = 'running' AND job_type = ?
+        `).run(`正在等待全局 GPU 资源（队列第 ${position} 位）：${message}`, new Date().toISOString(), runId, jobType);
+      },
+      start: (lease) => {
+        const startedAt = new Date().toISOString();
+        db.prepare(`
+          UPDATE runs SET generation_message = ?, updated_at = ?
+          WHERE id = ? AND generation_status = 'running' AND job_type = ?
+        `).run(message, startedAt, runId, jobType);
+        addEvent(runId, `${jobType}_started`, stage, `获得全局 GPU 资源，启动${message.replace("正在调用 ", "")}`, startedAt);
+        return launchJob(getRunRow(runId), jobType, processConfig, lease);
+      },
+      onStartError: (error) => {
+        failJob(runId, jobType, error instanceof Error ? error.message : "任务进程启动失败");
+      },
+      onCancel: (reason) => {
+        failJob(runId, jobType, reason);
+      },
+    });
   } catch (error) {
-    failJob(runId, jobType, error instanceof Error ? error.message : "任务进程启动失败");
+    if (getRunRow(runId)?.jobStatus === "running") {
+      failJob(runId, jobType, error instanceof Error ? error.message : "任务调度失败");
+    }
     throw error;
   }
   return runDetail(runId);
@@ -2106,57 +2143,98 @@ function startCharacterSheetGeneration(input = {}) {
   db.prepare(`
     INSERT INTO dispatcher_generations (
       id, workspace_id, session_id, title, character_count, prompt, status, message, request_json, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, 'running', '正在调用文生图模型生成单张角色合集图', ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, 'running', '已加入全局 GPU 队列，等待生成单张角色合集图', ?, ?, ?)
   `).run(id, workspaceId, sessionId, title, characterCount, positive, requestJson, now, now);
   db.prepare("UPDATE workspaces SET updated_at = ? WHERE id = ?").run(now, workspaceId);
 
-  const args = [
-    scripts["2d-api"],
-    "--positive", positive,
-    "--negative", negative,
-    "--base-url", imageConfig.baseUrl,
-    "--model", imageConfig.model,
-  ];
-  const child = spawn(PYTHON_COMMAND, args, {
-    cwd: repoRoot,
-    windowsHide: true,
-    env: { ...process.env, PYTHONUTF8: "1", STEPFUN_IMAGE_API_KEY: imageConfig.apiKey },
-  });
-  const active = { child, stdout: "", stderr: "", finalized: false };
-  activeDispatcherJobs.set(id, active);
-  child.stdout.on("data", (chunk) => { active.stdout = `${active.stdout}${chunk.toString("utf8")}`.slice(-100_000); });
-  child.stderr.on("data", (chunk) => { active.stderr = `${active.stderr}${chunk.toString("utf8")}`.slice(-100_000); });
-
-  const finalize = (success, errorMessage = "") => {
-    if (active.finalized) return;
-    active.finalized = true;
-    activeDispatcherJobs.delete(id);
-    const completedAt = new Date().toISOString();
-    try {
-      if (!success) throw new Error((errorMessage || active.stderr || "合集图生成失败").trim().slice(-1200));
-      const lines = active.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      const source = safeOutputPath(lines.at(-1), "file");
-      const previewName = `character-sheet-${id}.png`;
-      copyFileSync(source, join(generatedDir, previewName));
-      const previewPath = `/generated/${previewName}?v=${Date.now()}`;
-      db.prepare(`
-        UPDATE dispatcher_generations SET status = 'succeeded', message = '单张角色合集图生成完成',
-          preview_path = ?, output_path = ?, updated_at = ? WHERE id = ?
-      `).run(previewPath, source, completedAt, id);
-      approvalRuntime.addNotification({
-        kind: "generation_completed",
-        title: "角色合集图生成完成",
-        message: `${title}：已生成包含 ${characterCount} 个角色的单张合集原画`,
-        workspaceId,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "合集图生成失败";
-      db.prepare("UPDATE dispatcher_generations SET status = 'failed', message = ?, updated_at = ? WHERE id = ?").run(message.slice(0, 1200), completedAt, id);
-      approvalRuntime.addNotification({ kind: "generation_failed", title: "角色合集图生成失败", message: `${title}：${message}`, workspaceId });
-    }
+  const failGeneration = (errorMessage) => {
+    const message = String(errorMessage || "合集图生成失败").trim().slice(-1200);
+    db.prepare("UPDATE dispatcher_generations SET status = 'failed', message = ?, updated_at = ? WHERE id = ?")
+      .run(message, new Date().toISOString(), id);
+    approvalRuntime.addNotification({
+      kind: "generation_failed",
+      title: "角色合集图生成失败",
+      message: `${title}：${message}`,
+      workspaceId,
+    });
   };
-  child.on("error", (error) => finalize(false, error.message));
-  child.on("close", (code) => finalize(code === 0, code === 0 ? "" : active.stderr || `Python 退出代码 ${code}`));
+
+  try {
+    gpuScheduler.schedule({
+      id: `dispatcher:${id}`,
+      label: `${title} · 角色合集图`,
+      onQueued: ({ position }) => {
+        db.prepare(`
+          UPDATE dispatcher_generations SET message = ?, updated_at = ?
+          WHERE id = ? AND status = 'running'
+        `).run(`正在等待全局 GPU 资源（队列第 ${position} 位）`, new Date().toISOString(), id);
+      },
+      onStartError: (error) => {
+        failGeneration(error instanceof Error ? error.message : "合集图生成进程启动失败");
+      },
+      onCancel: failGeneration,
+      start: (lease) => {
+        db.prepare(`
+          UPDATE dispatcher_generations
+          SET message = '正在调用文生图模型生成单张角色合集图', updated_at = ?
+          WHERE id = ? AND status = 'running'
+        `).run(new Date().toISOString(), id);
+        const args = [
+          scripts["2d-api"],
+          "--positive", positive,
+          "--negative", negative,
+          "--base-url", imageConfig.baseUrl,
+          "--model", imageConfig.model,
+        ];
+        const child = spawn(PYTHON_COMMAND, args, {
+          cwd: repoRoot,
+          windowsHide: true,
+          env: { ...process.env, PYTHONUTF8: "1", STEPFUN_IMAGE_API_KEY: imageConfig.apiKey },
+        });
+        const active = { child, stdout: "", stderr: "", finalized: false, lease };
+        activeDispatcherJobs.set(id, active);
+        child.stdout.on("data", (chunk) => { active.stdout = `${active.stdout}${chunk.toString("utf8")}`.slice(-100_000); });
+        child.stderr.on("data", (chunk) => { active.stderr = `${active.stderr}${chunk.toString("utf8")}`.slice(-100_000); });
+
+        const finalize = (success, errorMessage = "") => {
+          if (active.finalized) return;
+          active.finalized = true;
+          activeDispatcherJobs.delete(id);
+          const completedAt = new Date().toISOString();
+          try {
+            if (!success) throw new Error((errorMessage || active.stderr || "合集图生成失败").trim().slice(-1200));
+            const lines = active.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+            const source = safeOutputPath(lines.at(-1), "file");
+            const previewName = `character-sheet-${id}.png`;
+            copyFileSync(source, join(generatedDir, previewName));
+            const previewPath = `/generated/${previewName}?v=${Date.now()}`;
+            db.prepare(`
+              UPDATE dispatcher_generations SET status = 'succeeded', message = '单张角色合集图生成完成',
+                preview_path = ?, output_path = ?, updated_at = ? WHERE id = ?
+            `).run(previewPath, source, completedAt, id);
+            approvalRuntime.addNotification({
+              kind: "generation_completed",
+              title: "角色合集图生成完成",
+              message: `${title}：已生成包含 ${characterCount} 个角色的单张合集原画`,
+              workspaceId,
+            });
+          } catch (error) {
+            failGeneration(error instanceof Error ? error.message : "合集图生成失败");
+          } finally {
+            lease.release();
+          }
+        };
+        child.on("error", (error) => finalize(false, error.message));
+        child.on("close", (code) => finalize(code === 0, code === 0 ? "" : active.stderr || `Python 退出代码 ${code}`));
+        return { cancel: () => child.kill() };
+      },
+    });
+  } catch (error) {
+    if (getDispatcherGeneration(id)?.status === "running") {
+      failGeneration(error instanceof Error ? error.message : "合集图调度失败");
+    }
+    throw error;
+  }
   return getDispatcherGeneration(id);
 }
 
@@ -2288,9 +2366,10 @@ const server = createServer(async (req, res) => {
       json(res, 200, {
         ok: true,
         database: "sqlite",
+        gpuScheduler: gpuScheduler.status(),
         databasePath: dbPath,
         sourceMtimeMs: serverSourceMtimeMs,
-        capabilities: ["workspace-assets-v1", "workspace-delete-v1", "mixamo-animation-library-v1"],
+        capabilities: ["workspace-assets-v1", "workspace-delete-v1", "mixamo-animation-library-v1", "global-gpu-scheduler-v1"],
         agent: assetAgent.status(),
       });
       return;
@@ -2677,11 +2756,7 @@ server.listen(PORT, HOST, () => {
 });
 
 function shutdown() {
-  for (const activeJob of activeJobs.values()) {
-    if (activeJob.socket) activeJob.socket.close();
-    activeJob.child.kill();
-  }
-  for (const activeJob of activeDispatcherJobs.values()) activeJob.child.kill();
+  gpuScheduler.shutdown("本地服务关闭，GPU 任务已取消");
   server.close(() => {
     db.close();
     process.exit(0);
