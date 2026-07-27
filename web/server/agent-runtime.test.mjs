@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { ASSET_AGENT_ROLES, buildQaRepairPrompts, createAssetAgentRuntime, normalizeVisualQaReport } from "./agent-runtime.mjs";
-import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
+import { buildCoordinatorImagePrompts, buildSingleCharacterTaskPrompts } from "./coordinator-image-prompts.mjs";
+import { classifyCoordinatorIntent, createCoordinatorRuntime, validateSingleCharacterTaskRequest } from "./coordinator-runtime.mjs";
 
 function createAssetRuntime(db) {
   return createAssetAgentRuntime({
@@ -259,6 +260,84 @@ test("coordinator regenerates the selected character sheet with its saved reques
   assert.deepEqual(result.messages.map((message) => message.role), ["user", "assistant"]);
   assert.match(result.messages[1].content, /regenerated-1/);
   db.close();
+});
+
+test("coordinator distinguishes single-character requests from sheets and task splitting", () => {
+  for (const message of [
+    "生成一个忍者角色的图",
+    "生成一张角色原画",
+    "画一张单角色原画",
+    "只要一个人物，不要其他人",
+    "生成一张包含 1 个角色的概念图",
+    "重新生成一个角色的图",
+  ]) {
+    const intent = classifyCoordinatorIntent(message, false);
+    assert.equal(intent.singleCharacterRequest, true, message);
+    assert.equal(intent.singleSheetOnly, false, message);
+  }
+
+  for (const message of [
+    "生成三个角色的合集图",
+    "画两名不同角色",
+    "创建一张包含 3 个角色的群像原画",
+    "把这张合集图拆成角色任务",
+  ]) {
+    assert.equal(classifyCoordinatorIntent(message, false).singleCharacterRequest, false, message);
+  }
+});
+
+test("single-character coordinator requests enforce one delegated text task", () => {
+  const intent = classifyCoordinatorIntent("生成一个忍者角色的图", false);
+  const valid = {
+    tasks: [{ pipelineType: "text_to_model" }],
+    delegateToAgents: true,
+    target: "concept_image",
+  };
+  assert.doesNotThrow(() => validateSingleCharacterTaskRequest(intent, valid));
+  assert.throws(() => validateSingleCharacterTaskRequest(intent, { ...valid, tasks: [...valid.tasks, ...valid.tasks] }), /只能创建一个/);
+  assert.throws(() => validateSingleCharacterTaskRequest(intent, { ...valid, tasks: [{ pipelineType: "image_to_model" }] }), /text_to_model/);
+  assert.throws(() => validateSingleCharacterTaskRequest(intent, { ...valid, delegateToAgents: false }), /必须委派/);
+  assert.throws(() => validateSingleCharacterTaskRequest(intent, { ...valid, target: "model" }), /concept_image/);
+
+  const modelIntent = classifyCoordinatorIntent("生成一个角色到 3D 模型", false);
+  assert.equal(modelIntent.requestedTarget, "model");
+  assert.doesNotThrow(() => validateSingleCharacterTaskRequest(modelIntent, { ...valid, target: "model" }));
+});
+
+test("coordinator uses a singular prompt for historical one-character generations", () => {
+  const single = buildCoordinatorImagePrompts({
+    characterCount: 1,
+    descriptions: ["蓝色短发的未来忍者"],
+    style: "美式 3D 卡通",
+    negative: "低画质",
+  });
+  assert.match(single.positive, /只有一个人物/);
+  assert.doesNotMatch(single.positive, /合集图|所有角色|横向整齐排列|角色之间/);
+  assert.match(single.negative, /额外人物/);
+  assert.match(single.negative, /角色分身/);
+  assert.match(single.negative, /角色设定表/);
+
+  const sheet = buildCoordinatorImagePrompts({
+    characterCount: 2,
+    descriptions: ["蓝色骑士", "绿色游侠"],
+    style: "统一卡通风格",
+    negative: "低画质",
+  });
+  assert.match(sheet.positive, /准确包含 2 个不同角色/);
+  assert.match(sheet.positive, /横向整齐排列/);
+});
+
+test("every coordinator child task receives deterministic single-character constraints", () => {
+  const prompts = buildSingleCharacterTaskPrompts({
+    description: "蓝色短发的未来忍者",
+    positivePrompt: "美式 3D 卡通，全身出镜",
+    negativePrompt: "低画质",
+  });
+  assert.match(prompts.positivePrompt, /只能有一个完整角色/);
+  assert.match(prompts.positivePrompt, /禁止出现第二个人物/);
+  assert.match(prompts.negativePrompt, /额外人物/);
+  assert.match(prompts.negativePrompt, /角色展示板/);
+  assert.match(prompts.negativePrompt, /低画质/);
 });
 
 test("visual QA cannot pass when its own summary identifies held weapons", () => {

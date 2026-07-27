@@ -23,6 +23,7 @@ import { loadEnvFile } from "node:process";
 import { createAssetAgentRuntime, imageContent } from "./agent-runtime.mjs";
 import { createApprovalRuntime } from "./approval-runtime.mjs";
 import { createCoordinatorRuntime } from "./coordinator-runtime.mjs";
+import { buildCoordinatorImagePrompts, buildSingleCharacterTaskPrompts } from "./coordinator-image-prompts.mjs";
 import { createGpuResourceScheduler } from "./gpu-resource-scheduler.mjs";
 import { jobStartMessage } from "./job-messages.mjs";
 import { createSettingsStore, PROCESS_KINDS } from "./settings.mjs";
@@ -1827,12 +1828,13 @@ async function createCoordinatorTasks({ workspaceId, tasks, image, sessionId = "
       sourceImagePath = previewFile;
       sourcePreviewPath = `/generated/${previewName}?v=${Date.now()}`;
     }
+    const taskPrompts = buildSingleCharacterTaskPrompts(task);
     created.push(createRunRecord({
       workspaceId,
       pipelineType: task.pipelineType,
       name: task.name,
-      positivePrompt: `${task.description}，${task.positivePrompt}`.slice(0, 4000),
-      negativePrompt: task.negativePrompt,
+      positivePrompt: taskPrompts.positivePrompt,
+      negativePrompt: taskPrompts.negativePrompt,
       sourceImagePath,
       sourcePreviewPath,
       requireSourceImage: task.pipelineType === "image_to_model",
@@ -2116,15 +2118,16 @@ function startCharacterSheetGeneration(input = {}) {
   const style = cleanText(input.styleDescription, 1000, "统一风格", true);
   const additional = cleanText(input.additionalPrompt, 2000, "补充要求");
   const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim().slice(0, 80) : "";
-  const negative = cleanText(input.negativePrompt, 2000, "反向提示词") || "角色重复，角色融合，人物重叠，裁切身体，多余人物，文字，水印，低画质，肢体畸形，风格不一致";
-  const enumerated = descriptions.map((item, index) => `${index + 1}. ${item}`).join("；");
-  const positive = [
-    `生成一张角色原画合集图，单张画布内准确包含 ${characterCount} 个不同角色。`,
-    `所有角色保持完全一致的美术风格：${style}。`,
-    `角色设定：${enumerated}。`,
-    "横向整齐排列，每个角色及其全部装备占据独立的等宽安全区域，角色之间保留清晰可见的背景间隔。每个角色必须完整全身、彼此分离且不重叠；头发、帽檐、披风、手脚、武器、盾牌和法杖都不得伸入相邻角色区域或越出画布。比例统一，光照统一，背景简洁，清晰展示服装、配色和身份差异。不要拆成多张图片，不要生成角色卡边框或文字标签。",
+  const requestedNegative = cleanText(input.negativePrompt, 2000, "反向提示词");
+  const defaultNegative = "角色重复，角色融合，人物重叠，裁切身体，多余人物，文字，水印，低画质，肢体畸形，风格不一致";
+  const prompts = buildCoordinatorImagePrompts({
+    characterCount,
+    descriptions,
+    style,
     additional,
-  ].filter(Boolean).join(" ").slice(0, 6000);
+    negative: requestedNegative || defaultNegative,
+  });
+  const { positive, negative } = prompts;
   const imageConfig = settingsStore.coordinatorImageConfig("text_to_model");
   if (!imageConfig.apiKey) throw new Error("总调度文生图 API Key 未配置");
 
