@@ -311,7 +311,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .workspace-task-list button small { margin-top: 1px; color: var(--muted); font-size: 9px; }
 .workspace-task-list > p { margin: 7px; color: var(--muted); font-size: 11px; }
 .workspace-new-task { display: flex; align-items: center; gap: 5px; margin: 5px 7px 0; padding: 5px 7px; border: 0; background: transparent; color: var(--accent); font-size: 10px; cursor: pointer; }
-.dispatcher-panel { min-width: 0; position: relative; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; background: var(--background); overflow: hidden; }
+.dispatcher-panel { min-width: 0; position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: var(--background); overflow: hidden; }
 .dispatcher-panel.dragging { box-shadow: inset 0 0 0 2px var(--accent); }
 .dispatcher-header { min-height: 86px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .dispatcher-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
