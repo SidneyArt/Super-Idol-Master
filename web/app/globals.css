@@ -2490,11 +2490,11 @@ body {
   }
 
   .screen-home .workspace-list {
-    padding: 21px 18px 26px;
+    padding: 15px 18px 22px;
   }
 
   .screen-home .workspace-group {
-    margin: 0 0 14px;
+    margin: 0 0 7px;
     border-radius: 13px;
     overflow: hidden;
   }
@@ -2513,10 +2513,10 @@ body {
 
   .screen-home .workspace-item,
   .screen-home .workspace-item.workspace-item-default {
-    min-height: 92px;
+    min-height: 80px;
     grid-template-columns: minmax(0, 1fr) 42px;
     gap: 4px;
-    padding: 9px 12px;
+    padding: 6px 12px;
   }
 
   .screen-home .workspace-group.selected .workspace-item {
@@ -2910,7 +2910,7 @@ body {
   overflow: hidden;
   border: 0;
   border-radius: 11px;
-  background: url("/workspace-icon-closed.png") center / cover no-repeat;
+  background: url("/workspace-icon-collapsed-v3.png") center / cover no-repeat;
   color: #fff;
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
 }
