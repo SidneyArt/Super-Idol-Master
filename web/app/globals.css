@@ -1595,13 +1595,14 @@ body {
   -webkit-backdrop-filter: blur(28px) saturate(145%);
 }
 
-.topbar-left { justify-self: start; }
+.topbar-left { height: 100%; align-self: center; justify-self: start; }
 .topbar-right { justify-self: end; gap: 8px; }
-.home-brand { border-radius: 12px; }
+.home-brand { height: 100%; align-items: center; border-radius: 12px; overflow: visible; }
 .brand-logo {
-  width: clamp(190px, 15vw, 252px);
+  width: clamp(220px, 17vw, 286px);
   height: auto;
   display: block;
+  transform: translateY(-5px);
   filter: grayscale(1) brightness(0) invert(1) drop-shadow(0 0 12px rgba(255, 255, 255, 0.08));
 }
 
@@ -2231,7 +2232,7 @@ body {
     gap: 12px;
     padding-inline: 16px;
   }
-  .brand-logo { width: 190px; }
+  .brand-logo { width: 218px; }
   .topbar-center { min-width: 354px; grid-template-columns: repeat(3, minmax(112px, 1fr)); }
   .topbar-center button { padding-inline: 10px; font-size: 12px; }
   .current-workspace-summary { display: none; }
@@ -2244,7 +2245,7 @@ body {
     gap: 10px;
     padding-inline: 12px;
   }
-  .brand-logo { width: 48px; height: 42px; object-fit: cover; object-position: left; }
+  .brand-logo { width: 48px; height: 42px; object-fit: cover; object-position: left; transform: translateY(-3px); }
   .topbar-center { min-width: 0; width: 100%; height: 48px; grid-template-columns: repeat(3, 1fr); }
   .topbar-center button span { display: none; }
   .topbar-workspace-button { width: 38px; height: 38px; justify-content: center; padding: 0; }
@@ -2269,7 +2270,7 @@ body {
 @media (max-width: 560px) {
   .topbar { grid-template-columns: auto minmax(132px, 1fr) auto; padding-inline: 8px; }
   .topbar-left { width: 40px; overflow: hidden; }
-  .brand-logo { width: 43px; height: 40px; }
+  .brand-logo { width: 43px; height: 40px; transform: translateY(-2px); }
   .topbar-center { height: 44px; border-radius: 14px; }
   .topbar-center button { border-radius: 11px; }
   .topbar-right > .topbar-workspace-button,
@@ -2376,7 +2377,7 @@ body {
   .screen-home .topbar-left {
     height: 100%;
     align-self: center;
-    transform: translateY(-2px);
+    transform: none;
   }
 
   .screen-home .home-brand {
@@ -2395,7 +2396,8 @@ body {
   }
 
   .screen-home .brand-logo {
-    width: clamp(154px, 11.5vw, 178px);
+    width: clamp(230px, 17vw, 280px);
+    transform: translateY(-5px);
   }
 
   .screen-home .topbar-center {
