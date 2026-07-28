@@ -6,6 +6,7 @@ import {
   Bell,
   Bot,
   Box,
+  BrainCircuit,
   Check,
   ChevronDown,
   ChevronRight,
@@ -37,6 +38,7 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Sun,
   Trash2,
@@ -655,11 +657,14 @@ function AgentPermissionMenu({ mode, onChange, title }: { mode: ApprovalMode; on
   return (
     <div className={`agent-permission-menu ${open ? "open" : ""}`} ref={rootRef}>
       <button type="button" className="agent-permission-trigger" onClick={() => setOpen((value) => !value)} title={title} aria-haspopup="listbox" aria-expanded={open}>
-        <ShieldCheck size={14} /><span>{mode === "request" ? "请求批准" : "Auto"}</span><ChevronDown size={13} />
+        {mode === "request"
+          ? <span className="approval-shield-icon" aria-hidden="true" />
+          : <Sparkles size={20} />}
+        <span>{mode === "request" ? "请求批准" : "Auto"}</span><ChevronDown size={15} />
       </button>
       {open && (
         <div className="agent-permission-options" role="listbox" aria-label={title}>
-          <button type="button" className={mode === "request" ? "selected" : ""} role="option" aria-selected={mode === "request"} onClick={() => { onChange("request"); setOpen(false); }}><ShieldCheck size={14} /><span><strong>请求批准</strong><small>执行变更前询问</small></span>{mode === "request" && <Check size={14} />}</button>
+          <button type="button" className={mode === "request" ? "selected" : ""} role="option" aria-selected={mode === "request"} onClick={() => { onChange("request"); setOpen(false); }}><span className="approval-shield-icon" aria-hidden="true" /><span><strong>请求批准</strong><small>执行变更前询问</small></span>{mode === "request" && <Check size={14} />}</button>
           <button type="button" className={mode === "auto" ? "selected" : ""} role="option" aria-selected={mode === "auto"} onClick={() => { onChange("auto"); setOpen(false); }}><Sparkles size={14} /><span><strong>Auto</strong><small>自动批准受控操作</small></span>{mode === "auto" && <Check size={14} />}</button>
         </div>
       )}
@@ -2634,7 +2639,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     >
       <LiquidWaveBackground
         theme={theme}
-        animated={globalPreferences.backgroundAnimationEnabled}
+        animated={showGlobalSettings
+          ? globalPreferencesDraft.backgroundAnimationEnabled
+          : globalPreferences.backgroundAnimationEnabled}
       />
       <header className="topbar">
         <div className="topbar-left">
@@ -2652,6 +2659,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         </div>
         <nav className="topbar-center" aria-label="主要功能">
           <button
+            className={assetLibraryWorkspaceId !== null || (!showCreate && !showSettings) ? "active" : ""}
             type="button"
             disabled={!selectedWorkspace && !run}
             onClick={() => {
@@ -2664,6 +2672,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             <Library size={17} /><span>资产库</span>
           </button>
           <button
+            className={showCreate ? "active" : ""}
             type="button"
             onClick={() => {
               setForm({
@@ -2677,22 +2686,16 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               setShowCreate(true);
             }}
           >
-            <Plus size={18} /><span>新建任务</span>
+            <SlidersHorizontal size={18} /><span>新建任务</span>
           </button>
-          <button type="button" onClick={() => { setSettingsTab("status"); void openSettings(); }}>
-            <Settings size={17} /><span>模型配置</span>
+          <button className={showSettings ? "active" : ""} type="button" onClick={() => { setSettingsTab("status"); void openSettings(); }}>
+            <BrainCircuit size={18} /><span>模型配置</span>
           </button>
         </nav>
         <div className="topbar-right">
           {screen === "home" && (
-            <div className="current-workspace-summary">
-              <span>当前空间</span>
-              <strong>{workspaces.length} 个空间</strong>
-            </div>
-          )}
-          {screen === "home" && (
             <button className="topbar-workspace-button" type="button" onClick={() => setShowWorkspaceCreate(true)}>
-              <Plus size={18} /><span>工作空间</span>
+              <span>创建工作空间</span>
             </button>
           )}
           {screen === "task" && globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
@@ -2726,10 +2729,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             )}
           </div>}
           <button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-          <button className="icon-button" type="button" onClick={() => void openGlobalSettings()} title="全局设置" aria-label="打开全局设置面板">
-            <Settings size={18} />
+            {theme === "dark" ? <Sun size={27} /> : <Moon size={27} />}
           </button>
         </div>
       </header>
@@ -2765,7 +2765,12 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                       selectWorkspace(workspace.id);
                       setForm((current) => ({ ...current, workspaceId: workspace.id }));
                     }} aria-pressed={workspace.id === selectedWorkspaceId}>
-                      <span className="workspace-icon"><FolderOpen size={17} /></span>
+                      <span
+                        className={`workspace-icon ${expandedWorkspaceIds.has(workspace.id) ? "is-open" : "is-closed"}`}
+                        aria-hidden="true"
+                      >
+                        <span className="workspace-folder-glyph" />
+                      </span>
                       <span><strong>{workspace.name}</strong><small>{workspace.taskCount} 个任务 · {workspace.runningCount} 个运行中</small></span>
                     </button>
                     <button
@@ -2827,6 +2832,18 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 </div>
               ))}
             </div>
+            <footer className="workspace-sidebar-footer">
+              <button
+                className="workspace-sidebar-settings"
+                type="button"
+                onClick={() => void openGlobalSettings()}
+                title="全局设置"
+                aria-label="打开全局设置面板"
+              >
+                <Settings size={21} />
+              </button>
+              <span>{workspaces.length} 个工作空间</span>
+            </footer>
           </nav>
 
           <section
@@ -2953,7 +2970,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 <AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" />
                 <input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} />
                 <ContextUsage context={dispatcherContext} />
-                <span className="dispatcher-composer-actions">{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()} title="停止调度" aria-label="停止调度"><X size={16} /></button>}<button className="primary-button dispatcher-send-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false} title="发送调度" aria-label="发送调度"><Send size={16} /></button></span>
+                <span className="dispatcher-composer-actions">{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()} title="停止调度" aria-label="停止调度"><X size={16} /></button>}<button className="primary-button dispatcher-send-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false} title="发送调度" aria-label="发送调度"><span className="dispatcher-send-glyph" aria-hidden="true" /></button></span>
               </div>
             </form>
             {dispatcherDragging && <div className="dispatcher-drop"><ImageIcon size={34} /><strong>松开以分析合集原画</strong><span>支持最多 12 MB 的 PNG、JPEG 或 WebP</span></div>}
