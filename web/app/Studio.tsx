@@ -49,6 +49,7 @@ import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatMessagesEqual, isChatNearBottom } from "./chat-scroll";
+import LiquidWaveBackground from "./components/LiquidWaveBackground";
 
 const ModelViewer = lazy(() => import("./components/ModelViewer"));
 
@@ -2620,14 +2621,66 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       className={`site-shell screen-${screen} ${screen === "task" && sidebarCollapsed ? "tasks-collapsed" : ""}`}
       data-screen={screen}
     >
+      <LiquidWaveBackground theme={theme} />
       <header className="topbar">
         <div className="topbar-left">
           <button className="brand home-brand" type="button" onClick={openHome} title="返回首页">
-            <span className="brand-mark"><Sparkles size={18} /></span>
-            <span className="brand-copy"><strong>Super Idol Master</strong><small>AI Asset Studio</small></span>
+            <Image
+              className="brand-logo"
+              src="/super-idol-master-logo.png"
+              alt="Super Idol Master"
+              width={1950}
+              height={502}
+              priority
+              unoptimized
+            />
           </button>
         </div>
+        <nav className="topbar-center" aria-label="主要功能">
+          <button
+            type="button"
+            disabled={!selectedWorkspace && !run}
+            onClick={() => {
+              const workspaceId = screen === "task"
+                ? run?.workspaceId
+                : selectedWorkspace?.id;
+              if (workspaceId) void openAssetLibrary(workspaceId);
+            }}
+          >
+            <Library size={17} /><span>资产库</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setForm({
+                name: "",
+                workspaceId: screen === "task"
+                  ? run?.workspaceId || selectedWorkspaceId
+                  : selectedWorkspaceId,
+                pipelineType: "text_to_model",
+              });
+              setTaskSourceImage(null);
+              setShowCreate(true);
+            }}
+          >
+            <Plus size={18} /><span>新建任务</span>
+          </button>
+          <button type="button" onClick={() => { setSettingsTab("status"); void openSettings(); }}>
+            <Settings size={17} /><span>模型配置</span>
+          </button>
+        </nav>
         <div className="topbar-right">
+          {screen === "home" && (
+            <div className="current-workspace-summary">
+              <span>当前空间</span>
+              <strong>{selectedWorkspace?.name || "未选择"}</strong>
+            </div>
+          )}
+          {screen === "home" && (
+            <button className="topbar-workspace-button" type="button" onClick={() => setShowWorkspaceCreate(true)}>
+              <Plus size={18} /><span>工作空间</span>
+            </button>
+          )}
           {globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
             <button className="icon-button notification-button" type="button" onClick={() => setShowNotifications((value) => !value)} title="通知" aria-label={`通知，${unreadNotificationCount} 条未读`}>
               <Bell size={18} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
