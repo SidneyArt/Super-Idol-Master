@@ -168,9 +168,9 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
         background.addColorStop(0.52, "#030405");
         background.addColorStop(1, "#010207");
       } else {
-        background.addColorStop(0, "#f9fbff");
-        background.addColorStop(0.54, "#eef3fa");
-        background.addColorStop(1, "#f4f6fb");
+        background.addColorStop(0, "#fcfbff");
+        background.addColorStop(0.52, "#f4f2ff");
+        background.addColorStop(1, "#edf5ff");
       }
       context.fillStyle = background;
       context.fillRect(0, 0, width, height);
@@ -180,12 +180,14 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
         addRadialGlow(width * 0.78, height * 0.7, width * 0.36, "rgba(116, 145, 198, .055)");
         if (animated) addRadialGlow(pointer.x * width, pointer.y * height, width * 0.22, "rgba(121, 164, 240, .045)");
       } else {
-        addRadialGlow(width * 0.08, height * 0.94, width * 0.46, "rgba(66, 124, 201, .11)");
-        addRadialGlow(width * 0.78, height * 0.7, width * 0.36, "rgba(94, 119, 159, .07)");
+        addRadialGlow(width * 0.08, height * 0.94, width * 0.46, "rgba(78, 160, 255, .13)");
+        addRadialGlow(width * 0.8, height * 0.16, width * 0.34, "rgba(176, 111, 255, .1)");
+        addRadialGlow(width * 0.72, height * 0.76, width * 0.4, "rgba(101, 178, 255, .08)");
+        if (animated) addRadialGlow(pointer.x * width, pointer.y * height, width * 0.2, "rgba(143, 116, 255, .06)");
       }
 
       context.save();
-      context.globalCompositeOperation = theme === "dark" ? "screen" : "multiply";
+      context.globalCompositeOperation = theme === "dark" ? "screen" : "source-over";
       const ribbonSet = ribbons();
 
       for (const ribbon of ribbonSet) {
@@ -197,10 +199,10 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
           centerGradient.addColorStop(0.9, `rgba(129, 154, 196, ${0.026 * ribbon.strength})`);
           centerGradient.addColorStop(1, "rgba(75, 98, 141, 0)");
         } else {
-          centerGradient.addColorStop(0, "rgba(57, 105, 176, 0)");
-          centerGradient.addColorStop(0.32, `rgba(57, 105, 176, ${0.035 * ribbon.strength})`);
-          centerGradient.addColorStop(0.64, `rgba(81, 98, 127, ${0.07 * ribbon.strength})`);
-          centerGradient.addColorStop(1, "rgba(75, 91, 119, 0)");
+          centerGradient.addColorStop(0, "rgba(80, 153, 255, 0)");
+          centerGradient.addColorStop(0.3, `rgba(80, 153, 255, ${0.05 * ribbon.strength})`);
+          centerGradient.addColorStop(0.64, `rgba(151, 117, 244, ${0.075 * ribbon.strength})`);
+          centerGradient.addColorStop(1, "rgba(185, 115, 244, 0)");
         }
 
         context.beginPath();
@@ -212,7 +214,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
         }
         context.strokeStyle = centerGradient;
         context.lineWidth = Math.max(34, height * 0.075);
-        context.shadowColor = theme === "dark" ? "rgba(149, 183, 235, .11)" : "rgba(70, 98, 143, .08)";
+        context.shadowColor = theme === "dark" ? "rgba(149, 183, 235, .11)" : "rgba(114, 139, 255, .12)";
         context.shadowBlur = Math.max(18, height * 0.038);
         context.stroke();
 
@@ -228,17 +230,17 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
             lineGradient.addColorStop(0.92, `rgba(113, 137, 181, ${lineAlpha * 0.58})`);
             lineGradient.addColorStop(1, "rgba(86, 105, 146, 0)");
           } else {
-            lineGradient.addColorStop(0, "rgba(54, 102, 174, 0)");
-            lineGradient.addColorStop(0.2, `rgba(54, 102, 174, ${lineAlpha * 0.72})`);
-            lineGradient.addColorStop(0.6, `rgba(72, 92, 126, ${lineAlpha * 0.82})`);
-            lineGradient.addColorStop(0.82, `rgba(93, 106, 132, ${lineAlpha * 0.58})`);
-            lineGradient.addColorStop(1, "rgba(93, 106, 132, 0)");
+            lineGradient.addColorStop(0, "rgba(70, 145, 255, 0)");
+            lineGradient.addColorStop(0.2, `rgba(70, 145, 255, ${lineAlpha * 0.62})`);
+            lineGradient.addColorStop(0.58, `rgba(107, 142, 242, ${lineAlpha * 0.72})`);
+            lineGradient.addColorStop(0.82, `rgba(170, 116, 239, ${lineAlpha * 0.56})`);
+            lineGradient.addColorStop(1, "rgba(183, 112, 236, 0)");
           }
 
           context.beginPath();
           context.strokeStyle = lineGradient;
           context.lineWidth = line % 9 === 0 ? 1.15 : 0.48;
-          context.shadowColor = theme === "dark" ? "rgba(179, 205, 244, .18)" : "rgba(61, 88, 132, .08)";
+          context.shadowColor = theme === "dark" ? "rgba(179, 205, 244, .18)" : "rgba(113, 145, 255, .14)";
           context.shadowBlur = line % 9 === 0 ? 9 : 2;
 
           for (let step = 0; step <= 150; step += 1) {
@@ -277,7 +279,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
           const x = point.x + normalX * (particle.offset + shimmer);
           const y = point.y + normalY * (particle.offset + shimmer);
           context.beginPath();
-          context.fillStyle = theme === "dark" ? "rgba(185, 211, 250, .34)" : "rgba(62, 94, 145, .2)";
+          context.fillStyle = theme === "dark" ? "rgba(185, 211, 250, .34)" : "rgba(105, 129, 239, .2)";
           context.arc(x, y, particle.size, 0, Math.PI * 2);
           context.fill();
         }
@@ -293,7 +295,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
         Math.max(width, height) * 0.8,
       );
       vignette.addColorStop(0, "rgba(0,0,0,0)");
-      vignette.addColorStop(1, theme === "dark" ? "rgba(0,0,0,.55)" : "rgba(60,75,103,.055)");
+      vignette.addColorStop(1, theme === "dark" ? "rgba(0,0,0,.55)" : "rgba(86,89,153,.04)");
       context.fillStyle = vignette;
       context.fillRect(0, 0, width, height);
 

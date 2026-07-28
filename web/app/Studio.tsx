@@ -789,12 +789,11 @@ function ConversationSessionManager({
   }, [open]);
   return (
     <div className={`conversation-manager ${variant === "home" ? "home-conversation-manager" : ""} ${open ? "open" : ""}`} ref={rootRef}>
-      <button type="button" className="conversation-manager-trigger" disabled={disabled} onClick={() => setOpen((value) => !value)} aria-haspopup="dialog" aria-expanded={open} title={`${label}：${current?.title || "新会话"}`}>
+      <button type="button" className="conversation-manager-trigger" disabled={disabled} onClick={() => setOpen((value) => !value)} aria-label={variant === "home" ? "历史会话" : undefined} aria-haspopup="dialog" aria-expanded={open} title={`${label}：${current?.title || "新会话"}`}>
         <MessageSquare size={14} />
-        <span><strong>{variant === "home" ? "历史会话" : current?.title || "新会话"}</strong><small>{current ? `${current.messageCount} 条消息` : "正在创建"}</small></span>
-        <ChevronDown size={13} />
+        {variant !== "home" && <><span><strong>{current?.title || "新会话"}</strong><small>{current ? `${current.messageCount} 条消息` : "正在创建"}</small></span><ChevronDown size={13} /></>}
       </button>
-      <button type="button" className="conversation-create-button" disabled={disabled} onClick={() => { setOpen(false); onCreate(); }} title="新建会话" aria-label={`新建${label}`}><Plus size={15} />{variant === "home" && <span>新建会话</span>}</button>
+      {variant !== "home" && <button type="button" className="conversation-create-button" disabled={disabled} onClick={() => { setOpen(false); onCreate(); }} title="新建会话" aria-label={`新建${label}`}><Plus size={15} /></button>}
       {open && !disabled && (
         <section className="conversation-menu" role="dialog" aria-label={`${label}列表`}>
           <header><div><strong>会话记录</strong><small>{sessions.length} 个会话</small></div><button type="button" onClick={() => { setOpen(false); onCreate(); }}><Plus size={14} />新对话</button></header>
@@ -1080,6 +1079,8 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }
 
   function clearDispatcherConversation() {
+    dispatcherForceScrollRef.current = true;
+    dispatcherNearBottomRef.current = true;
     setDispatcherMessages([]);
     dispatcherSessionIdRef.current = "";
     setDispatcherSessionId("");
@@ -1355,7 +1356,8 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     const force = dispatcherForceScrollRef.current;
     dispatcherForceScrollRef.current = false;
     if (!force && !dispatcherNearBottomRef.current) return;
-    container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    if (force) container.scrollTop = container.scrollHeight;
+    else container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
     dispatcherNearBottomRef.current = true;
   }, [dispatcherMessages, dispatcherBusy, approvalScrollKey, dispatcherGenerationScrollKey, dispatcherScrollRequest]);
 
@@ -2269,6 +2271,8 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     if (dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId) return;
     setDispatcherSessionBusy(true);
     setError("");
+    dispatcherForceScrollRef.current = true;
+    dispatcherNearBottomRef.current = true;
     setDispatcherMessages([]);
     setDispatcherGenerations([]);
     setDispatcherTaskBatches([]);
@@ -2300,6 +2304,8 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     if (sessionId === dispatcherSessionId || dispatcherBusy || dispatcherSessionBusy) return;
     setDispatcherSessionBusy(true);
     setError("");
+    dispatcherForceScrollRef.current = true;
+    dispatcherNearBottomRef.current = true;
     setDispatcherMessages([]);
     setDispatcherGenerations([]);
     setDispatcherTaskBatches([]);
@@ -2976,24 +2982,21 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </div>
             </div>
 
-            <div className="dispatcher-session-bar">
-              <ConversationSessionManager
-                sessions={dispatcherSessions}
-                sessionId={dispatcherSessionId}
-                label="总调度 Agent 会话"
-                disabled={dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId}
-                variant="home"
-                onActivate={(value) => void activateDispatcherSession(value)}
-                onCreate={() => void startDispatcherSession()}
-                onDelete={requestDeleteDispatcherSession}
-              />
-            </div>
-
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
               <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
               <div className="dispatcher-composer-footer">
                 <AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" />
+                <ConversationSessionManager
+                  sessions={dispatcherSessions}
+                  sessionId={dispatcherSessionId}
+                  label="总调度 Agent 会话"
+                  disabled={dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId}
+                  variant="home"
+                  onActivate={(value) => void activateDispatcherSession(value)}
+                  onCreate={() => void startDispatcherSession()}
+                  onDelete={requestDeleteDispatcherSession}
+                />
                 <input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} />
                 <ContextUsage context={dispatcherContext} />
                 <span className="dispatcher-composer-actions">{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()} title="停止调度" aria-label="停止调度"><X size={16} /></button>}<button className="primary-button dispatcher-send-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false} title="发送调度" aria-label="发送调度"><span className="dispatcher-send-glyph" aria-hidden="true" /></button></span>
