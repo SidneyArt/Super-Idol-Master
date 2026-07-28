@@ -1,7 +1,7 @@
 <div align="center">
   <img src="./docs/assets/branding/super-idol-master-logo-bright-v2.png" alt="Super Idol Master" width="760">
 
-  <p><strong>面向数字角色资产的质量门禁式多智能体生产线</strong></p>
+  <p><strong>多智能体数字角色资产生产线</strong></p>
   <p>
     <a href="./README.md">English</a> |
     <strong>简体中文</strong>
@@ -12,7 +12,7 @@
 
 ![多智能体数字角色资产生产线](docs/assets/multi-agent-character-asset-pipeline.png)
 
-Super Idol Master 是一套端到端数字角色资产生产系统。用户可以从角色描述、单体原画或多角色合集原画开始，持续生成通过质量检查的 T-Pose 原画、静态 3D 模型和带骨骼 GLB 资产。
+Super Idol Master（中文名：多智能体数字角色资产生产线）是一套端到端数字角色资产生产系统。用户可以从角色描述、单体原画或多角色合集原画开始，持续生成通过质量检查的 T-Pose 原画、静态 3D 模型和带骨骼 GLB 资产。
 
 系统以 **Pi** 作为智能体运行时与模型适配层，接入 **StepFun step-3.7-flash** 模型，并结合自研状态机、质量门禁和持久化机制，构建受控、可恢复的多智能体闭环。系统共包含九种逻辑角色：由 `Coordinator` 负责跨任务调度，`Supervisor` 负责任务流程编排，并协同七个专业 Agent 完成规划、质检、反馈与自动修复。
 

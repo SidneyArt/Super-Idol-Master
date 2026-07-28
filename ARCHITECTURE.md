@@ -1,6 +1,6 @@
 # 架构概览
 
-本文档帮助开发者和 Agent 快速理解 Super Idol Master 的代码结构、运行边界和关键数据流。架构或职责发生变化时，应同步更新本文档。
+本文档帮助开发者和 Agent 快速理解 Super Idol Master（多智能体数字角色资产生产线）的代码结构、运行边界和关键数据流。架构或职责发生变化时，应同步更新本文档。
 
 最后更新日期：2026-07-27
 
@@ -356,7 +356,9 @@ npm run agent:verify
 
 ## 11. 项目标识
 
-**项目名称：** Super Idol Master
+**英文名称：** Super Idol Master
+
+**中文名称：** 多智能体数字角色资产生产线
 
 **仓库地址：** [https://github.com/SidneyArt/Super-Idol-Master](https://github.com/SidneyArt/Super-Idol-Master)
 

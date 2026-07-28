@@ -14,11 +14,11 @@ const themeInitializer = `
 `;
 
 export const metadata: Metadata = {
-  title: "Super Idol Master · 流程可视化",
-  description: "从角色描述、2D 概念图到 3D 模型与自动绑骨的可视化生产流程。",
+  title: "Super Idol Master · 多智能体数字角色资产生产线",
+  description: "从角色描述、2D 概念图到 3D 模型与自动绑骨的多智能体数字角色资产生产线。",
   openGraph: {
-    title: "Super Idol Master · 流程可视化",
-    description: "从角色描述到可用 3D 资产，一眼看懂完整生产流程。",
+    title: "Super Idol Master · 多智能体数字角色资产生产线",
+    description: "从角色描述到可用 3D 资产，一眼看懂多智能体协作的完整生产流程。",
     images: ["/character-preview.png"],
   },
   icons: {

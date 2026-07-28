@@ -2,6 +2,7 @@
   <img src="./docs/assets/branding/super-idol-master-logo-bright-v2.png" alt="Super Idol Master" width="760">
 
   <p><strong>A quality-gated, multi-agent production line for digital character assets.</strong></p>
+  <p><strong>Chinese name: 多智能体数字角色资产生产线</strong></p>
   <p>
     <strong>English</strong> |
     <a href="./README.zh-CN.md">简体中文</a>

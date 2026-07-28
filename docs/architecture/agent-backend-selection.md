@@ -3,7 +3,7 @@
 > 分类：架构与技术决策
 >
 > 更新日期：2026-07-16  
-> 适用项目：Super-Idol-Master 数字偶像管家
+> 适用项目：Super-Idol-Master（多智能体数字角色资产生产线）
 
 > 本文保留为早期候选方案调研。基于当前 Node 全栈工程的正式 Runtime 决策见
 > [Agent Runtime 技术决策：采用 Pi](./agent-runtime-pi-adr.md)，若结论冲突以该 ADR 为准。

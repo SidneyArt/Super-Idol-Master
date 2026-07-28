@@ -1,4 +1,4 @@
-# Super Idol Master 本地控制台
+# Super Idol Master（多智能体数字角色资产生产线）本地控制台
 
 这是 `Super-Idol-Master` 主仓库内的本地全栈网站，包含 React/Vinext 前端、Node.js API 和 SQLite 数据库，并连接 DGX 上的 ComfyUI 工作流。
 
