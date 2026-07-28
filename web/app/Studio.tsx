@@ -276,6 +276,9 @@ type DispatcherTimelineItem =
   | { kind: "generation"; createdAt: string; item: DispatcherGeneration }
   | { kind: "taskBatch"; createdAt: string; item: DispatcherTaskBatch }
   | { kind: "approval"; createdAt: string; item: ApprovalRequest };
+type DispatcherTimelineDisplayItem =
+  | DispatcherTimelineItem
+  | { kind: "subagentGroup"; createdAt: string; id: number; messages: ChatMessage[] };
 
 function dispatcherTimelineTime(createdAt: string) {
   const timestamp = Date.parse(createdAt);
@@ -384,6 +387,68 @@ function buildDispatcherTimeline(
       ...anchoredGenerations.map((item) => ({ kind: "generation" as const, createdAt: item.createdAt, item })),
     ];
   });
+}
+
+function isDispatcherSubagentMessage(entry: DispatcherTimelineItem) {
+  return entry.kind === "message"
+    && entry.item.role === "assistant"
+    && /^\s*\*{0,2}\s*子\s*Agent\s*[·•]/i.test(entry.item.content);
+}
+
+function groupDispatcherSubagentMessages(timeline: DispatcherTimelineItem[]) {
+  const grouped: DispatcherTimelineDisplayItem[] = [];
+
+  timeline.forEach((entry) => {
+    if (!isDispatcherSubagentMessage(entry) || entry.kind !== "message") {
+      grouped.push(entry);
+      return;
+    }
+
+    const previous = grouped[grouped.length - 1];
+    if (previous?.kind === "subagentGroup") {
+      previous.messages.push(entry.item);
+      return;
+    }
+
+    grouped.push({
+      kind: "subagentGroup",
+      createdAt: entry.createdAt,
+      id: entry.item.id,
+      messages: [entry.item],
+    });
+  });
+
+  return grouped;
+}
+
+function formatDispatcherSubagentDuration(messages: ChatMessage[]) {
+  if (messages.length < 2) return "";
+  const first = dispatcherTimelineTime(messages[0].createdAt);
+  const last = dispatcherTimelineTime(messages[messages.length - 1].createdAt);
+  const totalSeconds = Math.max(0, Math.round((last - first) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`;
+}
+
+function summarizeDispatcherSubagentStatuses(messages: ChatMessage[]) {
+  let completed = 0;
+  let failed = 0;
+  let process = 0;
+
+  messages.forEach((message) => {
+    const headline = message.content.split(/\r?\n/, 1)[0];
+    if (/[（(]已完成[）)]/.test(headline)) completed += 1;
+    else if (/[（(](失败|已暂停)[）)]/.test(headline)) failed += 1;
+    else process += 1;
+  });
+
+  return [
+    completed ? `完成 ${completed}` : "",
+    failed ? `失败 ${failed}` : "",
+    process ? `过程 ${process}` : "",
+  ].filter(Boolean).join(" · ");
 }
 type AgentWorkflowPlan = {
   runId: string;
@@ -898,7 +963,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [workflowDragging, setWorkflowDragging] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [agentCollapsed, setAgentCollapsed] = useState(false);
-  const [agentRoleCollapsed, setAgentRoleCollapsed] = useState(false);
   const [agentWidth, setAgentWidth] = useState(360);
   const [theme, setTheme] = useState<Theme>("dark");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
@@ -1437,6 +1501,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   ));
   const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
   const dispatcherTimeline = buildDispatcherTimeline(dispatcherMessages, dispatcherGenerations, coordinatorApprovals, dispatcherTaskBatches);
+  const dispatcherTimelineDisplay = groupDispatcherSubagentMessages(dispatcherTimeline);
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
 
   useEffect(() => {
@@ -1503,6 +1568,21 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     { run: exportSpecialistRun, name: "Export Specialist", running: "正在检查导出就绪度", fallback: "导出检查完成", icon: "qa" },
     { run: workflowDoctorRun, name: "Workflow Doctor", running: "正在诊断工作流失败", fallback: "失败诊断完成", icon: "qa" },
   ].filter((item): item is typeof item & { run: AgentRoleRun } => Boolean(item.run));
+  const workflowPlan = selectedDetail?.agentWorkflowPlan || null;
+  const collaborationCount = specialistRoleRuns.length + (workflowPlan ? 1 : 0);
+  const collaborationCompletedCount = specialistRoleRuns.filter((item) => item.run.status === "succeeded").length
+    + (workflowPlan?.status === "completed" ? 1 : 0);
+  const collaborationFailedCount = specialistRoleRuns.filter((item) => item.run.status === "failed").length
+    + (workflowPlan?.status === "failed" || workflowPlan?.status === "cancelled" ? 1 : 0);
+  const collaborationRunningCount = specialistRoleRuns.filter((item) => item.run.status === "running").length
+    + (workflowPlan?.status === "running" ? 1 : 0);
+  const collaborationBlockedCount = workflowPlan?.status === "blocked" ? 1 : 0;
+  const collaborationMetadata = [
+    collaborationRunningCount ? `运行中 ${collaborationRunningCount}` : "",
+    collaborationCompletedCount ? `完成 ${collaborationCompletedCount}` : "",
+    collaborationFailedCount ? `失败 ${collaborationFailedCount}` : "",
+    collaborationBlockedCount ? `暂停 ${collaborationBlockedCount}` : "",
+  ].filter(Boolean).join(" · ");
   const current = run?.currentStage ?? 0;
   const activeStages = run?.pipelineType === "image_to_model"
     ? stages.map((item, index) => index === 0
@@ -2905,7 +2985,35 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 {!dispatcherTimeline.length && (
                   <div className="dispatcher-welcome"><h2>从一个目标开始</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传并拆分</button></div></div>
                 )}
-                {dispatcherTimeline.map((entry) => {
+                {dispatcherTimelineDisplay.map((entry) => {
+                  if (entry.kind === "subagentGroup") {
+                    const duration = formatDispatcherSubagentDuration(entry.messages);
+                    const statuses = summarizeDispatcherSubagentStatuses(entry.messages);
+                    const metadata = [duration ? `耗时 ${duration}` : "", statuses].filter(Boolean).join(" · ");
+                    return (
+                      <details className="dispatcher-subagent-group" key={`subagent-group-${entry.id}`}>
+                        <summary>
+                          <span><Bot size={17} /></span>
+                          <span>
+                            <strong>已处理 {entry.messages.length} 条子 Agent 消息</strong>
+                            {metadata && <small>{metadata}</small>}
+                          </span>
+                          <ChevronRight className="dispatcher-subagent-chevron" size={17} />
+                        </summary>
+                        <div className="dispatcher-subagent-messages">
+                          {entry.messages.map((message) => (
+                            <div className="dispatcher-message assistant subagent" key={`message-${message.id}`}>
+                              <span><Bot size={17} /></span>
+                              <div>
+                                <strong>总调度 Agent</strong>
+                                <div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{message.content}</ReactMarkdown></div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    );
+                  }
                   if (entry.kind === "generation") {
                     const generation = entry.item;
                     return (
@@ -3343,28 +3451,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               <strong>{run?.name || "未选择任务"}</strong>
               <p>{run ? `${activeStages[current].title} · ${progress}% 完成` : "选择或创建任务后开始"}</p>
             </div>
-            {selectedDetail?.agentWorkflowPlan && (
-              <section className={`agent-orchestration ${selectedDetail.agentWorkflowPlan.status}`}>
-                <div><Bot size={15} /><strong>Supervisor 自动编排</strong><span>{selectedDetail.agentWorkflowPlan.status === "running" ? "执行中" : selectedDetail.agentWorkflowPlan.status === "completed" ? "已完成" : selectedDetail.agentWorkflowPlan.status === "blocked" ? "已暂停" : "失败"}</span></div>
-                <p>目标：{activeStages[selectedDetail.agentWorkflowPlan.targetStage].title}</p>
-                <small>{selectedDetail.agentWorkflowPlan.message}</small>
-              </section>
-            )}
-            {specialistRoleRuns.length > 0 && (
-              <section className={`agent-role-activity ${agentRoleCollapsed ? "collapsed" : ""}`} aria-label="多 Agent 协作记录">
-                <button type="button" className="agent-role-activity-toggle" onClick={() => setAgentRoleCollapsed((v) => !v)} title={agentRoleCollapsed ? "展开多 Agent 协作" : "收起多 Agent 协作"} aria-expanded={!agentRoleCollapsed}>
-                  <span>多 Agent 协作</span>
-                  <ChevronDown size={14} />
-                </button>
-                <div className="agent-role-list">
-                {specialistRoleRuns.map((item) => <div className={`agent-role-row ${item.run.status}`} key={item.run.id}>
-                  {item.icon === "art" ? <Sparkles size={14} /> : <Bot size={14} />}
-                  <div><strong>{item.name}</strong><small>{item.run.status === "running" ? item.running : item.run.status === "succeeded" ? item.run.report?.summary || item.fallback : item.run.errorMessage}</small></div>
-                  <em>{item.run.status === "running" ? "运行中" : item.run.status === "succeeded" ? "已完成" : "失败"}</em>
-                </div>)}
-                </div>
-              </section>
-            )}
           </div>
           <div
             className="chat-thread"
@@ -3408,6 +3494,39 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 </div>
               </div>
             ))}
+            {collaborationCount > 0 && (
+              <details className="chat-collaboration-group" key={`agent-collaboration-${run?.id || "none"}`}>
+                <summary>
+                  <span className="chat-avatar"><Bot size={16} /></span>
+                  <span>
+                    <strong>{collaborationRunningCount ? "正在处理" : "已处理"} {collaborationCount} 项 Agent 协作</strong>
+                    {collaborationMetadata && <small>{collaborationMetadata}</small>}
+                  </span>
+                  <ChevronRight className="chat-collaboration-chevron" size={16} />
+                </summary>
+                <div className="chat-collaboration-content">
+                  {workflowPlan && (
+                    <section className={`agent-orchestration ${workflowPlan.status}`}>
+                      <div><Bot size={15} /><strong>Supervisor 自动编排</strong><span>{workflowPlan.status === "running" ? "执行中" : workflowPlan.status === "completed" ? "已完成" : workflowPlan.status === "blocked" ? "已暂停" : "失败"}</span></div>
+                      <p>目标：{activeStages[workflowPlan.targetStage]?.title || "自动流水线"}</p>
+                      <small>{workflowPlan.message}</small>
+                    </section>
+                  )}
+                  {specialistRoleRuns.length > 0 && (
+                    <section className="agent-role-activity chat-agent-role-activity" aria-label="多 Agent 协作记录">
+                      <div className="chat-collaboration-section-title">多 Agent 协作</div>
+                      <div className="agent-role-list">
+                        {specialistRoleRuns.map((item) => <div className={`agent-role-row ${item.run.status}`} key={item.run.id}>
+                          {item.icon === "art" ? <Sparkles size={14} /> : <Bot size={14} />}
+                          <div><strong>{item.name}</strong><small>{item.run.status === "running" ? item.running : item.run.status === "succeeded" ? item.run.report?.summary || item.fallback : item.run.errorMessage}</small></div>
+                          <em>{item.run.status === "running" ? "运行中" : item.run.status === "succeeded" ? "已完成" : "失败"}</em>
+                        </div>)}
+                      </div>
+                    </section>
+                  )}
+                </div>
+              </details>
+            )}
             {selectedRunAgentBusy && (
               <div className="chat-message assistant pending">
                 <span className="chat-avatar"><Bot size={16} /></span>
