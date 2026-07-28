@@ -876,6 +876,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [loading, setLoading] = useState(initialRuns.length === 0);
   const [error, setError] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [revertStage, setRevertStage] = useState<number | null>(null);
   const [uiConfirmation, setUiConfirmation] = useState<UiConfirmation | null>(null);
   const [uiConfirmationBusy, setUiConfirmationBusy] = useState(false);
@@ -898,6 +899,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [workflowDragging, setWorkflowDragging] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [agentCollapsed, setAgentCollapsed] = useState(false);
+  const [agentRoleCollapsed, setAgentRoleCollapsed] = useState(false);
   const [agentWidth, setAgentWidth] = useState(360);
   const [theme, setTheme] = useState<Theme>("dark");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
@@ -981,6 +983,26 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
 
   function openHome() {
     router.push("/");
+  }
+
+  useEffect(() => {
+    if (!error) return;
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    errorTimerRef.current = setTimeout(() => setError(""), 8000);
+    return () => {
+      if (errorTimerRef.current) {
+        clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = null;
+      }
+    };
+  }, [error]);
+
+  function closeError() {
+    if (errorTimerRef.current) {
+      clearTimeout(errorTimerRef.current);
+      errorTimerRef.current = null;
+    }
+    setError("");
   }
 
   function openTask(runId: string) {
@@ -1556,7 +1578,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     const runId = run.id;
     const runName = run.name;
     setUiConfirmation({
-      title: `删除“${runName}”？`,
+      title: `删除"${runName}"？`,
       description: "任务、流程进度、Agent 对话和历史记录都会被永久删除。",
       confirmLabel: "确认删除",
       tone: "danger",
@@ -1568,6 +1590,10 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
           setDetail(null);
           clearTaskConversation();
           await refreshRuns();
+          setError(`"${runName}" 已删除，即将返回首页…`);
+          setTimeout(() => {
+            if (selectedIdRef.current === null) openHome();
+          }, 2000);
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : "删除失败");
         } finally {
@@ -2746,7 +2772,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       {error && (
         <div className="error-banner" role="alert">
           <span>{error}</span>
-          <button type="button" onClick={() => setError("")} aria-label="关闭错误提示"><X size={17} /></button>
+          <button type="button" onClick={closeError} aria-label="关闭错误提示"><X size={17} /></button>
         </div>
       )}
 
@@ -3322,13 +3348,18 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </section>
             )}
             {specialistRoleRuns.length > 0 && (
-              <section className="agent-role-activity" aria-label="多 Agent 协作记录">
-                <span>多 Agent 协作</span>
+              <section className={`agent-role-activity ${agentRoleCollapsed ? "collapsed" : ""}`} aria-label="多 Agent 协作记录">
+                <button type="button" className="agent-role-activity-toggle" onClick={() => setAgentRoleCollapsed((v) => !v)} title={agentRoleCollapsed ? "展开多 Agent 协作" : "收起多 Agent 协作"} aria-expanded={!agentRoleCollapsed}>
+                  <span>多 Agent 协作</span>
+                  <ChevronDown size={14} />
+                </button>
+                <div className="agent-role-list">
                 {specialistRoleRuns.map((item) => <div className={`agent-role-row ${item.run.status}`} key={item.run.id}>
                   {item.icon === "art" ? <Sparkles size={14} /> : <Bot size={14} />}
                   <div><strong>{item.name}</strong><small>{item.run.status === "running" ? item.running : item.run.status === "succeeded" ? item.run.report?.summary || item.fallback : item.run.errorMessage}</small></div>
                   <em>{item.run.status === "running" ? "运行中" : item.run.status === "succeeded" ? "已完成" : "失败"}</em>
                 </div>)}
+                </div>
               </section>
             )}
           </div>
