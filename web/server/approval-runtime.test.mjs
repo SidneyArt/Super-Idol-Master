@@ -9,6 +9,7 @@ test("global UI preferences persist and provide the default approval mode", () =
     const runtime = createApprovalRuntime({ db });
 
     assert.deepEqual(runtime.preferences(), {
+      backgroundAnimationEnabled: false,
       notificationsEnabled: true,
       defaultApprovalMode: "request",
     });
@@ -18,13 +19,16 @@ test("global UI preferences persist and provide the default approval mode", () =
     assert.equal(runtime.preferences().defaultApprovalMode, "auto");
 
     assert.deepEqual(runtime.updatePreferences({
+      backgroundAnimationEnabled: true,
       notificationsEnabled: false,
       defaultApprovalMode: "auto",
     }), {
+      backgroundAnimationEnabled: true,
       notificationsEnabled: false,
       defaultApprovalMode: "auto",
     });
     assert.deepEqual(runtime.preferences(), {
+      backgroundAnimationEnabled: true,
       notificationsEnabled: false,
       defaultApprovalMode: "auto",
     });
@@ -49,6 +53,10 @@ test("global approval preference rejects an unknown mode", () => {
     assert.throws(
       () => runtime.updatePreferences({ notificationsEnabled: "false" }),
       /通知设置必须为布尔值/,
+    );
+    assert.throws(
+      () => runtime.updatePreferences({ backgroundAnimationEnabled: "true" }),
+      /背景动画设置必须为布尔值/,
     );
   } finally {
     db.close();

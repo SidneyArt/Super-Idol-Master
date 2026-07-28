@@ -4,18 +4,59 @@ import { useEffect, useRef } from "react";
 
 type LiquidWaveBackgroundProps = {
   theme: "dark" | "light";
+  animated: boolean;
+};
+
+type Point = {
+  x: number;
+  y: number;
+};
+
+type Ribbon = {
+  points: [Point, Point, Point, Point];
+  lines: number;
+  spacing: number;
+  phase: number;
+  strength: number;
 };
 
 type Particle = {
-  x: number;
-  lane: number;
+  progress: number;
+  offset: number;
   size: number;
   speed: number;
   phase: number;
-  alpha: number;
 };
 
-export default function LiquidWaveBackground({ theme }: LiquidWaveBackgroundProps) {
+function cubicBezier(points: Ribbon["points"], progress: number) {
+  const inverse = 1 - progress;
+  const inverseSquared = inverse * inverse;
+  const progressSquared = progress * progress;
+  return {
+    x: inverseSquared * inverse * points[0].x
+      + 3 * inverseSquared * progress * points[1].x
+      + 3 * inverse * progressSquared * points[2].x
+      + progressSquared * progress * points[3].x,
+    y: inverseSquared * inverse * points[0].y
+      + 3 * inverseSquared * progress * points[1].y
+      + 3 * inverse * progressSquared * points[2].y
+      + progressSquared * progress * points[3].y,
+  };
+}
+
+function cubicTangent(points: Ribbon["points"], progress: number) {
+  const inverse = 1 - progress;
+  return {
+    x: 3 * inverse * inverse * (points[1].x - points[0].x)
+      + 6 * inverse * progress * (points[2].x - points[1].x)
+      + 3 * progress * progress * (points[3].x - points[2].x),
+    y: 3 * inverse * inverse * (points[1].y - points[0].y)
+      + 6 * inverse * progress * (points[2].y - points[1].y)
+      + 3 * progress * progress * (points[3].y - points[2].y),
+  };
+}
+
+export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -26,14 +67,13 @@ export default function LiquidWaveBackground({ theme }: LiquidWaveBackgroundProp
     if (!context) return;
 
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const pointer = { x: 0.68, y: 0.48, targetX: 0.68, targetY: 0.48 };
-    const particles: Particle[] = Array.from({ length: 76 }, (_, index) => ({
-      x: ((index * 0.61803398875) % 1),
-      lane: ((index * 0.38196601125) % 1),
-      size: 0.45 + (index % 5) * 0.28,
-      speed: 0.035 + (index % 9) * 0.006,
-      phase: index * 1.79,
-      alpha: 0.16 + (index % 7) * 0.045,
+    const pointer = { x: 0.64, y: 0.62, targetX: 0.64, targetY: 0.62 };
+    const particles: Particle[] = Array.from({ length: 42 }, (_, index) => ({
+      progress: (index * 0.61803398875) % 1,
+      offset: ((index % 13) - 6) * 3.1,
+      size: 0.45 + (index % 4) * 0.24,
+      speed: 0.018 + (index % 7) * 0.003,
+      phase: index * 1.41,
     }));
 
     let width = 1;
@@ -56,161 +96,248 @@ export default function LiquidWaveBackground({ theme }: LiquidWaveBackgroundProp
     const onPointerMove = (event: PointerEvent) => {
       pointer.targetX = Math.min(1, Math.max(0, event.clientX / width));
       pointer.targetY = Math.min(1, Math.max(0, event.clientY / height));
-      if (reducedMotion.matches) draw(performance.now());
     };
 
     const onPointerLeave = () => {
-      pointer.targetX = 0.68;
-      pointer.targetY = 0.48;
+      pointer.targetX = 0.64;
+      pointer.targetY = 0.62;
     };
 
-    const addRadialGlow = (
-      x: number,
-      y: number,
-      radius: number,
-      inner: string,
-      outer = "rgba(0,0,0,0)",
-    ) => {
+    const addRadialGlow = (x: number, y: number, radius: number, inner: string) => {
       const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
       gradient.addColorStop(0, inner);
-      gradient.addColorStop(1, outer);
+      gradient.addColorStop(1, "rgba(0,0,0,0)");
       context.fillStyle = gradient;
       context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
     };
 
+    const ribbons = (): Ribbon[] => {
+      const scaleY = Math.max(0.72, Math.min(1.08, height / Math.max(width * 0.75, 1)));
+      return [
+        {
+          points: [
+            { x: -0.13 * width, y: 1.06 * height },
+            { x: 0.22 * width, y: (0.73 + 0.03 * scaleY) * height },
+            { x: 0.60 * width, y: 0.62 * height },
+            { x: 1.12 * width, y: 0.42 * height },
+          ],
+          lines: 54,
+          spacing: Math.max(3.2, height * 0.0052),
+          phase: 0,
+          strength: 1,
+        },
+        {
+          points: [
+            { x: -0.11 * width, y: 0.43 * height },
+            { x: 0.25 * width, y: 0.43 * height },
+            { x: 0.61 * width, y: 0.69 * height },
+            { x: 1.13 * width, y: 0.88 * height },
+          ],
+          lines: 42,
+          spacing: Math.max(3, height * 0.0047),
+          phase: 2.2,
+          strength: 0.76,
+        },
+        {
+          points: [
+            { x: 0.05 * width, y: 1.1 * height },
+            { x: 0.34 * width, y: 0.74 * height },
+            { x: 0.62 * width, y: 0.63 * height },
+            { x: 1.1 * width, y: 0.56 * height },
+          ],
+          lines: 28,
+          spacing: Math.max(3.4, height * 0.0054),
+          phase: 4.1,
+          strength: 0.62,
+        },
+      ];
+    };
+
     function draw(now: number) {
-      const time = now * 0.00032;
+      const time = now * 0.00024;
       const delta = lastTime ? Math.min(0.05, (now - lastTime) / 1000) : 0;
       lastTime = now;
 
-      pointer.x += (pointer.targetX - pointer.x) * 0.045;
-      pointer.y += (pointer.targetY - pointer.y) * 0.045;
+      pointer.x += (pointer.targetX - pointer.x) * 0.04;
+      pointer.y += (pointer.targetY - pointer.y) * 0.04;
 
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       const background = context.createLinearGradient(0, 0, width, height);
       if (theme === "dark") {
-        background.addColorStop(0, "#020305");
-        background.addColorStop(0.48, "#06070b");
-        background.addColorStop(1, "#02030a");
+        background.addColorStop(0, "#010203");
+        background.addColorStop(0.52, "#030405");
+        background.addColorStop(1, "#010207");
       } else {
-        background.addColorStop(0, "#f7f9fd");
-        background.addColorStop(0.5, "#edf2fa");
-        background.addColorStop(1, "#f7f4fb");
+        background.addColorStop(0, "#f9fbff");
+        background.addColorStop(0.54, "#eef3fa");
+        background.addColorStop(1, "#f4f6fb");
       }
       context.fillStyle = background;
       context.fillRect(0, 0, width, height);
 
       if (theme === "dark") {
-        addRadialGlow(width * 0.04, height * 0.92, width * 0.54, "rgba(12, 72, 160, .18)");
-        addRadialGlow(width * 0.94, height * 0.13, width * 0.42, "rgba(73, 33, 142, .16)");
-        addRadialGlow(pointer.x * width, pointer.y * height, width * 0.26, "rgba(79, 134, 255, .07)");
+        addRadialGlow(width * 0.08, height * 0.94, width * 0.46, "rgba(26, 93, 183, .15)");
+        addRadialGlow(width * 0.78, height * 0.7, width * 0.36, "rgba(116, 145, 198, .055)");
+        if (animated) addRadialGlow(pointer.x * width, pointer.y * height, width * 0.22, "rgba(121, 164, 240, .045)");
       } else {
-        addRadialGlow(width * 0.02, height * 0.9, width * 0.5, "rgba(44, 112, 210, .12)");
-        addRadialGlow(width * 0.96, height * 0.1, width * 0.4, "rgba(111, 74, 185, .11)");
-        addRadialGlow(pointer.x * width, pointer.y * height, width * 0.24, "rgba(255, 255, 255, .44)");
+        addRadialGlow(width * 0.08, height * 0.94, width * 0.46, "rgba(66, 124, 201, .11)");
+        addRadialGlow(width * 0.78, height * 0.7, width * 0.36, "rgba(94, 119, 159, .07)");
       }
 
       context.save();
       context.globalCompositeOperation = theme === "dark" ? "screen" : "multiply";
-      const waveTop = height * 0.42;
-      const bandGap = Math.max(9, height * 0.016);
-      const pointerRadius = Math.max(180, width * 0.2);
+      const ribbonSet = ribbons();
 
-      for (let band = 0; band < 34; band += 1) {
-        const lineGradient = context.createLinearGradient(0, 0, width, 0);
+      for (const ribbon of ribbonSet) {
+        const centerGradient = context.createLinearGradient(0, height, width, height * 0.42);
         if (theme === "dark") {
-          lineGradient.addColorStop(0, "rgba(32, 112, 225, 0)");
-          lineGradient.addColorStop(0.15, `rgba(48, 128, 238, ${0.12 + (band % 6) * 0.012})`);
-          lineGradient.addColorStop(0.55, `rgba(225, 235, 255, ${0.11 + (band % 5) * 0.015})`);
-          lineGradient.addColorStop(0.86, `rgba(118, 73, 210, ${0.1 + (band % 4) * 0.014})`);
-          lineGradient.addColorStop(1, "rgba(74, 41, 174, 0)");
+          centerGradient.addColorStop(0, "rgba(40, 100, 190, 0)");
+          centerGradient.addColorStop(0.32, `rgba(91, 143, 222, ${0.028 * ribbon.strength})`);
+          centerGradient.addColorStop(0.64, `rgba(232, 239, 249, ${0.09 * ribbon.strength})`);
+          centerGradient.addColorStop(0.9, `rgba(129, 154, 196, ${0.026 * ribbon.strength})`);
+          centerGradient.addColorStop(1, "rgba(75, 98, 141, 0)");
         } else {
-          lineGradient.addColorStop(0, "rgba(46, 112, 192, 0)");
-          lineGradient.addColorStop(0.16, `rgba(39, 103, 190, ${0.12 + (band % 5) * 0.014})`);
-          lineGradient.addColorStop(0.57, `rgba(79, 100, 145, ${0.09 + (band % 4) * 0.012})`);
-          lineGradient.addColorStop(0.86, `rgba(113, 76, 171, ${0.1 + (band % 4) * 0.013})`);
-          lineGradient.addColorStop(1, "rgba(106, 65, 177, 0)");
+          centerGradient.addColorStop(0, "rgba(57, 105, 176, 0)");
+          centerGradient.addColorStop(0.32, `rgba(57, 105, 176, ${0.035 * ribbon.strength})`);
+          centerGradient.addColorStop(0.64, `rgba(81, 98, 127, ${0.07 * ribbon.strength})`);
+          centerGradient.addColorStop(1, "rgba(75, 91, 119, 0)");
         }
 
         context.beginPath();
-        context.strokeStyle = lineGradient;
-        context.lineWidth = band % 7 === 0 ? 1.15 : 0.48;
-        context.shadowColor = theme === "dark" ? "rgba(105, 156, 255, .24)" : "rgba(68, 105, 164, .12)";
-        context.shadowBlur = band % 7 === 0 ? 12 : 3;
-
-        for (let x = -12; x <= width + 12; x += 9) {
-          const distanceFromPointer = x - pointer.x * width;
-          const pointerFalloff = Math.exp(-(distanceFromPointer * distanceFromPointer) / (pointerRadius * pointerRadius));
-          const base = waveTop + band * bandGap;
-          const primary = Math.sin(x * 0.006 + time * (1.25 + band * 0.008) + band * 0.29) * (17 + band * 0.42);
-          const secondary = Math.sin(x * 0.0021 - time * 0.72 + band * 0.53) * (11 + band * 0.24);
-          const direction = (pointer.x - 0.5) * (x / width - 0.5) * 55;
-          const lift = (pointer.y - 0.5) * -110 * pointerFalloff;
-          const ripple = Math.sin(distanceFromPointer * 0.014 - time * 3.2) * 15 * pointerFalloff;
-          const y = base + primary + secondary + direction + lift + ripple;
-
-          if (x === -12) context.moveTo(x, y);
-          else context.lineTo(x, y);
+        for (let step = 0; step <= 120; step += 1) {
+          const progress = step / 120;
+          const point = cubicBezier(ribbon.points, progress);
+          if (step === 0) context.moveTo(point.x, point.y);
+          else context.lineTo(point.x, point.y);
         }
+        context.strokeStyle = centerGradient;
+        context.lineWidth = Math.max(34, height * 0.075);
+        context.shadowColor = theme === "dark" ? "rgba(149, 183, 235, .11)" : "rgba(70, 98, 143, .08)";
+        context.shadowBlur = Math.max(18, height * 0.038);
         context.stroke();
+
+        for (let line = 0; line < ribbon.lines; line += 1) {
+          const centeredLine = line - (ribbon.lines - 1) / 2;
+          const lineGradient = context.createLinearGradient(0, height, width, height * 0.4);
+          const lineAlpha = (0.10 + (line % 7) * 0.014) * ribbon.strength;
+          if (theme === "dark") {
+            lineGradient.addColorStop(0, "rgba(37, 102, 197, 0)");
+            lineGradient.addColorStop(0.2, `rgba(48, 111, 209, ${lineAlpha * 0.66})`);
+            lineGradient.addColorStop(0.55, `rgba(198, 214, 239, ${lineAlpha})`);
+            lineGradient.addColorStop(0.72, `rgba(235, 240, 247, ${lineAlpha * 1.22})`);
+            lineGradient.addColorStop(0.92, `rgba(113, 137, 181, ${lineAlpha * 0.58})`);
+            lineGradient.addColorStop(1, "rgba(86, 105, 146, 0)");
+          } else {
+            lineGradient.addColorStop(0, "rgba(54, 102, 174, 0)");
+            lineGradient.addColorStop(0.2, `rgba(54, 102, 174, ${lineAlpha * 0.72})`);
+            lineGradient.addColorStop(0.6, `rgba(72, 92, 126, ${lineAlpha * 0.82})`);
+            lineGradient.addColorStop(0.82, `rgba(93, 106, 132, ${lineAlpha * 0.58})`);
+            lineGradient.addColorStop(1, "rgba(93, 106, 132, 0)");
+          }
+
+          context.beginPath();
+          context.strokeStyle = lineGradient;
+          context.lineWidth = line % 9 === 0 ? 1.15 : 0.48;
+          context.shadowColor = theme === "dark" ? "rgba(179, 205, 244, .18)" : "rgba(61, 88, 132, .08)";
+          context.shadowBlur = line % 9 === 0 ? 9 : 2;
+
+          for (let step = 0; step <= 150; step += 1) {
+            const progress = step / 150;
+            const point = cubicBezier(ribbon.points, progress);
+            const tangent = cubicTangent(ribbon.points, progress);
+            const tangentLength = Math.max(1, Math.hypot(tangent.x, tangent.y));
+            const normalX = -tangent.y / tangentLength;
+            const normalY = tangent.x / tangentLength;
+            const pinch = 0.16 + Math.pow(Math.abs(progress - 0.61), 1.15) * 1.9;
+            const movement = Math.sin(progress * 13 + ribbon.phase + centeredLine * 0.17 + time * 1.1)
+              * (1.2 + Math.abs(centeredLine) * 0.025);
+            const pointerDistance = Math.hypot(point.x - pointer.x * width, point.y - pointer.y * height);
+            const pointerFalloff = animated ? Math.max(0, 1 - pointerDistance / Math.max(190, width * 0.18)) : 0;
+            const pointerLift = (pointer.y - 0.5) * -24 * pointerFalloff;
+            const offset = centeredLine * ribbon.spacing * pinch + movement;
+            const x = point.x + normalX * offset;
+            const y = point.y + normalY * offset + pointerLift;
+            if (step === 0) context.moveTo(x, y);
+            else context.lineTo(x, y);
+          }
+          context.stroke();
+        }
       }
 
-      for (const particle of particles) {
-        if (!reducedMotion.matches) particle.x = (particle.x + particle.speed * delta) % 1;
-        const x = particle.x * (width + 80) - 40;
-        const baseY = height * (0.45 + particle.lane * 0.49);
-        const y = baseY
-          + Math.sin(x * 0.0052 + time * 1.4 + particle.phase) * (13 + particle.lane * 25)
-          + (pointer.x - 0.5) * (particle.lane - 0.5) * 34;
-        const pointerDistance = Math.hypot(x - pointer.x * width, y - pointer.y * height);
-        const pointerBoost = Math.max(0, 1 - pointerDistance / 210);
-
-        context.beginPath();
-        context.fillStyle = theme === "dark"
-          ? `rgba(${130 + Math.round(pointerBoost * 80)}, ${170 + Math.round(pointerBoost * 55)}, 255, ${particle.alpha + pointerBoost * 0.38})`
-          : `rgba(50, 92, 160, ${particle.alpha * 0.7 + pointerBoost * 0.22})`;
-        context.arc(x, y, particle.size + pointerBoost * 1.2, 0, Math.PI * 2);
-        context.fill();
+      if (animated && !reducedMotion.matches) {
+        const particleRibbon = ribbonSet[0];
+        for (const particle of particles) {
+          particle.progress = (particle.progress + particle.speed * delta) % 1;
+          const point = cubicBezier(particleRibbon.points, particle.progress);
+          const tangent = cubicTangent(particleRibbon.points, particle.progress);
+          const tangentLength = Math.max(1, Math.hypot(tangent.x, tangent.y));
+          const normalX = -tangent.y / tangentLength;
+          const normalY = tangent.x / tangentLength;
+          const shimmer = Math.sin(time * 3 + particle.phase) * 2.4;
+          const x = point.x + normalX * (particle.offset + shimmer);
+          const y = point.y + normalY * (particle.offset + shimmer);
+          context.beginPath();
+          context.fillStyle = theme === "dark" ? "rgba(185, 211, 250, .34)" : "rgba(62, 94, 145, .2)";
+          context.arc(x, y, particle.size, 0, Math.PI * 2);
+          context.fill();
+        }
       }
       context.restore();
 
       const vignette = context.createRadialGradient(
-        width * 0.5,
-        height * 0.47,
-        Math.min(width, height) * 0.14,
-        width * 0.5,
-        height * 0.47,
-        Math.max(width, height) * 0.78,
+        width * 0.58,
+        height * 0.57,
+        Math.min(width, height) * 0.1,
+        width * 0.58,
+        height * 0.57,
+        Math.max(width, height) * 0.8,
       );
       vignette.addColorStop(0, "rgba(0,0,0,0)");
-      vignette.addColorStop(1, theme === "dark" ? "rgba(0,0,0,.48)" : "rgba(62,76,105,.06)");
+      vignette.addColorStop(1, theme === "dark" ? "rgba(0,0,0,.55)" : "rgba(60,75,103,.055)");
       context.fillStyle = vignette;
       context.fillRect(0, 0, width, height);
 
-      if (!reducedMotion.matches) animationFrame = window.requestAnimationFrame(draw);
+      if (animated && !reducedMotion.matches) animationFrame = window.requestAnimationFrame(draw);
     }
+
+    const onResize = () => {
+      resize();
+      if (!animated || reducedMotion.matches) {
+        lastTime = 0;
+        draw(animated ? performance.now() : 0);
+      }
+    };
 
     const onMotionChange = () => {
       window.cancelAnimationFrame(animationFrame);
       lastTime = 0;
-      draw(performance.now());
+      draw(animated ? performance.now() : 0);
     };
 
     resize();
-    draw(performance.now());
-    window.addEventListener("resize", resize);
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    document.documentElement.addEventListener("pointerleave", onPointerLeave);
+    draw(animated ? performance.now() : 0);
+    window.addEventListener("resize", onResize);
+    if (animated) {
+      window.addEventListener("pointermove", onPointerMove, { passive: true });
+      document.documentElement.addEventListener("pointerleave", onPointerLeave);
+    }
     reducedMotion.addEventListener("change", onMotionChange);
 
     return () => {
       window.cancelAnimationFrame(animationFrame);
-      window.removeEventListener("resize", resize);
+      window.removeEventListener("resize", onResize);
       window.removeEventListener("pointermove", onPointerMove);
       document.documentElement.removeEventListener("pointerleave", onPointerLeave);
       reducedMotion.removeEventListener("change", onMotionChange);
     };
-  }, [theme]);
+  }, [animated, theme]);
 
-  return <canvas ref={canvasRef} className="liquid-wave-background" aria-hidden="true" />;
+  return (
+    <canvas
+      ref={canvasRef}
+      className="liquid-wave-background"
+      data-animated={animated ? "true" : "false"}
+      aria-hidden="true"
+    />
+  );
 }

@@ -76,6 +76,7 @@ type JobStatus = "idle" | "running" | "succeeded" | "failed";
 type Theme = "light" | "dark";
 type ApprovalMode = "request" | "auto";
 type GlobalPreferences = {
+  backgroundAnimationEnabled: boolean;
   notificationsEnabled: boolean;
   defaultApprovalMode: ApprovalMode;
 };
@@ -220,6 +221,7 @@ type AppNotification = {
 };
 
 const DEFAULT_GLOBAL_PREFERENCES: GlobalPreferences = {
+  backgroundAnimationEnabled: false,
   notificationsEnabled: true,
   defaultApprovalMode: "request",
 };
@@ -748,6 +750,7 @@ function ConversationSessionManager({
   sessionId,
   label,
   disabled,
+  variant = "default",
   onActivate,
   onCreate,
   onDelete,
@@ -756,6 +759,7 @@ function ConversationSessionManager({
   sessionId: string;
   label: string;
   disabled: boolean;
+  variant?: "default" | "home";
   onActivate: (sessionId: string) => void;
   onCreate: () => void;
   onDelete: (session: ConversationSession) => void;
@@ -779,13 +783,13 @@ function ConversationSessionManager({
     };
   }, [open]);
   return (
-    <div className={`conversation-manager ${open ? "open" : ""}`} ref={rootRef}>
+    <div className={`conversation-manager ${variant === "home" ? "home-conversation-manager" : ""} ${open ? "open" : ""}`} ref={rootRef}>
       <button type="button" className="conversation-manager-trigger" disabled={disabled} onClick={() => setOpen((value) => !value)} aria-haspopup="dialog" aria-expanded={open} title={`${label}：${current?.title || "新会话"}`}>
         <MessageSquare size={14} />
-        <span><strong>{current?.title || "新会话"}</strong><small>{current ? `${current.messageCount} 条消息` : "正在创建"}</small></span>
+        <span><strong>{variant === "home" ? "历史会话" : current?.title || "新会话"}</strong><small>{current ? `${current.messageCount} 条消息` : "正在创建"}</small></span>
         <ChevronDown size={13} />
       </button>
-      <button type="button" className="conversation-create-button" disabled={disabled} onClick={() => { setOpen(false); onCreate(); }} title="新建会话" aria-label={`新建${label}`}><Plus size={15} /></button>
+      <button type="button" className="conversation-create-button" disabled={disabled} onClick={() => { setOpen(false); onCreate(); }} title="新建会话" aria-label={`新建${label}`}><Plus size={15} />{variant === "home" && <span>新建会话</span>}</button>
       {open && !disabled && (
         <section className="conversation-menu" role="dialog" aria-label={`${label}列表`}>
           <header><div><strong>会话记录</strong><small>{sessions.length} 个会话</small></div><button type="button" onClick={() => { setOpen(false); onCreate(); }}><Plus size={14} />新对话</button></header>
@@ -839,18 +843,25 @@ type StudioProps = {
   initialWorkspaces: Workspace[];
 };
 
+function preferredHomeWorkspaceId(items: Workspace[]) {
+  return [...items]
+    .filter((item) => item.id !== "default")
+    .sort((first, second) => second.taskCount - first.taskCount)[0]?.id
+    || items.find((item) => item.id === "default")?.id
+    || items[0]?.id
+    || "default";
+}
+
 export default function Studio({ initialRunId, initialWorkspaceId: requestedWorkspaceId, initialNotificationId, initialRuns, initialWorkspaces }: StudioProps) {
   const router = useRouter();
   const screen: "home" | "task" = initialRunId ? "task" : "home";
   const initialRun = initialRuns.find((item) => item.id === initialRunId);
   const startingWorkspaceId = initialRun?.workspaceId
     || requestedWorkspaceId
-    || initialWorkspaces.find((item) => item.id === "default")?.id
-    || initialWorkspaces[0]?.id
-    || "default";
+    || preferredHomeWorkspaceId(initialWorkspaces);
   const [workspaces, setWorkspaces] = useState<Workspace[]>(initialWorkspaces);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string>(startingWorkspaceId);
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set(["default"]));
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set([startingWorkspaceId]));
   const [runs, setRuns] = useState<Run[]>(initialRuns);
   const [selectedId, setSelectedId] = useState<string | null>(initialRunId);
   const [detail, setDetail] = useState<RunDetail | null>(null);
@@ -994,6 +1005,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     if (selectedWorkspaceIdRef.current !== workspaceId) clearDispatcherConversation();
     selectedWorkspaceIdRef.current = workspaceId;
     setSelectedWorkspaceId(workspaceId);
+    setExpandedWorkspaceIds(new Set([workspaceId]));
   }
 
   function toggleWorkspace(workspaceId: string) {
@@ -1229,9 +1241,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
           : null;
         const nextWorkspaceId = requestedRun?.workspaceId
           || requestedWorkspace?.id
-          || workspaceData.workspaces.find((item) => item.id === "default")?.id
-          || workspaceData.workspaces[0]?.id
-          || "default";
+          || preferredHomeWorkspaceId(workspaceData.workspaces);
         const nextRunId = requestedRun?.id || runData.runs[0]?.id || null;
         selectedWorkspaceIdRef.current = nextWorkspaceId;
         selectedIdRef.current = nextRunId;
@@ -2621,7 +2631,10 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       className={`site-shell screen-${screen} ${screen === "task" && sidebarCollapsed ? "tasks-collapsed" : ""}`}
       data-screen={screen}
     >
-      <LiquidWaveBackground theme={theme} />
+      <LiquidWaveBackground
+        theme={theme}
+        animated={globalPreferences.backgroundAnimationEnabled}
+      />
       <header className="topbar">
         <div className="topbar-left">
           <button className="brand home-brand" type="button" onClick={openHome} title="返回首页">
@@ -2673,7 +2686,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
           {screen === "home" && (
             <div className="current-workspace-summary">
               <span>当前空间</span>
-              <strong>{selectedWorkspace?.name || "未选择"}</strong>
+              <strong>{workspaces.length} 个空间</strong>
             </div>
           )}
           {screen === "home" && (
@@ -2681,7 +2694,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               <Plus size={18} /><span>工作空间</span>
             </button>
           )}
-          {globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
+          {screen === "task" && globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
             <button className="icon-button notification-button" type="button" onClick={() => setShowNotifications((value) => !value)} title="通知" aria-label={`通知，${unreadNotificationCount} 条未读`}>
               <Bell size={18} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
             </button>
@@ -2739,12 +2752,12 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       {screen === "home" ? (
         <section className="home-frame">
           <nav className="workspace-sidebar" aria-label="工作空间列表">
-            <div className="workspace-sidebar-header">
-              <div><span>工作空间</span><strong>{workspaces.length} 个空间</strong></div>
-              <button className="icon-button accent" type="button" onClick={() => setShowWorkspaceCreate(true)} title="新建工作空间" aria-label="新建工作空间"><Plus size={18} /></button>
-            </div>
             <div className="workspace-list">
-              {workspaces.map((workspace) => (
+              {[...workspaces].sort((first, second) => {
+                if (first.id === "default") return -1;
+                if (second.id === "default") return 1;
+                return 0;
+              }).map((workspace) => (
                 <div className={`workspace-group ${workspace.id === selectedWorkspaceId ? "selected" : ""} ${expandedWorkspaceIds.has(workspace.id) ? "expanded" : ""}`} key={workspace.id}>
                   <div className={`workspace-item ${workspace.id === "default" ? "workspace-item-default" : ""}`}>
                     <button type="button" className="workspace-select-button" onClick={() => {
@@ -2797,13 +2810,17 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                           <span>{item.name.slice(0, 1).toUpperCase()}</span>
                           <div><strong>{item.name}</strong><small>{item.pipelineType === "image_to_model" ? "图生模型" : "文生模型"} · {stages[item.currentStage].title}</small></div>
                           {item.jobStatus === "running" && <LoaderCircle className="spinning" size={14} />}
+                          <i
+                            className="workspace-task-progress"
+                            style={{
+                              "--workspace-task-progress": `${item.jobStatus === "running"
+                                ? item.jobProgress
+                                : Math.max(8, Math.round((item.currentStage / (stages.length - 1)) * 100))}%`,
+                            } as CSSProperties}
+                          />
                         </button>
                       ))}
                       {!runs.some((item) => item.workspaceId === workspace.id) && <p>该工作空间还没有任务。</p>}
-                      <button type="button" className="workspace-new-task" onClick={() => {
-                        setForm({ name: "", workspaceId: workspace.id, pipelineType: "text_to_model" });
-                        setShowCreate(true);
-                      }}><Plus size={14} />新建任务</button>
                     </div>
                   </div>
                 </div>
@@ -2836,7 +2853,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             >
               <div className="dispatcher-thread-content">
                 {!dispatcherTimeline.length && (
-                  <div className="dispatcher-welcome"><span><ImageIcon size={28} /></span><h2>从一个目标开始整个角色项目</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分。总调度 Agent 会根据你的目标选择单图生成或任务编排。</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传并拆分</button></div></div>
+                  <div className="dispatcher-welcome"><h2>从一个目标开始</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传并拆分</button></div></div>
                 )}
                 {dispatcherTimeline.map((entry) => {
                   if (entry.kind === "generation") {
@@ -2915,11 +2932,23 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </div>
             </div>
 
+            <div className="dispatcher-session-bar">
+              <ConversationSessionManager
+                sessions={dispatcherSessions}
+                sessionId={dispatcherSessionId}
+                label="总调度 Agent 会话"
+                disabled={dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId}
+                variant="home"
+                onActivate={(value) => void activateDispatcherSession(value)}
+                onCreate={() => void startDispatcherSession()}
+                onDelete={requestDeleteDispatcherSession}
+              />
+            </div>
+
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
               <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
               <div className="dispatcher-composer-footer">
-                <ConversationSessionManager sessions={dispatcherSessions} sessionId={dispatcherSessionId} label="总调度 Agent 会话" disabled={dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId} onActivate={(value) => void activateDispatcherSession(value)} onCreate={() => void startDispatcherSession()} onDelete={requestDeleteDispatcherSession} />
                 <AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" />
                 <input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} />
                 <ContextUsage context={dispatcherContext} />
@@ -3420,6 +3449,30 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               <div className="settings-loading"><LoaderCircle size={20} /><span>正在读取全局设置</span></div>
             ) : (
               <div className="global-settings-content">
+                <section className="global-settings-section" aria-labelledby="global-visual-effects-title">
+                  <div className="global-settings-section-heading">
+                    <span className="global-settings-icon"><Sparkles size={18} /></span>
+                    <div>
+                      <h3 id="global-visual-effects-title">视觉效果</h3>
+                      <p>控制页面背景的实时波浪与粒子运动。</p>
+                    </div>
+                  </div>
+                  <label className="global-setting-row">
+                    <span>
+                      <strong>背景动画</strong>
+                      <small>默认关闭；开启后波浪与粒子会随时间和鼠标方向变化。</small>
+                    </span>
+                    <input
+                      className="settings-switch-input"
+                      type="checkbox"
+                      aria-label="启用背景动画"
+                      checked={globalPreferencesDraft.backgroundAnimationEnabled}
+                      onChange={(event) => setGlobalPreferencesDraft((current) => ({ ...current, backgroundAnimationEnabled: event.target.checked }))}
+                    />
+                    <i className="settings-switch" aria-hidden="true" />
+                  </label>
+                </section>
+
                 <section className="global-settings-section" aria-labelledby="global-notification-title">
                   <div className="global-settings-section-heading">
                     <span className="global-settings-icon"><Bell size={18} /></span>

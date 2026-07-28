@@ -63,13 +63,14 @@ export function createApprovalRuntime({ db }) {
   function preferences() {
     const rows = db.prepare(`
       SELECT key, value FROM app_preferences
-      WHERE key IN ('notifications_enabled', 'default_approval_mode')
+      WHERE key IN ('background_animation_enabled', 'notifications_enabled', 'default_approval_mode')
     `).all();
     const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
     const coordinatorMode = db.prepare(
       "SELECT mode FROM agent_permission_modes WHERE scope_type = 'coordinator' AND scope_id = 'global'",
     ).get()?.mode;
     return {
+      backgroundAnimationEnabled: values.background_animation_enabled === "true",
       notificationsEnabled: values.notifications_enabled !== "false",
       defaultApprovalMode: values.default_approval_mode === "auto" || values.default_approval_mode === "request"
         ? values.default_approval_mode
@@ -78,11 +79,17 @@ export function createApprovalRuntime({ db }) {
   }
 
   function updatePreferences(input = {}) {
+    if (input.backgroundAnimationEnabled !== undefined && typeof input.backgroundAnimationEnabled !== "boolean") {
+      throw new Error("背景动画设置必须为布尔值");
+    }
     if (input.notificationsEnabled !== undefined && typeof input.notificationsEnabled !== "boolean") {
       throw new Error("通知设置必须为布尔值");
     }
     const current = preferences();
     const next = {
+      backgroundAnimationEnabled: typeof input.backgroundAnimationEnabled === "boolean"
+        ? input.backgroundAnimationEnabled
+        : current.backgroundAnimationEnabled,
       notificationsEnabled: typeof input.notificationsEnabled === "boolean"
         ? input.notificationsEnabled
         : current.notificationsEnabled,
@@ -95,6 +102,7 @@ export function createApprovalRuntime({ db }) {
       INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
     `);
+    upsert.run("background_animation_enabled", String(next.backgroundAnimationEnabled), now);
     upsert.run("notifications_enabled", String(next.notificationsEnabled), now);
     upsert.run("default_approval_mode", next.defaultApprovalMode, now);
     setPermission("coordinator", "global", next.defaultApprovalMode);
