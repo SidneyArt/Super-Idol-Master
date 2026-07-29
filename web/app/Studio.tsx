@@ -69,7 +69,7 @@ const stages = [
   { short: "QA", title: "姿态质量检查", subtitle: "检查对称性、肢体角度与遮挡", input: "2D 概念图", output: "关键点与评分", action: "SDPose 检查单人全身、双臂水平、肘部伸直和左右对称。" },
   { short: "3D", title: "三维重建", subtitle: "根据角色图生成静态三维模型", input: "合格 T-Pose PNG", output: "静态 GLB", action: "DGX 执行 Pixal3D 工作流并下载真实静态 GLB。" },
   { short: "TOPO", title: "网格优化", subtitle: "降低面数并优化模型拓扑", input: "静态 GLB", output: "四边面派生拓扑 GLB", action: "DGX 执行 AutoRemesher 重拓扑，并通过 Blender 回烘纹理；GLB 导出时按 glTF 规范三角化。" },
-  { short: "RIG", title: "骨骼绑定", subtitle: "生成人体骨骼与蒙皮权重", input: "拓扑 GLB", output: "带骨骼 GLB", action: "DGX 使用拓扑模型执行 SkinTokens，生成 Mixamo 骨骼与蒙皮。" },
+  { short: "RIG", title: "骨骼绑定", subtitle: "生成人体骨骼与蒙皮权重", input: "拓扑 GLB 或原始静态 GLB", output: "带骨骼 GLB", action: "DGX 使用拓扑模型执行 SkinTokens；跳过拓扑时直接使用原始静态模型。" },
   { short: "OUT", title: "资产导出", subtitle: "校验并导出可用的 3D 文件", input: "已绑骨 GLB", output: "最终资产", action: "下载后端实际保存的 PNG、静态 GLB 或最终绑骨 GLB。" },
 ];
 
@@ -120,6 +120,7 @@ export type Run = {
   positivePrompt: string;
   negativePrompt: string;
   currentStage: number;
+  topologySkipped: boolean;
   status: "active" | "completed" | "failed";
   qaStatus: "pending" | "passed" | "failed";
   qaScore: number | null;
@@ -3336,6 +3337,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                       if (index === current && run.jobStatus === "running") stateLabel = `${run.jobProgress}%`;
                       if (index === 2 && index === current && run.qaStatus === "failed") stateLabel = "未通过";
                       if (index === 2 && index < current) stateLabel = `${run.qaScore ?? "-"} 分`;
+                      if (index === 4 && index < current && run.topologySkipped) stateLabel = "已跳过";
                       return (
                         <div key={item.short} className={`stage-step ${state} ${viewStage === index ? "viewed" : ""}`}>
                           <button
@@ -3488,6 +3490,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                           {isCurrentView && current === 3 && run.assets.modelReady && <button className="secondary-button" onClick={() => runAction("generate-3d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新生成 3D</button>}
                           {isCurrentView && current === 3 && run.assets.modelReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认 3D 完成，进入拓扑</button>}
                           {isCurrentView && current === 4 && !run.assets.topologyReady && <button className="primary-button" onClick={() => runAction("retopologize", "拓扑任务提交失败")} disabled={busy || run.jobStatus === "running"}><Expand size={16} />运行自动拓扑</button>}
+                          {isCurrentView && current === 4 && !run.assets.topologyReady && <button className="secondary-button" onClick={() => runAction("skip-topology", "跳过拓扑并启动绑骨失败")} disabled={busy || run.jobStatus === "running"}><ChevronRight size={16} />跳过拓扑，直接绑骨</button>}
                           {isCurrentView && current === 4 && run.assets.topologyReady && <button className="secondary-button" onClick={() => runAction("retopologize", "重新拓扑失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新运行拓扑</button>}
                           {isCurrentView && current === 4 && run.assets.topologyReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认拓扑完成，进入绑骨</button>}
                           {isCurrentView && current === 5 && !run.assets.riggedReady && <button className="primary-button" onClick={() => runAction("rig", "绑骨任务提交失败")} disabled={busy || run.jobStatus === "running"}><Expand size={16} />运行自动绑骨</button>}

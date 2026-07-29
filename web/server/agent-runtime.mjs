@@ -350,6 +350,7 @@ function compactRunContext(detail) {
     name: run.name,
     currentStage: run.currentStage,
     currentStageName: STAGE_NAMES[run.currentStage],
+    topologySkipped: Boolean(run.topologySkipped),
     positivePrompt: run.positivePrompt,
     negativePrompt: run.negativePrompt,
     job: {
