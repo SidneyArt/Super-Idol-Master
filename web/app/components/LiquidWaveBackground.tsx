@@ -25,6 +25,10 @@ type WaveFamily = {
 };
 
 const TARGET_FRAME_INTERVAL = 1000 / 30;
+const WAVE_ROTATION = -15 * Math.PI / 180;
+const WAVE_PIVOT_X = 0.64;
+const WAVE_PIVOT_Y = 0.695;
+const WAVE_VERTICAL_SHIFT = -0.055;
 
 const WAVE_FAMILIES: WaveFamily[] = [
   {
@@ -95,6 +99,17 @@ function cubicPoint(
   };
 }
 
+function applyWaveTransform(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+) {
+  context.translate(0, height * WAVE_VERTICAL_SHIFT);
+  context.translate(width * WAVE_PIVOT_X, height * WAVE_PIVOT_Y);
+  context.rotate(WAVE_ROTATION);
+  context.translate(-width * WAVE_PIVOT_X, -height * WAVE_PIVOT_Y);
+}
+
 function traceFamilyStrand(
   context: CanvasRenderingContext2D,
   width: number,
@@ -114,13 +129,13 @@ function traceFamilyStrand(
     x: family.controlB.x + Math.cos(time * 0.14 + family.phase) * 0.009 * motionStrength,
     y: family.controlB.y + Math.cos(time * 0.19 + family.phase * 0.78) * 0.025 * family.weight * motionStrength,
   };
-  const focusY = 0.695 + (familyIndex - 1.5) * 0.006;
+  const focusY = 0.695 + (familyIndex - 1.5) * 0.008;
   const focusedPoint = (progress: number) => {
     const point = cubicPoint(family.start, controlA, controlB, family.end, progress);
     const focusEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.18, 2));
     return {
       x: point.x,
-      y: point.y + (focusY - point.y) * focusEnvelope * 0.84,
+      y: point.y + (focusY - point.y) * focusEnvelope * 0.81,
     };
   };
 
@@ -140,7 +155,8 @@ function traceFamilyStrand(
       Math.abs(progress - family.crossT) / Math.max(family.crossT, 1 - family.crossT),
     );
     const smoothDistance = normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance);
-    const spreadScale = 0.12 + smoothDistance * 0.7;
+    const endFlare = Math.pow(smoothDistance, 1.45);
+    const spreadScale = 0.16 + smoothDistance * 0.72 + endFlare * 0.38;
     const centerEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.29, 2));
     const contourEnvelope = Math.sin(Math.PI * progress) * (1 - centerEnvelope * 0.42);
     const strandContour = Math.sin(
@@ -172,9 +188,9 @@ function strandVariation(familyIndex: number, strandIndex: number) {
 function clusteredStrandPosition(familyIndex: number, strandIndex: number, strandCount: number) {
   if (strandCount <= 1) return 0;
   const linearPosition = strandIndex / (strandCount - 1) * 2 - 1;
-  const clusteredPosition = Math.sign(linearPosition) * Math.pow(Math.abs(linearPosition), 1.35);
+  const clusteredPosition = Math.sign(linearPosition) * Math.pow(Math.abs(linearPosition), 1.24);
   const irregularity = Math.sin((strandIndex + 1) * 2.17 + familyIndex * 0.93)
-    * 0.042
+    * 0.052
     * (1 - Math.abs(clusteredPosition) * 0.35);
   return Math.max(-1, Math.min(1, clusteredPosition + irregularity));
 }
@@ -217,9 +233,12 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
         height * 0.72,
         Math.max(width, height) * 0.7,
       );
+      context.save();
+      applyWaveTransform(context, width, height);
       wavePaint = context.createLinearGradient(0, height * 0.8, width, height * 0.56);
       glowPaint = context.createLinearGradient(0, height * 0.82, width, height * 0.54);
       flowPaint = context.createLinearGradient(0, height * 0.8, width, height * 0.58);
+      context.restore();
       vignettePaint = context.createRadialGradient(
         width * 0.63,
         height * 0.65,
@@ -238,17 +257,17 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
         ambientPaint.addColorStop(1, "rgba(0, 0, 0, 0)");
         wavePaint.addColorStop(0, "rgba(111, 157, 224, 0)");
         wavePaint.addColorStop(0.18, "rgba(130, 176, 236, 0.68)");
-        wavePaint.addColorStop(0.58, "rgba(230, 240, 252, 0.94)");
-        wavePaint.addColorStop(0.7, "rgba(250, 253, 255, 1)");
+        wavePaint.addColorStop(0.58, "rgba(190, 218, 248, 0.84)");
+        wavePaint.addColorStop(0.7, "rgba(207, 231, 255, 0.9)");
         wavePaint.addColorStop(0.84, "rgba(139, 188, 248, 0.78)");
         wavePaint.addColorStop(1, "rgba(76, 123, 198, 0)");
         glowPaint.addColorStop(0, "rgba(86, 139, 221, 0)");
         glowPaint.addColorStop(0.42, "rgba(147, 187, 239, 0.2)");
-        glowPaint.addColorStop(0.69, "rgba(229, 242, 255, 0.42)");
+        glowPaint.addColorStop(0.69, "rgba(176, 213, 250, 0.32)");
         glowPaint.addColorStop(1, "rgba(98, 151, 228, 0)");
         flowPaint.addColorStop(0, "rgba(158, 201, 255, 0)");
         flowPaint.addColorStop(0.3, "rgba(184, 216, 255, 0.44)");
-        flowPaint.addColorStop(0.68, "rgba(255, 255, 255, 0.98)");
+        flowPaint.addColorStop(0.68, "rgba(190, 224, 255, 0.84)");
         flowPaint.addColorStop(1, "rgba(162, 204, 255, 0)");
         vignettePaint.addColorStop(0, "rgba(0, 0, 0, 0)");
         vignettePaint.addColorStop(1, "rgba(0, 0, 0, 0.54)");
@@ -302,6 +321,9 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       context.fillStyle = ambientPaint;
       context.fillRect(0, 0, width, height);
 
+      context.save();
+      applyWaveTransform(context, width, height);
+
       const pulsePaints: CanvasGradient[] = [];
       const pulseStrengths: number[] = [];
       if (animated) {
@@ -323,7 +345,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
           );
           pulsePaint.addColorStop(
             0.5,
-            theme === "dark" ? "rgba(250, 253, 255, 0.92)" : "rgba(31, 76, 164, 0.68)",
+            theme === "dark" ? "rgba(207, 233, 255, 0.76)" : "rgba(31, 76, 164, 0.68)",
           );
           pulsePaint.addColorStop(
             0.72,
@@ -335,8 +357,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
         }
       }
 
-      context.save();
-      context.globalCompositeOperation = theme === "dark" ? "lighter" : "source-over";
+      context.globalCompositeOperation = theme === "dark" ? "screen" : "source-over";
       context.strokeStyle = glowPaint;
       context.lineCap = "round";
       context.lineJoin = "round";
