@@ -7,87 +7,159 @@ type LiquidWaveBackgroundProps = {
   animated: boolean;
 };
 
-type WaveSeed = {
+type NormalizedPoint = {
+  x: number;
+  y: number;
+};
+
+type WaveFamily = {
+  start: NormalizedPoint;
+  controlA: NormalizedPoint;
+  controlB: NormalizedPoint;
+  end: NormalizedPoint;
+  spread: number;
+  strands: number;
   phase: number;
-  drift: number;
-  alpha: number;
-  width: number;
+  weight: number;
+  crossT: number;
 };
 
 const TARGET_FRAME_INTERVAL = 1000 / 30;
-const WAVE_COUNT = 27;
-const GLOW_LINE_INDEXES = [6, 7, 8, 18, 19, 20];
-const CORE_LINE_INDEXES = [12, 13, 14];
 
-const WAVE_SEEDS: WaveSeed[] = Array.from({ length: WAVE_COUNT }, (_, index) => {
-  const pseudoRandom = Math.sin((index + 1) * 91.731) * 43758.5453;
-  const fraction = pseudoRandom - Math.floor(pseudoRandom);
+const WAVE_FAMILIES: WaveFamily[] = [
+  {
+    start: { x: -0.08, y: 0.52 },
+    controlA: { x: 0.24, y: 0.56 },
+    controlB: { x: 0.59, y: 0.75 },
+    end: { x: 1.08, y: 0.6 },
+    spread: 0.06,
+    strands: 9,
+    phase: 0.2,
+    weight: 1,
+    crossT: 0.65,
+  },
+  {
+    start: { x: -0.08, y: 0.7 },
+    controlA: { x: 0.24, y: 0.71 },
+    controlB: { x: 0.6, y: 0.62 },
+    end: { x: 1.08, y: 0.72 },
+    spread: 0.058,
+    strands: 9,
+    phase: 1.75,
+    weight: 0.92,
+    crossT: 0.61,
+  },
+  {
+    start: { x: -0.08, y: 0.8 },
+    controlA: { x: 0.28, y: 0.74 },
+    controlB: { x: 0.62, y: 0.67 },
+    end: { x: 1.08, y: 0.78 },
+    spread: 0.042,
+    strands: 7,
+    phase: 3.15,
+    weight: 0.72,
+    crossT: 0.59,
+  },
+  {
+    start: { x: -0.08, y: 0.59 },
+    controlA: { x: 0.23, y: 0.6 },
+    controlB: { x: 0.69, y: 0.71 },
+    end: { x: 1.08, y: 0.56 },
+    spread: 0.034,
+    strands: 7,
+    phase: 4.55,
+    weight: 0.64,
+    crossT: 0.68,
+  },
+];
+
+function cubicPoint(
+  start: NormalizedPoint,
+  controlA: NormalizedPoint,
+  controlB: NormalizedPoint,
+  end: NormalizedPoint,
+  progress: number,
+) {
+  const inverse = 1 - progress;
+  const inverseSquared = inverse * inverse;
+  const progressSquared = progress * progress;
   return {
-    phase: index * 0.71 + fraction * Math.PI,
-    drift: 0.74 + fraction * 0.54,
-    alpha: 0.34 + fraction * 0.56,
-    width: index % 9 === 0 ? 2.2 : index % 4 === 0 ? 1.45 : 0.9,
+    x: inverseSquared * inverse * start.x
+      + 3 * inverseSquared * progress * controlA.x
+      + 3 * inverse * progressSquared * controlB.x
+      + progressSquared * progress * end.x,
+    y: inverseSquared * inverse * start.y
+      + 3 * inverseSquared * progress * controlA.y
+      + 3 * inverse * progressSquared * controlB.y
+      + progressSquared * progress * end.y,
   };
-});
+}
 
-function traceWave(
+function traceFamilyStrand(
   context: CanvasRenderingContext2D,
   width: number,
   height: number,
-  index: number,
+  familyIndex: number,
+  strandPosition: number,
   time: number,
   animated: boolean,
 ) {
-  const seed = WAVE_SEEDS[index];
-  const group = index % 3;
-  const lineInGroup = Math.floor(index / 3);
-  const linesPerGroup = WAVE_COUNT / 3;
-  const normalized = lineInGroup / (linesPerGroup - 1) * 2 - 1;
-  const spread = Math.sign(normalized) * Math.pow(Math.abs(normalized), 0.82);
-  const motion = animated ? Math.sin(time * 0.52 * seed.drift + seed.phase) : Math.sin(seed.phase) * 0.12;
-  const counterMotion = animated ? Math.cos(time * 0.39 + seed.phase * 0.67) : 0;
-  const groupMotion = animated ? Math.sin(time * 0.32 + group * 2.1) : 0;
-  const leftCenters = [0.47, 0.75, 0.62];
-  const leftSpreads = [0.13, 0.16, 0.07];
-  const rightCenters = [0.58, 0.76, 0.67];
-  const rightSpreads = [0.09, 0.14, 0.06];
-  const pinchCenters = [0.69, 0.72, 0.705];
-  const arches = [0.055, -0.07, 0.018];
-  const pinchX = width * (0.665 + group * 0.008 + counterMotion * 0.012);
-  const pinchY = height * (pinchCenters[group] + groupMotion * 0.016);
-  const leftY = height * (leftCenters[group] + spread * leftSpreads[group])
-    + motion * height * 0.018;
-  const rightY = height * (rightCenters[group] + spread * rightSpreads[group])
-    - motion * height * 0.016;
-  const pinchOffset = spread * height * 0.017 + counterMotion * height * 0.006;
-  const archMotion = animated ? Math.sin(time * 0.28 + group * 1.7) * height * 0.022 : 0;
-  const arch = height * arches[group] + archMotion;
-  const pinchPointY = pinchY + pinchOffset;
-  const sharedHandle = width * 0.17;
-  const tangentSlope = ((rightY - leftY) / (width * 1.16)) * 0.32
-    + (arch / width) * 0.08
-    + groupMotion * 0.01;
-  const incomingControlY = pinchPointY - tangentSlope * sharedHandle;
-  const outgoingControlY = pinchPointY + tangentSlope * sharedHandle;
+  const family = WAVE_FAMILIES[familyIndex];
+  const motionStrength = animated ? 1 : 0;
+  const controlA = {
+    x: family.controlA.x + Math.sin(time * 0.16 + family.phase) * 0.008 * motionStrength,
+    y: family.controlA.y + Math.sin(time * 0.21 + family.phase) * 0.023 * family.weight * motionStrength,
+  };
+  const controlB = {
+    x: family.controlB.x + Math.cos(time * 0.14 + family.phase) * 0.009 * motionStrength,
+    y: family.controlB.y + Math.cos(time * 0.19 + family.phase * 0.78) * 0.025 * family.weight * motionStrength,
+  };
+  const focusY = 0.695 + (familyIndex - 1.5) * 0.006;
+  const focusedPoint = (progress: number) => {
+    const point = cubicPoint(family.start, controlA, controlB, family.end, progress);
+    const focusEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.18, 2));
+    return {
+      x: point.x,
+      y: point.y + (focusY - point.y) * focusEnvelope * 0.84,
+    };
+  };
 
   context.beginPath();
-  context.moveTo(-width * 0.08, leftY);
-  context.bezierCurveTo(
-    width * 0.16,
-    leftY + arch + motion * height * 0.012,
-    pinchX - sharedHandle,
-    incomingControlY,
-    pinchX,
-    pinchPointY,
-  );
-  context.bezierCurveTo(
-    pinchX + sharedHandle,
-    outgoingControlY,
-    width * 0.96,
-    rightY - arch * 0.62 - counterMotion * height * 0.012,
-    width * 1.08,
-    rightY,
-  );
+  for (let step = 0; step <= 64; step += 1) {
+    const progress = step / 64;
+    const point = focusedPoint(progress);
+    const previousPoint = focusedPoint(Math.max(0, progress - 0.003));
+    const nextPoint = focusedPoint(Math.min(1, progress + 0.003));
+    const tangentX = (nextPoint.x - previousPoint.x) * width;
+    const tangentY = (nextPoint.y - previousPoint.y) * height;
+    const tangentLength = Math.max(1, Math.hypot(tangentX, tangentY));
+    const normalX = -tangentY / tangentLength;
+    const normalY = tangentX / tangentLength;
+    const normalizedDistance = Math.min(
+      1,
+      Math.abs(progress - family.crossT) / Math.max(family.crossT, 1 - family.crossT),
+    );
+    const smoothDistance = normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance);
+    const spreadScale = 0.12 + smoothDistance * 0.7;
+    const centerEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.29, 2));
+    const sharedFlow = animated
+      ? Math.sin(time * 0.42 + family.phase + progress * 3.6) * height * 0.0042 * family.weight * centerEnvelope
+      : 0;
+    const strandRipple = animated
+      ? Math.sin(time * 0.54 + family.phase + progress * 4.8 + strandPosition * 0.5)
+        * height * 0.0016 * centerEnvelope
+      : 0;
+    const offset = strandPosition * family.spread * height * spreadScale + sharedFlow + strandRipple;
+    const x = point.x * width + normalX * offset;
+    const y = point.y * height + normalY * offset;
+    if (step === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  }
+}
+
+function strandVariation(familyIndex: number, strandIndex: number) {
+  const value = Math.sin((familyIndex + 1) * 97.13 + (strandIndex + 1) * 41.73) * 43758.5453;
+  return value - Math.floor(value);
 }
 
 export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBackgroundProps) {
@@ -219,51 +291,68 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       context.lineCap = "round";
       context.lineJoin = "round";
 
-      for (const index of CORE_LINE_INDEXES) {
-        traceWave(context, width, height, index, time, animated);
-        context.globalAlpha = theme === "dark" ? 0.085 : 0.055;
-        context.lineWidth = theme === "dark" ? 68 : 52;
+      for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
+        const family = WAVE_FAMILIES[familyIndex];
+        traceFamilyStrand(context, width, height, familyIndex, 0, time, animated);
+        context.globalAlpha = family.weight * (theme === "dark" ? 0.095 : 0.06);
+        context.lineWidth = (theme === "dark" ? 54 : 40) * (0.72 + family.weight * 0.28);
         context.shadowColor = theme === "dark" ? "rgba(132, 184, 247, 0.42)" : "rgba(48, 96, 184, 0.18)";
-        context.shadowBlur = theme === "dark" ? 30 : 20;
+        context.shadowBlur = theme === "dark" ? 26 : 17;
         context.stroke();
       }
 
-      for (const index of GLOW_LINE_INDEXES) {
-        traceWave(context, width, height, index, time, animated);
-        context.globalAlpha = theme === "dark" ? 0.15 : 0.095;
-        context.lineWidth = theme === "dark" ? 28 : 21;
+      for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
+        const family = WAVE_FAMILIES[familyIndex];
+        traceFamilyStrand(context, width, height, familyIndex, 0, time, animated);
+        context.globalAlpha = family.weight * (theme === "dark" ? 0.18 : 0.11);
+        context.lineWidth = (theme === "dark" ? 20 : 15) * (0.74 + family.weight * 0.26);
         context.shadowColor = theme === "dark" ? "rgba(153, 198, 255, 0.42)" : "rgba(60, 107, 188, 0.2)";
-        context.shadowBlur = theme === "dark" ? 20 : 13;
+        context.shadowBlur = theme === "dark" ? 16 : 10;
         context.stroke();
       }
 
       context.shadowBlur = 0;
       context.strokeStyle = wavePaint;
-      for (let index = 0; index < WAVE_COUNT; index += 1) {
-        const seed = WAVE_SEEDS[index];
-        traceWave(context, width, height, index, time, animated);
-        context.globalAlpha = seed.alpha * (theme === "dark" ? 0.5 : 0.39);
-        context.lineWidth = seed.width;
-        context.stroke();
+      for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
+        const family = WAVE_FAMILIES[familyIndex];
+        for (let strandIndex = 0; strandIndex < family.strands; strandIndex += 1) {
+          const strandPosition = family.strands === 1
+            ? 0
+            : strandIndex / (family.strands - 1) * 2 - 1;
+          const variation = strandVariation(familyIndex, strandIndex);
+          const centerStrand = Math.floor((family.strands - 1) / 2);
+          const heroDistance = Math.abs(strandIndex - centerStrand);
+          const isHero = heroDistance === 0 || (familyIndex < 2 && heroDistance === 2);
+          const hierarchy = Math.max(Math.pow(variation, 2.6), isHero ? 0.92 : 0);
+          traceFamilyStrand(context, width, height, familyIndex, strandPosition, time, animated);
+          context.globalAlpha = family.weight
+            * (0.08 + hierarchy * 0.78)
+            * (theme === "dark" ? 0.95 : 0.68);
+          context.lineWidth = 0.38 + hierarchy * 3.1;
+          context.stroke();
+        }
       }
 
       context.strokeStyle = flowPaint;
       context.setLineDash([]);
-      for (const index of CORE_LINE_INDEXES) {
-        traceWave(context, width, height, index, time, animated);
-        context.globalAlpha = theme === "dark" ? 0.76 : 0.52;
-        context.lineWidth = theme === "dark" ? 3.4 : 2.6;
+      for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
+        const family = WAVE_FAMILIES[familyIndex];
+        traceFamilyStrand(context, width, height, familyIndex, 0, time, animated);
+        context.globalAlpha = family.weight * (theme === "dark" ? 0.74 : 0.5);
+        context.lineWidth = theme === "dark"
+          ? 2.2 + family.weight * 2.2
+          : 1.6 + family.weight * 1.6;
         context.shadowColor = theme === "dark" ? "rgba(195, 224, 255, 0.48)" : "rgba(47, 94, 179, 0.2)";
-        context.shadowBlur = theme === "dark" ? 10 : 6;
+        context.shadowBlur = theme === "dark" ? 8 : 5;
         context.stroke();
       }
 
       if (animated) {
-        const sweepX = ((time * 0.085) % 1.45 - 0.22) * width;
+        const sweepX = ((time * 0.07) % 1.5 - 0.25) * width;
         const sweepPaint = context.createLinearGradient(
-          sweepX - width * 0.2,
+          sweepX - width * 0.24,
           0,
-          sweepX + width * 0.2,
+          sweepX + width * 0.24,
           0,
         );
         sweepPaint.addColorStop(0, "rgba(255, 255, 255, 0)");
@@ -273,12 +362,13 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
         );
         sweepPaint.addColorStop(1, "rgba(255, 255, 255, 0)");
         context.strokeStyle = sweepPaint;
-        context.lineWidth = theme === "dark" ? 11 : 8;
+        context.lineWidth = theme === "dark" ? 14 : 10;
         context.shadowColor = theme === "dark" ? "rgba(166, 210, 255, 0.56)" : "rgba(47, 94, 179, 0.22)";
-        context.shadowBlur = theme === "dark" ? 16 : 9;
-        for (const index of CORE_LINE_INDEXES) {
-          traceWave(context, width, height, index, time, animated);
-          context.globalAlpha = theme === "dark" ? 0.48 : 0.34;
+        context.shadowBlur = theme === "dark" ? 13 : 8;
+        for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
+          const family = WAVE_FAMILIES[familyIndex];
+          traceFamilyStrand(context, width, height, familyIndex, 0, time, animated);
+          context.globalAlpha = family.weight * (theme === "dark" ? 0.22 : 0.15);
           context.stroke();
         }
       }
