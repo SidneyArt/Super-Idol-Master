@@ -2586,7 +2586,7 @@ body {
   .screen-home .workspace-item,
   .screen-home .workspace-item.workspace-item-default {
     min-height: 80px;
-    grid-template-columns: minmax(0, 1fr) 38px 42px;
+    grid-template-columns: minmax(0, 1fr) 40px 42px;
     gap: 4px;
     padding: 6px 12px;
   }
@@ -2632,8 +2632,14 @@ body {
 
   .screen-home .workspace-item-settings,
   .screen-home .workspace-item-settings-trigger {
-    width: 38px;
-    height: 38px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .screen-home .workspace-item-settings-trigger {
+    border-color: rgba(235, 242, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-secondary);
   }
 
   .screen-home .workspace-toggle-button {
@@ -3987,6 +3993,12 @@ body {
   color: currentColor;
 }
 
+:root[data-theme="light"] .screen-home .workspace-item-settings-trigger {
+  border-color: rgba(112, 128, 196, 0.24);
+  background: rgba(255, 255, 255, 0.62);
+  color: #4f5e78;
+}
+
 :root[data-theme="light"] .screen-task .run-item-settings-menu,
 :root[data-theme="light"] .screen-home .workspace-item-settings-menu {
   border-color: rgba(112, 128, 196, 0.28);
@@ -4473,7 +4485,7 @@ body {
   .screen-home .workspace-item,
   .screen-home .workspace-item.workspace-item-default {
     min-height: 62px;
-    grid-template-columns: minmax(0, 1fr) 32px 36px;
+    grid-template-columns: minmax(0, 1fr) 34px 36px;
     padding: 4px 8px;
   }
 
@@ -4500,8 +4512,8 @@ body {
 
   .screen-home .workspace-item-settings,
   .screen-home .workspace-item-settings-trigger {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
   }
 
   .screen-home .workspace-task-list {

@@ -2957,12 +2957,14 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                       <button
                         type="button"
                         className="workspace-item-settings-trigger"
+                        data-testid={`workspace-settings-${workspace.id}`}
+                        title={`设置 ${workspace.name}`}
                         aria-label={`设置 ${workspace.name}`}
                         aria-expanded={workspaceMenuId === workspace.id}
                         aria-haspopup="menu"
                         onClick={() => setWorkspaceMenuId((current) => current === workspace.id ? null : workspace.id)}
                       >
-                        <Settings size={16} />
+                        <Settings size={17} />
                       </button>
                       {workspaceMenuId === workspace.id && (
                         <div className="workspace-item-settings-menu" role="menu">
