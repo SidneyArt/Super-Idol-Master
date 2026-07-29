@@ -15,10 +15,9 @@ type WaveSeed = {
 };
 
 const TARGET_FRAME_INTERVAL = 1000 / 30;
-const WAVE_COUNT = 36;
-const GLOW_LINE_INDEXES = [12, 13, 14, 21, 22, 23];
-const CORE_LINE_INDEXES = [15, 16, 17];
-const FLOW_LINE_INDEXES = [4, 10, 17, 25, 31];
+const WAVE_COUNT = 27;
+const GLOW_LINE_INDEXES = [6, 7, 8, 18, 19, 20];
+const CORE_LINE_INDEXES = [12, 13, 14];
 
 const WAVE_SEEDS: WaveSeed[] = Array.from({ length: WAVE_COUNT }, (_, index) => {
   const pseudoRandom = Math.sin((index + 1) * 91.731) * 43758.5453;
@@ -27,7 +26,7 @@ const WAVE_SEEDS: WaveSeed[] = Array.from({ length: WAVE_COUNT }, (_, index) => 
     phase: index * 0.71 + fraction * Math.PI,
     drift: 0.74 + fraction * 0.54,
     alpha: 0.34 + fraction * 0.56,
-    width: index % 9 === 0 ? 1.5 : index % 4 === 0 ? 1 : 0.62,
+    width: index % 9 === 0 ? 2.2 : index % 4 === 0 ? 1.45 : 0.9,
   };
 });
 
@@ -45,37 +44,45 @@ function traceWave(
   const linesPerGroup = WAVE_COUNT / 3;
   const normalized = lineInGroup / (linesPerGroup - 1) * 2 - 1;
   const spread = Math.sign(normalized) * Math.pow(Math.abs(normalized), 0.82);
-  const motion = animated ? Math.sin(time * 0.46 * seed.drift + seed.phase) : Math.sin(seed.phase) * 0.12;
-  const counterMotion = animated ? Math.cos(time * 0.31 + seed.phase * 0.67) : 0;
-  const groupMotion = animated ? Math.sin(time * 0.22 + group * 2.1) : 0;
+  const motion = animated ? Math.sin(time * 0.52 * seed.drift + seed.phase) : Math.sin(seed.phase) * 0.12;
+  const counterMotion = animated ? Math.cos(time * 0.39 + seed.phase * 0.67) : 0;
+  const groupMotion = animated ? Math.sin(time * 0.32 + group * 2.1) : 0;
   const leftCenters = [0.47, 0.75, 0.62];
   const leftSpreads = [0.13, 0.16, 0.07];
   const rightCenters = [0.58, 0.76, 0.67];
   const rightSpreads = [0.09, 0.14, 0.06];
   const pinchCenters = [0.69, 0.72, 0.705];
   const arches = [0.055, -0.07, 0.018];
-  const pinchX = width * (0.665 + group * 0.008 + counterMotion * 0.003);
-  const pinchY = height * (pinchCenters[group] + groupMotion * 0.006);
+  const pinchX = width * (0.665 + group * 0.008 + counterMotion * 0.012);
+  const pinchY = height * (pinchCenters[group] + groupMotion * 0.016);
   const leftY = height * (leftCenters[group] + spread * leftSpreads[group])
-    + motion * height * 0.009;
+    + motion * height * 0.018;
   const rightY = height * (rightCenters[group] + spread * rightSpreads[group])
-    - motion * height * 0.008;
-  const pinchOffset = spread * height * 0.014 + counterMotion * height * 0.003;
-  const arch = height * arches[group];
+    - motion * height * 0.016;
+  const pinchOffset = spread * height * 0.017 + counterMotion * height * 0.006;
+  const archMotion = animated ? Math.sin(time * 0.28 + group * 1.7) * height * 0.022 : 0;
+  const arch = height * arches[group] + archMotion;
+  const pinchPointY = pinchY + pinchOffset;
+  const sharedHandle = width * 0.17;
+  const tangentSlope = ((rightY - leftY) / (width * 1.16)) * 0.32
+    + (arch / width) * 0.08
+    + groupMotion * 0.01;
+  const incomingControlY = pinchPointY - tangentSlope * sharedHandle;
+  const outgoingControlY = pinchPointY + tangentSlope * sharedHandle;
 
   context.beginPath();
   context.moveTo(-width * 0.08, leftY);
   context.bezierCurveTo(
     width * 0.16,
     leftY + arch + motion * height * 0.012,
-    width * 0.44,
-    pinchY + spread * height * 0.035 + arch * 0.18,
+    pinchX - sharedHandle,
+    incomingControlY,
     pinchX,
-    pinchY + pinchOffset,
+    pinchPointY,
   );
   context.bezierCurveTo(
-    width * 0.79,
-    pinchY - spread * height * 0.026 - arch * 0.14,
+    pinchX + sharedHandle,
+    outgoingControlY,
     width * 0.96,
     rightY - arch * 0.62 - counterMotion * height * 0.012,
     width * 1.08,
@@ -210,13 +217,23 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       context.globalCompositeOperation = theme === "dark" ? "lighter" : "source-over";
       context.strokeStyle = glowPaint;
       context.lineCap = "round";
+      context.lineJoin = "round";
+
+      for (const index of CORE_LINE_INDEXES) {
+        traceWave(context, width, height, index, time, animated);
+        context.globalAlpha = theme === "dark" ? 0.085 : 0.055;
+        context.lineWidth = theme === "dark" ? 68 : 52;
+        context.shadowColor = theme === "dark" ? "rgba(132, 184, 247, 0.42)" : "rgba(48, 96, 184, 0.18)";
+        context.shadowBlur = theme === "dark" ? 30 : 20;
+        context.stroke();
+      }
 
       for (const index of GLOW_LINE_INDEXES) {
         traceWave(context, width, height, index, time, animated);
-        context.globalAlpha = theme === "dark" ? 0.16 : 0.1;
-        context.lineWidth = theme === "dark" ? 22 : 17;
+        context.globalAlpha = theme === "dark" ? 0.15 : 0.095;
+        context.lineWidth = theme === "dark" ? 28 : 21;
         context.shadowColor = theme === "dark" ? "rgba(153, 198, 255, 0.42)" : "rgba(60, 107, 188, 0.2)";
-        context.shadowBlur = theme === "dark" ? 22 : 14;
+        context.shadowBlur = theme === "dark" ? 20 : 13;
         context.stroke();
       }
 
@@ -225,7 +242,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       for (let index = 0; index < WAVE_COUNT; index += 1) {
         const seed = WAVE_SEEDS[index];
         traceWave(context, width, height, index, time, animated);
-        context.globalAlpha = seed.alpha * (theme === "dark" ? 0.56 : 0.43);
+        context.globalAlpha = seed.alpha * (theme === "dark" ? 0.5 : 0.39);
         context.lineWidth = seed.width;
         context.stroke();
       }
@@ -234,22 +251,36 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       context.setLineDash([]);
       for (const index of CORE_LINE_INDEXES) {
         traceWave(context, width, height, index, time, animated);
-        context.globalAlpha = theme === "dark" ? 0.7 : 0.48;
-        context.lineWidth = theme === "dark" ? 2.25 : 1.8;
+        context.globalAlpha = theme === "dark" ? 0.76 : 0.52;
+        context.lineWidth = theme === "dark" ? 3.4 : 2.6;
         context.shadowColor = theme === "dark" ? "rgba(195, 224, 255, 0.48)" : "rgba(47, 94, 179, 0.2)";
-        context.shadowBlur = theme === "dark" ? 8 : 5;
+        context.shadowBlur = theme === "dark" ? 10 : 6;
         context.stroke();
       }
 
-      context.shadowBlur = theme === "dark" ? 7 : 4;
-      context.strokeStyle = flowPaint;
-      context.lineWidth = theme === "dark" ? 2 : 1.55;
-      context.setLineDash([Math.max(150, width * 0.16), Math.max(520, width * 0.5)]);
-      for (const index of FLOW_LINE_INDEXES) {
-        traceWave(context, width, height, index, time, animated);
-        context.globalAlpha = theme === "dark" ? 0.42 : 0.3;
-        context.lineDashOffset = animated ? -(time * 72 + WAVE_SEEDS[index].phase * 90) : -WAVE_SEEDS[index].phase * 90;
-        context.stroke();
+      if (animated) {
+        const sweepX = ((time * 0.085) % 1.45 - 0.22) * width;
+        const sweepPaint = context.createLinearGradient(
+          sweepX - width * 0.2,
+          0,
+          sweepX + width * 0.2,
+          0,
+        );
+        sweepPaint.addColorStop(0, "rgba(255, 255, 255, 0)");
+        sweepPaint.addColorStop(
+          0.5,
+          theme === "dark" ? "rgba(246, 251, 255, 0.88)" : "rgba(35, 82, 168, 0.58)",
+        );
+        sweepPaint.addColorStop(1, "rgba(255, 255, 255, 0)");
+        context.strokeStyle = sweepPaint;
+        context.lineWidth = theme === "dark" ? 11 : 8;
+        context.shadowColor = theme === "dark" ? "rgba(166, 210, 255, 0.56)" : "rgba(47, 94, 179, 0.22)";
+        context.shadowBlur = theme === "dark" ? 16 : 9;
+        for (const index of CORE_LINE_INDEXES) {
+          traceWave(context, width, height, index, time, animated);
+          context.globalAlpha = theme === "dark" ? 0.48 : 0.34;
+          context.stroke();
+        }
       }
       context.restore();
 
