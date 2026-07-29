@@ -156,7 +156,7 @@ function traceFamilyStrand(
     );
     const smoothDistance = normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance);
     const endFlare = Math.pow(smoothDistance, 1.45);
-    const spreadScale = 0.16 + smoothDistance * 0.72 + endFlare * 0.38;
+    const spreadScale = 0.16 + smoothDistance * 0.72 + endFlare * 0.58;
     const centerEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.29, 2));
     const contourEnvelope = Math.sin(Math.PI * progress) * (1 - centerEnvelope * 0.42);
     const strandContour = Math.sin(
@@ -257,17 +257,17 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
         ambientPaint.addColorStop(1, "rgba(0, 0, 0, 0)");
         wavePaint.addColorStop(0, "rgba(111, 157, 224, 0)");
         wavePaint.addColorStop(0.18, "rgba(130, 176, 236, 0.68)");
-        wavePaint.addColorStop(0.58, "rgba(190, 218, 248, 0.84)");
-        wavePaint.addColorStop(0.7, "rgba(207, 231, 255, 0.9)");
+        wavePaint.addColorStop(0.58, "rgba(190, 218, 248, 0.9)");
+        wavePaint.addColorStop(0.7, "rgba(207, 231, 255, 0.96)");
         wavePaint.addColorStop(0.84, "rgba(139, 188, 248, 0.78)");
         wavePaint.addColorStop(1, "rgba(76, 123, 198, 0)");
         glowPaint.addColorStop(0, "rgba(86, 139, 221, 0)");
         glowPaint.addColorStop(0.42, "rgba(147, 187, 239, 0.2)");
-        glowPaint.addColorStop(0.69, "rgba(176, 213, 250, 0.32)");
+        glowPaint.addColorStop(0.69, "rgba(176, 213, 250, 0.39)");
         glowPaint.addColorStop(1, "rgba(98, 151, 228, 0)");
         flowPaint.addColorStop(0, "rgba(158, 201, 255, 0)");
         flowPaint.addColorStop(0.3, "rgba(184, 216, 255, 0.44)");
-        flowPaint.addColorStop(0.68, "rgba(190, 224, 255, 0.84)");
+        flowPaint.addColorStop(0.68, "rgba(190, 224, 255, 0.92)");
         flowPaint.addColorStop(1, "rgba(162, 204, 255, 0)");
         vignettePaint.addColorStop(0, "rgba(0, 0, 0, 0)");
         vignettePaint.addColorStop(1, "rgba(0, 0, 0, 0.54)");
@@ -345,7 +345,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
           );
           pulsePaint.addColorStop(
             0.5,
-            theme === "dark" ? "rgba(207, 233, 255, 0.76)" : "rgba(31, 76, 164, 0.68)",
+            theme === "dark" ? "rgba(207, 233, 255, 0.84)" : "rgba(31, 76, 164, 0.68)",
           );
           pulsePaint.addColorStop(
             0.72,
