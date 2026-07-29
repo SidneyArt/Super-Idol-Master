@@ -73,18 +73,18 @@ class TposePoseQaTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertEqual(result["metrics"]["armHorizontalError"], 0.0)
 
-    def test_score_of_exactly_80_passes_even_when_an_old_hard_gate_fails(self):
-        result = evaluate_pose(pose_payload(wrist_drop=20))
+    def test_score_of_exactly_75_passes_even_when_an_old_hard_gate_fails(self):
+        result = evaluate_pose(pose_payload(wrist_drop=20, confidence=0.1875))
 
         self.assertTrue(result["passed"])
-        self.assertEqual(result["score"], 80)
+        self.assertEqual(result["score"], 75)
         self.assertGreater(result["metrics"]["armHorizontalError"], 0.12)
 
-    def test_score_below_80_fails(self):
-        result = evaluate_pose(pose_payload(wrist_drop=20, confidence=0.24))
+    def test_score_below_75_fails(self):
+        result = evaluate_pose(pose_payload(wrist_drop=20, confidence=0.175))
 
         self.assertFalse(result["passed"])
-        self.assertEqual(result["score"], 79)
+        self.assertEqual(result["score"], 74)
 
 
 if __name__ == "__main__":
