@@ -2399,8 +2399,7 @@ body {
   .brand-logo { width: 43px; height: 40px; transform: translateY(-2px); }
   .topbar-center { height: 44px; border-radius: 14px; }
   .topbar-center button { border-radius: 11px; }
-  .topbar-right > .topbar-workspace-button,
-  .topbar-right > .notification-center { display: none; }
+  .topbar-right > .topbar-workspace-button { display: none; }
   .dispatcher-title h1 { font-size: 15px; }
   .dispatcher-welcome { margin-top: 34px; }
   .dispatcher-welcome h2 { font-size: 24px; }
@@ -2546,7 +2545,7 @@ body {
     white-space: nowrap;
   }
 
-  .screen-home .topbar-right > .icon-button {
+  .screen-home .topbar-right .icon-button {
     width: 48px;
     height: 48px;
     border-color: transparent;
@@ -2555,7 +2554,7 @@ body {
     opacity: 0.94;
   }
 
-  .screen-home .topbar-right > .icon-button:hover {
+  .screen-home .topbar-right .icon-button:hover {
     border-color: var(--border);
     background: rgba(255, 255, 255, 0.055);
     opacity: 1;
@@ -3182,14 +3181,14 @@ body {
   color: currentColor;
 }
 
-:root[data-theme="light"] .screen-home .topbar-right > .icon-button {
+:root[data-theme="light"] .screen-home .topbar-right .icon-button {
   border-color: rgba(115, 129, 204, 0.14);
   background: rgba(255, 255, 255, 0.5);
   color: #33405a;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 7px 20px rgba(78, 96, 153, 0.08);
 }
 
-:root[data-theme="light"] .screen-home .topbar-right > .icon-button:hover {
+:root[data-theme="light"] .screen-home .topbar-right .icon-button:hover {
   border-color: rgba(116, 120, 233, 0.3);
   background: rgba(255, 255, 255, 0.82);
   color: #385ca8;
@@ -3939,4 +3938,663 @@ body {
   border-color: rgba(112, 128, 196, 0.28);
   background: linear-gradient(155deg, rgba(255, 255, 255, 0.96), rgba(239, 242, 255, 0.92));
   box-shadow: 0 18px 42px rgba(72, 88, 150, 0.18), inset 0 1px 0 #fff;
+}
+
+/* Compact workspace density ---------------------------------------------- */
+
+.screen-home .dispatcher-thread-content {
+  padding-block: 14px 20px;
+}
+
+.screen-home .dispatcher-message,
+.screen-home .dispatcher-timeline-card-row,
+.screen-home .dispatcher-subagent-group {
+  margin-bottom: 10px;
+}
+
+.screen-home .dispatcher-message > div,
+.screen-home .dispatcher-generation,
+.screen-home .dispatcher-task-batch,
+.screen-home .approval-card {
+  padding: 9px 10px;
+}
+
+.screen-home .dispatcher-task-grid {
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.screen-home .dispatcher-task-grid > button > span:not(.dispatcher-task-placeholder) {
+  padding: 7px 8px 8px;
+}
+
+.screen-home .dispatcher-subagent-messages {
+  padding-top: 8px;
+}
+
+.screen-home .dispatcher-subagent-messages .dispatcher-message {
+  margin-bottom: 7px;
+}
+
+.screen-task {
+  --task-width: 258px;
+}
+
+.screen-task.tasks-collapsed {
+  --task-width: 64px;
+}
+
+.screen-task .sidebar-home-button {
+  min-height: 34px;
+  margin: 8px 8px 0;
+}
+
+.screen-task .sidebar-header {
+  min-height: 54px;
+  padding: 9px 9px 9px 13px;
+}
+
+.screen-task .run-list {
+  padding: 6px;
+}
+
+.screen-task .run-item-shell {
+  margin-bottom: 3px;
+}
+
+.screen-task .run-item {
+  min-height: 54px;
+  gap: 9px;
+  padding: 7px 40px 7px 7px;
+}
+
+.screen-task.tasks-collapsed .sidebar-home-button {
+  width: 36px;
+  min-height: 36px;
+  margin-inline: auto;
+  padding: 0;
+}
+
+.screen-task.tasks-collapsed .sidebar-header {
+  padding-inline: 0;
+}
+
+.screen-task.tasks-collapsed .run-item {
+  justify-content: center;
+  padding-inline: 6px;
+}
+
+.screen-task .run-avatar {
+  width: 32px;
+  height: 32px;
+  flex-basis: 32px;
+  font-size: 13px;
+}
+
+.screen-task .run-meta {
+  margin-top: 2px;
+}
+
+.screen-task .run-progress {
+  margin-top: 5px;
+}
+
+.screen-task .workspace {
+  padding: 14px 16px 18px;
+}
+
+.screen-task .workspace-header {
+  min-height: 62px;
+  top: -14px;
+  margin: -14px 0 10px;
+  padding: 10px 2px 9px;
+}
+
+.screen-task .workspace-heading h1 {
+  margin-top: 2px;
+  font-size: 22px;
+}
+
+.screen-task .production-board {
+  grid-template-columns: 164px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.screen-task .stage-rail {
+  top: 72px;
+}
+
+.screen-task .stage-rail-header {
+  min-height: 42px;
+  padding-left: 9px;
+}
+
+.screen-task .stage-list {
+  padding: 5px;
+}
+
+.screen-task .stage-step {
+  min-height: 52px;
+  padding: 2px;
+}
+
+.screen-task .stage-main {
+  min-height: 46px;
+  grid-template-columns: 23px minmax(0, 1fr);
+  gap: 7px;
+  padding: 4px;
+}
+
+.screen-task .stage-node {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+
+.screen-task .stage-copy strong {
+  font-size: 12px;
+}
+
+.screen-task .stage-copy small,
+.screen-task .stage-state {
+  font-size: 11px;
+}
+
+.screen-task .preview-header {
+  min-height: 48px;
+  padding: 7px 9px 7px 13px;
+}
+
+.screen-task .preview-frame,
+.screen-task .preview-frame.model-preview .model-viewer-shell {
+  min-height: clamp(420px, 54vh, 680px);
+}
+
+.screen-task .character-brief-view {
+  padding: clamp(18px, 3vw, 34px);
+}
+
+.screen-task .current-stage-summary {
+  gap: 14px;
+}
+
+.screen-task .current-stage-heading > strong {
+  font-size: 16px;
+}
+
+.screen-task .current-stage-heading > p {
+  line-height: 1.5;
+}
+
+.screen-task .current-stage-io {
+  min-width: 200px;
+  gap: 4px;
+}
+
+.screen-task .stage-prompt-editor {
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.screen-task .stage-prompt-editor label > span {
+  margin-bottom: 4px;
+}
+
+.screen-task .stage-prompt-editor textarea {
+  min-height: 92px;
+  padding: 8px 9px;
+  line-height: 1.5;
+}
+
+.screen-task .stage-workflow-panel,
+.screen-task .event-panel-full {
+  margin-top: 10px;
+}
+
+.screen-task .stage-workflow-content {
+  padding: 12px;
+}
+
+.screen-task .section-heading {
+  min-height: 50px;
+  padding: 8px 12px;
+}
+
+.screen-task .event-list {
+  padding: 3px 10px 8px;
+}
+
+.screen-task .event-item {
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.screen-task .agent-panel {
+  grid-template-rows: 56px auto minmax(0, 1fr) auto;
+}
+
+.screen-task .agent-panel.agent-collapsed {
+  grid-template-rows: 56px;
+}
+
+.screen-task .agent-header {
+  padding: 8px 10px;
+}
+
+.screen-task .agent-title {
+  gap: 8px;
+}
+
+.screen-task .agent-title > span {
+  width: 32px;
+  height: 32px;
+}
+
+.screen-task .agent-summary {
+  max-height: 116px;
+  margin-bottom: 6px;
+  padding-bottom: 8px;
+}
+
+.screen-task .agent-context {
+  margin: 8px 10px;
+  padding: 8px 10px;
+}
+
+.screen-task .agent-context strong {
+  margin-top: 2px;
+}
+
+.screen-task .agent-context p {
+  margin-top: 2px;
+}
+
+.screen-task .chat-thread {
+  padding: 8px 10px 10px;
+}
+
+.screen-task .chat-message {
+  gap: 8px;
+  padding: 7px 0;
+}
+
+.screen-task .chat-message.user > div {
+  padding: 8px 10px;
+}
+
+.screen-task .chat-message p,
+.screen-task .markdown-body {
+  line-height: 1.55;
+}
+
+.screen-task .markdown-body p {
+  margin-bottom: 6px;
+}
+
+.screen-task .chat-collaboration-group {
+  margin-bottom: 8px;
+}
+
+.screen-task .chat-collaboration-group > summary {
+  padding: 6px 0 8px;
+}
+
+.screen-task .chat-composer {
+  margin: 0 10px 10px;
+  border-radius: 12px;
+}
+
+.screen-task .chat-composer textarea {
+  min-height: 64px;
+  padding: 10px;
+}
+
+.screen-task .composer-footer {
+  gap: 7px;
+  padding: 5px 7px 7px 9px;
+}
+
+.screen-task .composer-meta {
+  gap: 5px;
+}
+
+.screen-task .composer-actions button {
+  width: 32px;
+  height: 32px;
+}
+
+@media (min-width: 921px) {
+  .screen-home .topbar,
+  .screen-task .topbar {
+    height: 72px;
+    gap: 16px;
+    padding: 8px 20px;
+  }
+
+  .screen-home .brand-logo,
+  .screen-task .brand-logo {
+    width: clamp(235px, 17vw, 276px);
+    transform: translateY(-4px);
+  }
+
+  .screen-home .topbar-center,
+  .screen-task .topbar-center {
+    width: 440px;
+    min-width: 440px;
+    height: 42px;
+    border-radius: 10px;
+  }
+
+  .screen-home .topbar-center button,
+  .screen-task .topbar-center button {
+    height: 42px;
+    gap: 7px;
+    border-radius: 9px;
+    font-size: 14px;
+  }
+
+  .screen-home .topbar-right,
+  .screen-task .topbar-right {
+    gap: 8px;
+  }
+
+  .screen-home .topbar-workspace-button {
+    width: 150px;
+    min-width: 150px;
+    max-width: 150px;
+    height: 42px;
+    padding-inline: 14px;
+    border-radius: 10px;
+  }
+
+  .screen-home .topbar-workspace-button span {
+    font-size: 14px;
+  }
+
+  .screen-home .topbar-right .icon-button,
+  .screen-task .topbar-right .icon-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .screen-home .home-frame {
+    height: calc(100vh - 72px);
+    grid-template-columns: clamp(300px, 23vw, 360px) minmax(0, 1fr);
+  }
+
+  .screen-task .app-frame {
+    min-height: calc(100vh - 72px);
+    height: calc(100vh - 72px);
+  }
+
+  .screen-home .workspace-list {
+    padding: 10px 12px 14px;
+  }
+
+  .screen-home .workspace-group {
+    margin-bottom: 4px;
+  }
+
+  .screen-home .workspace-item,
+  .screen-home .workspace-item.workspace-item-default {
+    min-height: 62px;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    padding: 4px 8px;
+  }
+
+  .screen-home .workspace-select-button {
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 10px;
+    padding: 4px;
+  }
+
+  .screen-home .workspace-select-button strong {
+    font-size: 14px;
+  }
+
+  .screen-home .workspace-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 9px;
+  }
+
+  .screen-home .workspace-toggle-button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .screen-home .workspace-task-list {
+    padding-inline: 18px 12px;
+  }
+
+  .screen-home .workspace-group.expanded .workspace-task-list {
+    padding-top: 3px;
+    padding-bottom: 10px;
+  }
+
+  .screen-home .workspace-task-list > button:not(.workspace-new-task) {
+    min-height: 56px;
+    grid-template-columns: 36px minmax(0, 1fr) 16px;
+    gap: 9px;
+    padding: 6px 5px 12px;
+  }
+
+  .screen-home .workspace-task-list > button > span {
+    width: 34px;
+    height: 34px;
+    font-size: 17px;
+  }
+
+  .screen-home .workspace-task-list button small {
+    margin-top: 2px;
+  }
+
+  .screen-home .workspace-task-progress {
+    right: 12px;
+    bottom: 5px;
+    left: 50px;
+  }
+
+  .screen-home .workspace-sidebar-footer {
+    min-height: 52px;
+    padding-inline: 9px 14px;
+  }
+
+  .screen-home .workspace-sidebar-settings {
+    width: 38px;
+    height: 38px;
+  }
+
+  .screen-home .workspace-sidebar-settings > svg {
+    width: 21px;
+    height: 21px;
+  }
+
+  .screen-home .workspace-sidebar-footer > span {
+    font-size: 13px;
+  }
+
+  .screen-home .dispatcher-thread-content {
+    padding-inline: 24px;
+  }
+
+  .screen-home .dispatcher-welcome {
+    max-width: 760px;
+    margin-top: clamp(96px, 16vh, 150px);
+  }
+
+  .screen-home .dispatcher-welcome h2 {
+    font-size: clamp(22px, 1.8vw, 27px);
+  }
+
+  .screen-home .dispatcher-welcome p {
+    margin-top: 6px;
+    line-height: 1.5;
+  }
+
+  .screen-home .dispatcher-welcome > div {
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  .screen-home .dispatcher-welcome button {
+    width: clamp(158px, 14vw, 190px);
+    min-height: 44px;
+    padding-inline: 14px;
+    font-size: 13px;
+  }
+
+  .screen-home .dispatcher-composer {
+    width: min(920px, calc(100% - 60px));
+    margin-bottom: 14px;
+    border-radius: 12px;
+  }
+
+  .screen-home .dispatcher-composer textarea {
+    height: 64px;
+    min-height: 64px;
+    padding: 14px 18px;
+  }
+
+  .screen-home .dispatcher-composer-footer {
+    min-height: 50px;
+    padding: 7px 12px;
+  }
+
+  .home-conversation-manager,
+  .dispatcher-composer-footer > .home-conversation-manager {
+    width: 40px;
+    flex: 0 0 40px;
+    flex-basis: 40px;
+    grid-template-columns: 40px;
+  }
+
+  .home-conversation-manager .conversation-manager-trigger {
+    width: 40px;
+    height: 40px;
+  }
+
+  .screen-home .agent-permission-trigger {
+    min-height: 40px;
+    padding-inline: 12px;
+    font-size: 13px;
+  }
+
+  .screen-home .agent-permission-trigger .approval-shield-icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  .screen-home .dispatcher-send-button {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+  }
+
+  .screen-home .dispatcher-send-glyph {
+    width: 25px;
+    height: 25px;
+  }
+}
+
+@media (min-width: 921px) and (max-width: 1100px) {
+  .screen-home .topbar-center,
+  .screen-task .topbar-center {
+    width: 404px;
+    min-width: 404px;
+  }
+
+  .screen-home .topbar-workspace-button {
+    width: 132px;
+    min-width: 132px;
+    max-width: 132px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .screen-task .agent-panel.agent-collapsed {
+    height: 56px;
+  }
+}
+
+@media (min-width: 821px) and (max-width: 920px) {
+  .screen-home .home-frame,
+  .screen-task .app-frame {
+    height: calc(100vh - 64px);
+  }
+}
+
+@media (max-width: 920px) {
+  .screen-home .topbar,
+  .screen-task .topbar {
+    height: 64px;
+  }
+
+  .screen-home .home-frame {
+    min-height: calc(100vh - 64px);
+  }
+
+  .screen-task .app-frame {
+    min-height: calc(100vh - 64px);
+  }
+
+  .screen-home .workspace-sidebar {
+    max-height: 320px;
+  }
+
+  .screen-home .workspace-list {
+    padding: 8px 10px;
+  }
+
+  .screen-home .workspace-sidebar-footer {
+    min-height: 48px;
+  }
+
+  .screen-home .dispatcher-panel {
+    min-height: 620px;
+  }
+
+  .screen-home .dispatcher-welcome {
+    margin-top: 42px;
+  }
+
+  .screen-home .dispatcher-welcome > div {
+    margin-top: 14px;
+  }
+
+  .screen-home .dispatcher-composer textarea {
+    min-height: 68px;
+  }
+
+  .screen-task .workspace {
+    padding: 10px;
+  }
+
+  .screen-task .workspace-header {
+    top: -10px;
+    margin-top: -10px;
+  }
+
+  .screen-task .production-board {
+    grid-template-columns: 1fr;
+  }
+
+  .screen-task .stage-rail {
+    position: static;
+  }
+
+  .screen-task .agent-panel {
+    height: 540px;
+  }
+
+  .screen-task .agent-panel.agent-collapsed {
+    height: 56px;
+  }
+}
+
+@media (max-width: 560px) {
+  .screen-task .preview-frame,
+  .screen-task .preview-frame.model-preview .model-viewer-shell {
+    min-height: 360px;
+  }
 }

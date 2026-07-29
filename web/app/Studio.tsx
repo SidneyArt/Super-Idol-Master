@@ -2829,9 +2829,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               <span>创建工作空间</span>
             </button>
           )}
-          {screen === "task" && globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
+          {globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
             <button className="icon-button notification-button" type="button" onClick={() => setShowNotifications((value) => !value)} title="通知" aria-label={`通知，${unreadNotificationCount} 条未读`}>
-              <Bell size={18} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
+              <Bell size={20} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
             </button>
             {showNotifications && (
               <div className="notification-menu">
@@ -2860,7 +2860,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             )}
           </div>}
           <button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
-            {theme === "dark" ? <Sun size={27} /> : <Moon size={27} />}
+            {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
           </button>
         </div>
       </header>
