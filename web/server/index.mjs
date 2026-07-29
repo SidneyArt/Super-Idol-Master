@@ -648,7 +648,7 @@ function skipTopology(runId) {
   try {
     db.prepare(`
       UPDATE runs SET current_stage = 5, status = 'active', topology_skipped = 1,
-        topology_path = NULL, rigged_model_path = NULL, job_type = 'none',
+        rigged_model_path = NULL, job_type = 'none',
         generation_status = 'idle', generation_message = '', generation_progress = 0,
         generation_prompt_id = NULL, generation_current_node = NULL, updated_at = ?
       WHERE id = ?

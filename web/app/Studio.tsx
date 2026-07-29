@@ -1638,7 +1638,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     : null;
   const hasQaComparison = Boolean(viewStage === 2 && run?.previewPath && run.qaOverlayPath);
   const useRiggedPreview = viewStage >= 5 && run?.assets.riggedReady === true;
-  const useTopologyPreview = !useRiggedPreview && viewStage >= 4 && run?.assets.topologyReady === true;
+  const useTopologyPreview = !useRiggedPreview && !run?.topologySkipped && viewStage >= 4 && run?.assets.topologyReady === true;
   const modelPreviewUrl = viewStage >= 3 && run?.assets.modelReady
     ? downloadUrl(useRiggedPreview
       ? run.assets.riggedDownloadUrl
@@ -3490,7 +3490,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                           {isCurrentView && current === 3 && run.assets.modelReady && <button className="secondary-button" onClick={() => runAction("generate-3d", "重新生成失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新生成 3D</button>}
                           {isCurrentView && current === 3 && run.assets.modelReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认 3D 完成，进入拓扑</button>}
                           {isCurrentView && current === 4 && !run.assets.topologyReady && <button className="primary-button" onClick={() => runAction("retopologize", "拓扑任务提交失败")} disabled={busy || run.jobStatus === "running"}><Expand size={16} />运行自动拓扑</button>}
-                          {isCurrentView && current === 4 && !run.assets.topologyReady && <button className="secondary-button" onClick={() => runAction("skip-topology", "跳过拓扑并启动绑骨失败")} disabled={busy || run.jobStatus === "running"}><ChevronRight size={16} />跳过拓扑，直接绑骨</button>}
+                          {isCurrentView && current === 4 && <button className="secondary-button" onClick={() => runAction("skip-topology", "跳过拓扑并启动绑骨失败")} disabled={busy || run.jobStatus === "running"}><ChevronRight size={16} />跳过拓扑，直接绑骨</button>}
                           {isCurrentView && current === 4 && run.assets.topologyReady && <button className="secondary-button" onClick={() => runAction("retopologize", "重新拓扑失败")} disabled={busy || run.jobStatus === "running"}><RefreshCw size={16} />重新运行拓扑</button>}
                           {isCurrentView && current === 4 && run.assets.topologyReady && <button className="primary-button" onClick={() => runAction("advance", "阶段确认失败")} disabled={busy}><Check size={16} />确认拓扑完成，进入绑骨</button>}
                           {isCurrentView && current === 5 && !run.assets.riggedReady && <button className="primary-button" onClick={() => runAction("rig", "绑骨任务提交失败")} disabled={busy || run.jobStatus === "running"}><Expand size={16} />运行自动绑骨</button>}

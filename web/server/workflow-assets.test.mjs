@@ -14,6 +14,6 @@ test("rigging uses the original model when topology was skipped", () => {
   assert.equal(rigInputPath({
     topologySkipped: true,
     modelPathInternal: "original.glb",
-    topologyPathInternal: null,
+    topologyPathInternal: "retopologized.glb",
   }), "original.glb");
 });
