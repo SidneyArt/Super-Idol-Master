@@ -1,0 +1,26 @@
+PROJECT SOURCES
+
+- D:\CodeWorks\AgentLearning\DGX比赛 RAG Agent Learning\Super-Idol-Master\README.zh-CN.md
+  Architecture split, StepFun models, DGX-hosted workflows, and data-boundary caveats.
+- D:\CodeWorks\AgentLearning\DGX比赛 RAG Agent Learning\Super-Idol-Master\ARCHITECTURE.md
+  Coordinator/Supervisor/professional-Agent roles, deterministic gates, state recovery.
+- D:\CodeWorks\AgentLearning\DGX比赛 RAG Agent Learning\Super-Idol-Master\docs\getting-started\current-project-baseline.md
+  Fixed E2E evidence: T-Pose score, topology, and rig structure.
+- D:\CodeWorks\AgentLearning\DGX比赛 RAG Agent Learning\Super-Idol-Master\docs\deployment\dgx-autoremesher-deployment.md
+  Real-character topology regression evidence.
+- D:\CodeWorks\AgentLearning\DGX比赛 RAG Agent Learning\Super-Idol-Master\docs\product\hackathon-submission-audit.md
+  Competition claim boundaries and currently unintegrated NVIDIA technologies.
+
+OFFICIAL EXTERNAL SOURCES
+
+- https://docs.nvidia.com/dgx/dgx-spark/hardware.html
+  NVIDIA Grace Blackwell architecture and 128 GB unified memory.
+- https://docs.nvidia.com/dgx/dgx-spark-porting-guide/overview.html
+  Unified memory eliminates redundant CPU RAM/VRAM copies and supports CPU/GPU collaboration.
+- https://docs.nvidia.com/dgx/dgx-spark/software.html
+  DGX Spark AI software environment.
+- https://static.stepfun.com/blog/step-3.7-flash/
+  Native multimodal understanding, tool use, and orchestration.
+- https://platform.stepfun.com/docs/zh/guides/models/step-image-edit-2
+  StepFun image generation and image editing model.
+

@@ -308,18 +308,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .workspace-group { margin-bottom: 7px; border: 1px solid transparent; border-radius: 8px; overflow: hidden; }
 .workspace-group.selected { border-color: var(--border-strong); background: var(--surface-soft); }
 .workspace-item { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 34px 34px 34px; align-items: center; gap: 3px; padding: 4px; }
-.workspace-item.workspace-item-default { grid-template-columns: minmax(0, 1fr) 34px 34px; }
+.workspace-item.workspace-item-default { grid-template-columns: minmax(0, 1fr) 34px 34px 34px; }
 .workspace-select-button { min-width: 0; display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 9px; padding: 6px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.workspace-select-button:hover, .workspace-library-button:hover, .workspace-delete-button:hover, .workspace-toggle-button:hover { background: var(--surface-hover); }
+.workspace-select-button:hover, .workspace-library-button:hover, .workspace-toggle-button:hover { background: var(--surface-hover); }
 .workspace-select-button > span:nth-child(2), .workspace-select-button strong, .workspace-select-button small { min-width: 0; display: block; }
 .workspace-select-button strong, .workspace-select-button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-select-button strong { font-size: 12px; }
 .workspace-select-button small { margin-top: 2px; color: var(--muted); font-size: 10px; }
-.workspace-library-button, .workspace-delete-button, .workspace-toggle-button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
-.workspace-library-button, .workspace-delete-button, .workspace-toggle-button { cursor: pointer; }
+.workspace-library-button, .workspace-toggle-button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.workspace-library-button, .workspace-toggle-button { cursor: pointer; }
 .workspace-library-button:hover { color: var(--accent); }
-.workspace-delete-button:hover { color: var(--danger); }
-.workspace-delete-button:disabled { opacity: .45; cursor: not-allowed; }
 .workspace-chevron { transition: transform 220ms cubic-bezier(.2, .8, .2, 1), color 160ms ease; }
 .workspace-group.expanded .workspace-chevron { color: var(--accent); transform: rotate(90deg); }
 .workspace-icon { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
@@ -2588,7 +2586,7 @@ body {
   .screen-home .workspace-item,
   .screen-home .workspace-item.workspace-item-default {
     min-height: 80px;
-    grid-template-columns: minmax(0, 1fr) 42px;
+    grid-template-columns: minmax(0, 1fr) 38px 42px;
     gap: 4px;
     padding: 6px 12px;
   }
@@ -2628,9 +2626,14 @@ body {
     height: 28px;
   }
 
-  .screen-home .workspace-library-button,
-  .screen-home .workspace-delete-button {
+  .screen-home .workspace-library-button {
     display: none;
+  }
+
+  .screen-home .workspace-item-settings,
+  .screen-home .workspace-item-settings-trigger {
+    width: 38px;
+    height: 38px;
   }
 
   .screen-home .workspace-toggle-button {
@@ -3873,6 +3876,13 @@ body {
   z-index: 30;
 }
 
+.workspace-group.menu-open,
+.screen-home .workspace-group.menu-open {
+  position: relative;
+  z-index: 30;
+  overflow: visible;
+}
+
 .run-item-shell .run-item {
   margin-bottom: 0;
   padding-right: 43px;
@@ -3886,7 +3896,17 @@ body {
   transform: translateY(-50%);
 }
 
-.run-item-settings-trigger {
+.workspace-item-settings {
+  position: relative;
+  z-index: 3;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+}
+
+.run-item-settings-trigger,
+.workspace-item-settings-trigger {
   width: 28px;
   height: 28px;
   display: grid;
@@ -3901,13 +3921,16 @@ body {
 }
 
 .run-item-settings-trigger:hover,
-.run-item-settings-trigger[aria-expanded="true"] {
+.run-item-settings-trigger[aria-expanded="true"],
+.workspace-item-settings-trigger:hover,
+.workspace-item-settings-trigger[aria-expanded="true"] {
   border-color: var(--border-strong);
   background: var(--glass-fill-strong);
   color: var(--text);
 }
 
-.run-item-settings-menu {
+.run-item-settings-menu,
+.workspace-item-settings-menu {
   position: absolute;
   z-index: 40;
   top: calc(100% + 6px);
@@ -3923,7 +3946,8 @@ body {
   -webkit-backdrop-filter: blur(22px) saturate(125%);
 }
 
-.run-item-settings-menu > span {
+.run-item-settings-menu > span,
+.workspace-item-settings-menu > span {
   display: block;
   padding: 3px 7px 7px;
   color: var(--muted);
@@ -3931,7 +3955,8 @@ body {
   font-weight: 650;
 }
 
-.run-item-settings-menu > button {
+.run-item-settings-menu > button,
+.workspace-item-settings-menu > button {
   width: 100%;
   min-height: 34px;
   display: flex;
@@ -3946,17 +3971,24 @@ body {
   cursor: pointer;
 }
 
-.run-item-settings-menu > button:hover:not(:disabled) {
+.run-item-settings-menu > button:hover:not(:disabled),
+.workspace-item-settings-menu > button:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--danger) 30%, transparent);
   background: var(--danger-soft);
 }
 
-.run-item-settings-menu > button:disabled {
+.run-item-settings-menu > button:disabled,
+.workspace-item-settings-menu > button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
 
-:root[data-theme="light"] .screen-task .run-item-settings-menu {
+.workspace-item-settings-menu > button svg {
+  color: currentColor;
+}
+
+:root[data-theme="light"] .screen-task .run-item-settings-menu,
+:root[data-theme="light"] .screen-home .workspace-item-settings-menu {
   border-color: rgba(112, 128, 196, 0.28);
   background: linear-gradient(155deg, rgba(255, 255, 255, 0.96), rgba(239, 242, 255, 0.92));
   box-shadow: 0 18px 42px rgba(72, 88, 150, 0.18), inset 0 1px 0 #fff;
@@ -4441,7 +4473,7 @@ body {
   .screen-home .workspace-item,
   .screen-home .workspace-item.workspace-item-default {
     min-height: 62px;
-    grid-template-columns: minmax(0, 1fr) 36px;
+    grid-template-columns: minmax(0, 1fr) 32px 36px;
     padding: 4px 8px;
   }
 
@@ -4464,6 +4496,12 @@ body {
   .screen-home .workspace-toggle-button {
     width: 36px;
     height: 36px;
+  }
+
+  .screen-home .workspace-item-settings,
+  .screen-home .workspace-item-settings-trigger {
+    width: 32px;
+    height: 32px;
   }
 
   .screen-home .workspace-task-list {

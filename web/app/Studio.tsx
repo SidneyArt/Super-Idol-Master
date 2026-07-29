@@ -964,6 +964,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [stageRailCollapsed, setStageRailCollapsed] = useState(false);
   const [taskMenuRunId, setTaskMenuRunId] = useState<string | null>(null);
+  const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
   const [agentCollapsed, setAgentCollapsed] = useState(false);
   const [agentWidth, setAgentWidth] = useState(360);
   const [theme, setTheme] = useState<Theme>("dark");
@@ -1037,6 +1038,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const dispatcherForceScrollRef = useRef(false);
   const notificationCenterRef = useRef<HTMLDivElement | null>(null);
   const taskMenuRef = useRef<HTMLDivElement | null>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const agentFileRef = useRef<HTMLInputElement | null>(null);
   const dispatcherFileRef = useRef<HTMLInputElement | null>(null);
   const taskSourceFileRef = useRef<HTMLInputElement | null>(null);
@@ -1086,6 +1088,22 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       window.removeEventListener("keydown", closeTaskMenuOnEscape);
     };
   }, [taskMenuRunId]);
+
+  useEffect(() => {
+    if (!workspaceMenuId) return;
+    const closeWorkspaceMenu = (event: PointerEvent) => {
+      if (!workspaceMenuRef.current?.contains(event.target as Node)) setWorkspaceMenuId(null);
+    };
+    const closeWorkspaceMenuOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setWorkspaceMenuId(null);
+    };
+    window.addEventListener("pointerdown", closeWorkspaceMenu);
+    window.addEventListener("keydown", closeWorkspaceMenuOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeWorkspaceMenu);
+      window.removeEventListener("keydown", closeWorkspaceMenuOnEscape);
+    };
+  }, [workspaceMenuId]);
 
   function openTask(runId: string) {
     router.push(`/?task=${encodeURIComponent(runId)}`);
@@ -2905,7 +2923,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 if (second.id === "default") return 1;
                 return 0;
               }).map((workspace) => (
-                <div className={`workspace-group ${workspace.id === selectedWorkspaceId ? "selected" : ""} ${expandedWorkspaceIds.has(workspace.id) ? "expanded" : ""}`} key={workspace.id}>
+                <div
+                  className={`workspace-group ${workspace.id === selectedWorkspaceId ? "selected" : ""} ${expandedWorkspaceIds.has(workspace.id) ? "expanded" : ""} ${workspaceMenuId === workspace.id ? "menu-open" : ""}`}
+                  key={workspace.id}
+                  ref={workspaceMenuId === workspace.id ? workspaceMenuRef : undefined}
+                >
                   <div className={`workspace-item ${workspace.id === "default" ? "workspace-item-default" : ""}`}>
                     <button type="button" className="workspace-select-button" onClick={() => {
                       selectWorkspace(workspace.id);
@@ -2931,18 +2953,40 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     >
                       <Library size={15} />
                     </button>
-                    {workspace.id !== "default" && (
+                    <div className="workspace-item-settings">
                       <button
                         type="button"
-                        className="workspace-delete-button"
-                        disabled={busy}
-                        onClick={() => requestDeleteWorkspace(workspace)}
-                        title={`删除工作空间：${workspace.name}`}
-                        aria-label={`删除工作空间：${workspace.name}`}
+                        className="workspace-item-settings-trigger"
+                        aria-label={`设置 ${workspace.name}`}
+                        aria-expanded={workspaceMenuId === workspace.id}
+                        aria-haspopup="menu"
+                        onClick={() => setWorkspaceMenuId((current) => current === workspace.id ? null : workspace.id)}
                       >
-                        <Trash2 size={15} />
+                        <Settings size={16} />
                       </button>
-                    )}
+                      {workspaceMenuId === workspace.id && (
+                        <div className="workspace-item-settings-menu" role="menu">
+                          <span>工作空间设置</span>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={busy || workspace.id === "default" || workspace.runningCount > 0}
+                            title={workspace.id === "default"
+                              ? "默认工作空间不能删除"
+                              : workspace.runningCount > 0
+                                ? "工作空间中有任务正在运行，暂时无法删除"
+                                : "删除当前工作空间"}
+                            onClick={() => {
+                              setWorkspaceMenuId(null);
+                              requestDeleteWorkspace(workspace);
+                            }}
+                          >
+                            <Trash2 size={15} />
+                            删除工作空间
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <button
                       type="button"
                       className="workspace-toggle-button"

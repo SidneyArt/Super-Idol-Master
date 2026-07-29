@@ -1,0 +1,32 @@
+SOURCE DECK AUDIT
+
+Source deck: 黑客松路演PPT模板(1)(1).pptx
+Slide count: 4
+Canvas: 3840 x 2160 px (16:9)
+
+Reusable patterns:
+- Slide 1: NVIDIA-branded section bumper with raster background and title.
+- Slides 2-4: white content layout using the same inherited master, title, subtitle,
+  large body placeholder, and NVIDIA logo at bottom right.
+- Slide 3 is the required technical-core page and is the only source pattern used.
+
+Typography:
+- Chinese: Noto Sans SC.
+- English: NVIDIA Sans / NVIDIA Sans Medium.
+- Title: 72 pt-equivalent inherited title level.
+- Subtitle: 48 pt-equivalent inherited subtitle level.
+- Body hierarchy: 44 pt / 40 pt / 36 pt template levels.
+
+Color and spacing:
+- White background.
+- Primary text: black.
+- NVIDIA green accent: #76B900.
+- Equal 192 px left/right content margins.
+- Keep the inherited bottom-right NVIDIA logo and master/layout hierarchy.
+
+Insertion contract:
+- Output is a one-slide insert-ready PPTX cloned from source slide 3.
+- Rewrite the inherited title, subtitle, and body placeholders only.
+- Preserve their positions, text insets, and the inherited master/layout styling.
+- Add speaker notes for the 2-3 minute talk track and source provenance.
+
