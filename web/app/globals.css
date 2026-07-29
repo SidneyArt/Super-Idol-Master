@@ -1687,10 +1687,13 @@ body {
 
 .liquid-wave-background {
   position: fixed;
-  z-index: -2;
+  z-index: 0;
   inset: 0;
   width: 100%;
   height: 100%;
+  display: block;
+  contain: strict;
+  opacity: 1;
   pointer-events: none;
 }
 
@@ -2850,19 +2853,24 @@ body {
 /* Liquid-metal workspace folder icons ------------------------------------ */
 
 .screen-home > .liquid-wave-background {
-  display: none;
+  display: block;
+  z-index: 0;
+  opacity: 1;
+  mix-blend-mode: normal;
+  filter: none;
 }
 
 .screen-home > .liquid-wave-background[data-animated="true"] {
   display: block;
-  z-index: 1;
-  opacity: 0.38;
-  mix-blend-mode: screen;
+  z-index: 0;
+  opacity: 1;
+  mix-blend-mode: normal;
+  filter: none;
 }
 
 .screen-home .home-frame {
   position: relative;
-  background-color: #000;
+  background-color: transparent;
   background-image: none;
 }
 
@@ -2872,11 +2880,10 @@ body {
   z-index: 0;
   inset: 0;
   pointer-events: none;
-  background-color: #000;
-  background-image: url("/super-idol-master-background.png");
-  background-repeat: no-repeat;
-  background-position: 6% clamp(56px, 8vh, 116px);
-  background-size: auto 100%;
+  background-color: transparent;
+  background-image:
+    radial-gradient(ellipse at 62% 8%, rgba(93, 134, 203, 0.045), transparent 40%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.015), rgba(0, 0, 0, 0.12));
 }
 
 .screen-home .workspace-sidebar,
@@ -3090,26 +3097,22 @@ body {
 }
 
 :root[data-theme="light"] .screen-home > .liquid-wave-background[data-animated="true"] {
-  opacity: 0.72;
+  opacity: 1;
   mix-blend-mode: normal;
-  filter: saturate(1.16);
+  filter: none;
 }
 
 :root[data-theme="light"] .screen-home .home-frame {
-  background-color: #f7f8ff;
-  background-image:
-    radial-gradient(circle at 80% 13%, rgba(196, 159, 255, 0.18), transparent 31%),
-    radial-gradient(circle at 57% 96%, rgba(109, 174, 255, 0.2), transparent 43%),
-    linear-gradient(148deg, #fbfbff 0%, #f6f4ff 48%, #eef5ff 100%);
+  background-color: transparent;
+  background-image: none;
 }
 
 :root[data-theme="light"] .screen-home .home-frame::before {
   background-color: transparent;
   background-image:
-    radial-gradient(ellipse at 14% 22%, rgba(165, 192, 255, 0.22), transparent 30%),
-    radial-gradient(ellipse at 88% 10%, rgba(202, 159, 255, 0.2), transparent 28%),
-    radial-gradient(ellipse at 65% 86%, rgba(122, 191, 255, 0.18), transparent 38%),
-    linear-gradient(118deg, rgba(255, 255, 255, 0.66), rgba(244, 242, 255, 0.28) 56%, rgba(232, 242, 255, 0.52));
+    radial-gradient(ellipse at 14% 22%, rgba(116, 155, 223, 0.055), transparent 32%),
+    radial-gradient(ellipse at 88% 10%, rgba(102, 143, 213, 0.045), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(232, 239, 252, 0.06));
   background-position: center;
   background-size: cover;
 }
@@ -3704,8 +3707,8 @@ body {
 }
 
 :root[data-theme="light"] .screen-task > .liquid-wave-background {
-  opacity: 0.78;
-  filter: saturate(1.14);
+  opacity: 1;
+  filter: none;
 }
 
 :root[data-theme="light"] .screen-task .topbar {

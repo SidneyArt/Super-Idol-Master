@@ -2824,11 +2824,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
           </button>
         </nav>
         <div className="topbar-right">
-          {screen === "home" && (
-            <button className="icon-button topbar-global-settings-button" type="button" onClick={() => void openGlobalSettings()} title="全局设置" aria-label="打开全局设置面板">
-              <Settings size={20} />
-            </button>
-          )}
           {globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
             <button className="icon-button notification-button" type="button" onClick={() => setShowNotifications((value) => !value)} title="通知" aria-label={`通知，${unreadNotificationCount} 条未读`}>
               <Bell size={20} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
@@ -2862,6 +2857,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
           <button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
             {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
           </button>
+          {screen === "home" && (
+            <button className="icon-button topbar-global-settings-button" type="button" onClick={() => void openGlobalSettings()} title="全局设置" aria-label="打开全局设置面板">
+              <Settings size={20} />
+            </button>
+          )}
         </div>
       </header>
 
@@ -3715,7 +3715,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   <label className="global-setting-row">
                     <span>
                       <strong>背景动画</strong>
-                      <small>默认关闭；开启后波浪与粒子会随时间和鼠标方向变化。</small>
+                      <small>默认关闭；开启后曲线光波与高光会缓慢流动，页面不可见时自动暂停。</small>
                     </span>
                     <input
                       className="settings-switch-input"
