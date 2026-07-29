@@ -2416,7 +2416,7 @@ body {
 
   .screen-home .brand-logo {
     width: clamp(255px, 19vw, 320px);
-    transform: none;
+    transform: translateY(-6px);
   }
 
   .screen-home .topbar-center {
@@ -3309,6 +3309,56 @@ body {
   color: #596579;
 }
 
+/* Keep expanded sub-agent activity visually subordinate to the main conversation. */
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent {
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  padding-left: 6px;
+}
+
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent > span {
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent-soft) 58%, transparent);
+  color: color-mix(in srgb, var(--accent) 58%, var(--muted));
+  box-shadow: none;
+}
+
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent > div {
+  padding: 8px 10px;
+  border-color: color-mix(in srgb, var(--border) 68%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-soft) 55%, transparent);
+  color: var(--muted);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent > div > strong {
+  color: color-mix(in srgb, var(--text-secondary) 76%, var(--muted));
+  font-size: 10px;
+  font-weight: 560;
+}
+
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent .markdown-body {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent .markdown-body strong,
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent .markdown-body h1,
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent .markdown-body h2,
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent .markdown-body h3,
+.screen-home .dispatcher-subagent-messages .dispatcher-message.subagent .markdown-body h4 {
+  color: color-mix(in srgb, var(--text-secondary) 82%, var(--muted));
+  font-weight: 600;
+}
+
 :root[data-theme="light"] .screen-home .home-conversation-manager .conversation-manager-trigger {
   border-color: rgba(111, 127, 194, 0.26);
   background: var(--home-light-glass);
@@ -3470,7 +3520,7 @@ body {
 
   .screen-task .brand-logo {
     width: clamp(255px, 19vw, 320px);
-    transform: none;
+    transform: translateY(-6px);
   }
 
   .screen-task .topbar-center {
