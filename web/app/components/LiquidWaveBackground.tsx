@@ -123,19 +123,21 @@ function traceFamilyStrand(
   const motionStrength = animated ? 1 : 0;
   const controlA = {
     x: family.controlA.x + Math.sin(time * 0.16 + family.phase) * 0.008 * motionStrength,
-    y: family.controlA.y + Math.sin(time * 0.21 + family.phase) * 0.023 * family.weight * motionStrength,
+    y: family.controlA.y + Math.sin(time * 0.21 + family.phase) * 0.03 * family.weight * motionStrength,
   };
   const controlB = {
     x: family.controlB.x + Math.cos(time * 0.14 + family.phase) * 0.009 * motionStrength,
-    y: family.controlB.y + Math.cos(time * 0.19 + family.phase * 0.78) * 0.025 * family.weight * motionStrength,
+    y: family.controlB.y + Math.cos(time * 0.19 + family.phase * 0.78) * 0.033 * family.weight * motionStrength,
   };
-  const focusY = 0.695 + (familyIndex - 1.5) * 0.008;
+  const focusY = 0.695 + (familyIndex - 1.5) * 0.006;
   const focusedPoint = (progress: number) => {
     const point = cubicPoint(family.start, controlA, controlB, family.end, progress);
     const focusEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.18, 2));
+    const archEnvelope = Math.sin(Math.PI * progress);
+    const upwardArch = archEnvelope * archEnvelope * 0.045;
     return {
       x: point.x,
-      y: point.y + (focusY - point.y) * focusEnvelope * 0.81,
+      y: point.y + (focusY - point.y) * focusEnvelope * 0.85 - upwardArch,
     };
   };
 
@@ -156,18 +158,18 @@ function traceFamilyStrand(
     );
     const smoothDistance = normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance);
     const endFlare = Math.pow(smoothDistance, 1.45);
-    const spreadScale = 0.16 + smoothDistance * 0.72 + endFlare * 0.58;
+    const spreadScale = 0.11 + smoothDistance * 0.77 + endFlare * 0.58;
     const centerEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.29, 2));
     const contourEnvelope = Math.sin(Math.PI * progress) * (1 - centerEnvelope * 0.42);
     const strandContour = Math.sin(
       family.phase * 1.7 + strandPosition * 7.2 + progress * 5.4,
     ) * height * 0.0019 * contourEnvelope;
     const sharedFlow = animated
-      ? Math.sin(time * 0.42 + family.phase + progress * 3.6) * height * 0.0042 * family.weight * centerEnvelope
+      ? Math.sin(time * 0.42 + family.phase + progress * 3.6) * height * 0.0056 * family.weight * centerEnvelope
       : 0;
     const strandRipple = animated
       ? Math.sin(time * 0.54 + family.phase + progress * 4.8 + strandPosition * 6.4)
-        * height * 0.0021 * centerEnvelope
+        * height * 0.0028 * centerEnvelope
       : 0;
     const offset = strandPosition * family.spread * height * spreadScale
       + strandContour
