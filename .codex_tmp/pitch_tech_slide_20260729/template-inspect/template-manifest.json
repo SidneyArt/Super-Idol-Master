@@ -1,0 +1,126 @@
+{
+  "sourcePptx": "C:\\Users\\74441\\Documents\\xwechat_files\\wxid_l7bbn9t41zw121_33e4\\msg\\file\\2026-07\\黑客松路演PPT模板(1)(1).pptx",
+  "workspace": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729",
+  "outDir": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect",
+  "generatedAt": "2026-07-29T13:30:12.090Z",
+  "slideCount": 4,
+  "slideArtifacts": [
+    {
+      "slide": 1,
+      "previewPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\source-slides\\source-slide-01.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-01.png",
+      "layoutPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\layouts\\source-slide-01.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-01.layout.json"
+    },
+    {
+      "slide": 2,
+      "previewPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\source-slides\\source-slide-02.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-02.png",
+      "layoutPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\layouts\\source-slide-02.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-02.layout.json"
+    },
+    {
+      "slide": 3,
+      "previewPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\source-slides\\source-slide-03.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-03.png",
+      "layoutPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\layouts\\source-slide-03.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-03.layout.json"
+    },
+    {
+      "slide": 4,
+      "previewPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\source-slides\\source-slide-04.png",
+      "previewRelativePath": "template-inspect/source-slides/source-slide-04.png",
+      "layoutPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\layouts\\source-slide-04.layout.json",
+      "layoutRelativePath": "template-inspect/layouts/source-slide-04.layout.json"
+    }
+  ],
+  "inspectPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\template-inspect.ndjson",
+  "inspectRelativePath": "template-inspect/template-inspect.ndjson",
+  "inspectTruncated": false,
+  "inspectMetadata": {
+    "revision": "xh54yt",
+    "target": {
+      "id": "pr/pzqvcd"
+    },
+    "kind": {
+      "requested": "slide,textbox,shape,image,table,chart",
+      "tokens": [
+        "slide",
+        "textbox",
+        "shape",
+        "image",
+        "table",
+        "chart"
+      ]
+    },
+    "include": {
+      "tokens": []
+    },
+    "exclude": {
+      "tokens": []
+    },
+    "notices": []
+  },
+  "extractedMedia": [
+    {
+      "entry": "ppt/media/image2.jpeg",
+      "path": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\assets\\ppt\\media\\image2.jpeg",
+      "relativePath": "template-inspect/assets/ppt/media/image2.jpeg",
+      "bytes": 860364
+    },
+    {
+      "entry": "ppt/media/image3.jpeg",
+      "path": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\assets\\ppt\\media\\image3.jpeg",
+      "relativePath": "template-inspect/assets/ppt/media/image3.jpeg",
+      "bytes": 875512
+    },
+    {
+      "entry": "ppt/media/image4.jpeg",
+      "path": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\assets\\ppt\\media\\image4.jpeg",
+      "relativePath": "template-inspect/assets/ppt/media/image4.jpeg",
+      "bytes": 607206
+    },
+    {
+      "entry": "ppt/media/image5.jpeg",
+      "path": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\assets\\ppt\\media\\image5.jpeg",
+      "relativePath": "template-inspect/assets/ppt/media/image5.jpeg",
+      "bytes": 256501
+    },
+    {
+      "entry": "ppt/media/image6.png",
+      "path": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\assets\\ppt\\media\\image6.png",
+      "relativePath": "template-inspect/assets/ppt/media/image6.png",
+      "bytes": 31054
+    },
+    {
+      "entry": "ppt/media/image7.png",
+      "path": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\assets\\ppt\\media\\image7.png",
+      "relativePath": "template-inspect/assets/ppt/media/image7.png",
+      "bytes": 12100
+    },
+    {
+      "entry": "ppt/media/image1.jpeg",
+      "path": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-inspect\\assets\\ppt\\media\\image1.jpeg",
+      "relativePath": "template-inspect/assets/ppt/media/image1.jpeg",
+      "bytes": 881314
+    }
+  ],
+  "fonts": [
+    "+mj-ea",
+    "+mj-lt",
+    "+mn-cs",
+    "+mn-ea",
+    "+mn-lt",
+    "NVIDIA Sans",
+    "NVIDIA Sans Medium",
+    "Noto Sans SC",
+    "Roboto Mono",
+    "Roboto Mono Medium"
+  ],
+  "packageParts": {
+    "mediaCount": 7,
+    "slideXmlCount": 4,
+    "chartCount": 0,
+    "tableSlideCount": 0
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "sourcePptx": "C:\\Users\\74441\\Documents\\xwechat_files\\wxid_l7bbn9t41zw121_33e4\\msg\\file\\2026-07\\黑客松路演PPT模板(1)(1).pptx",
+  "mapPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-frame-map.json",
+  "output": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-starter.pptx",
+  "outputBytes": 26065511,
+  "sourceSlideCount": 4,
+  "slideCount": 1,
+  "previewDir": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-starter-preview",
+  "layoutDir": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-starter-layout",
+  "slides": [
+    {
+      "outputSlide": 1,
+      "sourceSlide": 3,
+      "narrativeRole": "technical core explanation",
+      "reuseMode": "duplicate-slide",
+      "editTargetCount": 3,
+      "previewPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-starter-preview\\starter-slide-01.png",
+      "previewRelativePath": "template-starter-preview/starter-slide-01.png",
+      "layoutPath": "D:\\CodeWorks\\AgentLearning\\DGX比赛 RAG Agent Learning\\Super-Idol-Master\\.codex_tmp\\pitch_tech_slide_20260729\\template-starter-layout\\starter-slide-01.layout.json",
+      "layoutRelativePath": "template-starter-layout/starter-slide-01.layout.json"
+    }
+  ]
+}

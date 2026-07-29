@@ -1,0 +1,42 @@
+{
+  "outputSlides": [
+    {
+      "outputSlide": 1,
+      "sourceSlide": 3,
+      "narrativeRole": "technical core explanation",
+      "reuseMode": "duplicate-slide",
+      "editTargets": [
+        {
+          "sourceElementId": "sh/cza94vmx",
+          "action": "rewrite",
+          "description": "Rewrite inherited title placeholder with the technical thesis"
+        },
+        {
+          "sourceElementId": "sh/298ryl4v",
+          "action": "rewrite",
+          "description": "Rewrite inherited subtitle placeholder with the three-layer architecture"
+        },
+        {
+          "sourceElementId": "sh/d0jax03i",
+          "action": "rewrite",
+          "description": "Rewrite inherited body placeholder as a three-step technical flow and evidence line"
+        }
+      ]
+    }
+  ],
+  "omittedSourceSlides": [
+    {
+      "sourceSlide": 1,
+      "reason": "Section bumper is outside the requested one-page technical content"
+    },
+    {
+      "sourceSlide": 2,
+      "reason": "Team and project introduction page is outside the requested one-page technical content"
+    },
+    {
+      "sourceSlide": 4,
+      "reason": "Demo page is outside the requested one-page technical content"
+    }
+  ]
+}
+

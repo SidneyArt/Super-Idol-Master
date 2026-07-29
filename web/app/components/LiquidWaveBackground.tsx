@@ -43,6 +43,12 @@ type CurveGeometrySample = {
   sharedFlow: number;
 };
 
+type StrandPoint = {
+  progress: number;
+  x: number;
+  y: number;
+};
+
 const TARGET_FRAME_INTERVAL = 1000 / 30;
 const CURVE_STEPS = 40;
 const FLARE_NORMALIZER = 1 - Math.exp(-8);
@@ -201,8 +207,7 @@ function buildFamilyGeometry(
   });
 }
 
-function traceFamilyStrand(
-  context: CanvasRenderingContext2D,
+function buildFamilyStrandPoints(
   height: number,
   familyIndex: number,
   geometry: CurveGeometrySample[],
@@ -230,7 +235,7 @@ function traceFamilyStrand(
     : 0;
   const focusWeaveBias = Math.sin(strandPosition * 8.6 + family.phase) * 0.0035;
 
-  context.beginPath();
+  const points: StrandPoint[] = [];
   for (let step = 0; step < geometry.length; step += 1) {
     const sample = geometry[step];
     const strandSideArc = strandPosition
@@ -277,9 +282,69 @@ function traceFamilyStrand(
       + organicRipple;
     const x = sample.x + sample.normalX * offset;
     const y = sample.y + sample.normalY * offset;
-    if (step === 0) context.moveTo(x, y);
-    else context.lineTo(x, y);
+    points.push({ progress: sample.progress, x, y });
   }
+  return points;
+}
+
+function traceStrandCenterline(
+  context: CanvasRenderingContext2D,
+  points: StrandPoint[],
+) {
+  context.beginPath();
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    if (index === 0) context.moveTo(point.x, point.y);
+    else context.lineTo(point.x, point.y);
+  }
+}
+
+function traceVariableWidthStrand(
+  context: CanvasRenderingContext2D,
+  points: StrandPoint[],
+  familyIndex: number,
+  strandIndex: number,
+  baseWidth: number,
+  time: number,
+  animated: boolean,
+) {
+  const widthPhaseA = strandVariation(familyIndex + 31, strandIndex + 37) * Math.PI * 2;
+  const widthPhaseB = strandVariation(familyIndex + 43, strandIndex + 53) * Math.PI * 2;
+  const motionOffset = animated ? time * 0.12 : 0;
+  const edges = points.map((point, index) => {
+    const previousPoint = points[Math.max(0, index - 1)];
+    const nextPoint = points[Math.min(points.length - 1, index + 1)];
+    const tangentX = nextPoint.x - previousPoint.x;
+    const tangentY = nextPoint.y - previousPoint.y;
+    const tangentLength = Math.max(1, Math.hypot(tangentX, tangentY));
+    const widthScale = Math.max(
+      0.28,
+      0.92
+        + Math.sin(point.progress * Math.PI * 2.1 + widthPhaseA + motionOffset) * 0.48
+        + Math.sin(point.progress * Math.PI * 4.6 + widthPhaseB - motionOffset * 0.6) * 0.2,
+    );
+    const halfWidth = baseWidth * widthScale * 0.5;
+    const normalX = -tangentY / tangentLength;
+    const normalY = tangentX / tangentLength;
+    return {
+      upperX: point.x + normalX * halfWidth,
+      upperY: point.y + normalY * halfWidth,
+      lowerX: point.x - normalX * halfWidth,
+      lowerY: point.y - normalY * halfWidth,
+    };
+  });
+
+  context.beginPath();
+  for (let index = 0; index < edges.length; index += 1) {
+    const edge = edges[index];
+    if (index === 0) context.moveTo(edge.upperX, edge.upperY);
+    else context.lineTo(edge.upperX, edge.upperY);
+  }
+  for (let index = edges.length - 1; index >= 0; index -= 1) {
+    const edge = edges[index];
+    context.lineTo(edge.lowerX, edge.lowerY);
+  }
+  context.closePath();
 }
 
 function strandVariation(familyIndex: number, strandIndex: number) {
@@ -435,39 +500,6 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       context.save();
       applyWaveTransform(context, width, height);
 
-      const pulsePaints: CanvasGradient[] = [];
-      const pulseStrengths: number[] = [];
-      if (animated) {
-        for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
-          const family = WAVE_FAMILIES[familyIndex];
-          const pulseProgress = ((time * 0.085 + familyIndex * 0.018) % 1.34) - 0.17;
-          const pulseX = pulseProgress * width;
-          const pulseRadius = width * (0.13 + familyIndex * 0.004);
-          const pulsePaint = context.createLinearGradient(
-            pulseX - pulseRadius,
-            0,
-            pulseX + pulseRadius,
-            0,
-          );
-          pulsePaint.addColorStop(0, "rgba(255, 255, 255, 0)");
-          pulsePaint.addColorStop(
-            0.28,
-            theme === "dark" ? "rgba(178, 215, 255, 0.13)" : "rgba(45, 91, 177, 0.08)",
-          );
-          pulsePaint.addColorStop(
-            0.5,
-            theme === "dark" ? "rgba(207, 233, 255, 0.84)" : "rgba(31, 76, 164, 0.68)",
-          );
-          pulsePaint.addColorStop(
-            0.72,
-            theme === "dark" ? "rgba(169, 209, 255, 0.11)" : "rgba(48, 95, 181, 0.07)",
-          );
-          pulsePaint.addColorStop(1, "rgba(255, 255, 255, 0)");
-          pulsePaints.push(pulsePaint);
-          pulseStrengths.push(0.92 + Math.sin(time * 0.46 + family.phase) * 0.08);
-        }
-      }
-
       context.globalCompositeOperation = theme === "dark" ? "screen" : "source-over";
       context.strokeStyle = glowPaint;
       context.lineCap = "round";
@@ -475,8 +507,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
 
       for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
         const family = WAVE_FAMILIES[familyIndex];
-        traceFamilyStrand(
-          context,
+        const centerline = buildFamilyStrandPoints(
           height,
           familyIndex,
           familyGeometries[familyIndex],
@@ -485,6 +516,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
           time,
           animated,
         );
+        traceStrandCenterline(context, centerline);
         context.globalAlpha = family.weight * (theme === "dark" ? 0.045 : 0.035);
         context.lineWidth = (theme === "dark" ? 72 : 52) * (0.72 + family.weight * 0.28);
         context.shadowColor = theme === "dark" ? "rgba(132, 184, 247, 0.34)" : "rgba(48, 96, 184, 0.14)";
@@ -498,7 +530,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       }
 
       context.shadowBlur = 0;
-      context.strokeStyle = wavePaint;
+      context.fillStyle = wavePaint;
       for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
         const family = WAVE_FAMILIES[familyIndex];
         for (let strandIndex = 0; strandIndex < family.strands; strandIndex += 1) {
@@ -509,14 +541,13 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
           );
           const thicknessVariation = strandVariation(familyIndex, strandIndex);
           const brightnessVariation = strandVariation(familyIndex + 11, strandIndex + 17);
-          const thicknessScale = 0.86 + thicknessVariation * 0.28;
+          const thicknessScale = 0.45 + thicknessVariation * 1.35;
           const brightnessScale = 0.85 + brightnessVariation * 0.3;
           const familyScale = 0.9 + family.weight * 0.1;
           const strandWidth = (theme === "dark" ? 2 : 1.75) * thicknessScale;
           const strandAlpha = (theme === "dark" ? 0.42 : 0.3) * brightnessScale * familyScale;
 
-          traceFamilyStrand(
-            context,
+          const strandPoints = buildFamilyStrandPoints(
             height,
             familyIndex,
             familyGeometries[familyIndex],
@@ -525,20 +556,93 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
             time,
             animated,
           );
-          context.strokeStyle = wavePaint;
+          traceVariableWidthStrand(
+            context,
+            strandPoints,
+            familyIndex,
+            strandIndex,
+            strandWidth * 1.85,
+            time,
+            animated,
+          );
+          context.fillStyle = wavePaint;
           context.globalAlpha = strandAlpha * 0.44;
-          context.lineWidth = strandWidth * 1.85;
-          context.stroke();
-          context.strokeStyle = flowPaint;
+          context.fill();
+          traceVariableWidthStrand(
+            context,
+            strandPoints,
+            familyIndex,
+            strandIndex,
+            strandWidth * 0.72,
+            time,
+            animated,
+          );
+          context.fillStyle = flowPaint;
           context.globalAlpha = strandAlpha * 0.9;
-          context.lineWidth = strandWidth * 0.72;
-          context.stroke();
+          context.fill();
 
           if (animated) {
-            context.strokeStyle = pulsePaints[familyIndex];
-            context.globalAlpha = strandAlpha * pulseStrengths[familyIndex] * 0.24;
-            context.lineWidth = strandWidth * 0.9;
-            context.stroke();
+            const pulseOffset = strandVariation(familyIndex + 61, strandIndex + 67);
+            const pulseSpeedSeed = strandVariation(familyIndex + 71, strandIndex + 73);
+            const pulseSpeed = 0.0375 + pulseSpeedSeed * 0.0175;
+            const pulseProgress = ((time * pulseSpeed + pulseOffset * 1.24) % 1.3) - 0.15;
+            const pulseX = pulseProgress * width;
+            const pulseRadius = width * (0.3 + pulseSpeedSeed * 0.14);
+            const pulsePaint = context.createLinearGradient(
+              pulseX - pulseRadius,
+              0,
+              pulseX + pulseRadius,
+              0,
+            );
+            pulsePaint.addColorStop(0, "rgba(255, 255, 255, 0)");
+            pulsePaint.addColorStop(
+              0.28,
+              theme === "dark" ? "rgba(145, 199, 248, 0.08)" : "rgba(54, 94, 180, 0.06)",
+            );
+            pulsePaint.addColorStop(
+              0.46,
+              theme === "dark" ? "rgba(202, 233, 255, 0.58)" : "rgba(43, 84, 177, 0.4)",
+            );
+            pulsePaint.addColorStop(
+              0.5,
+              theme === "dark" ? "rgba(239, 249, 255, 0.98)" : "rgba(31, 72, 166, 0.78)",
+            );
+            pulsePaint.addColorStop(
+              0.54,
+              theme === "dark" ? "rgba(194, 229, 255, 0.54)" : "rgba(48, 89, 181, 0.36)",
+            );
+            pulsePaint.addColorStop(
+              0.72,
+              theme === "dark" ? "rgba(132, 190, 242, 0.07)" : "rgba(60, 100, 184, 0.05)",
+            );
+            pulsePaint.addColorStop(1, "rgba(255, 255, 255, 0)");
+            const pulseStrength = 0.82
+              + Math.sin(time * 0.62 + pulseOffset * Math.PI * 2) * 0.18;
+
+            traceVariableWidthStrand(
+              context,
+              strandPoints,
+              familyIndex,
+              strandIndex,
+              strandWidth * 2.15,
+              time,
+              animated,
+            );
+            context.fillStyle = pulsePaint;
+            context.globalAlpha = strandAlpha * pulseStrength * 0.2;
+            context.fill();
+            traceVariableWidthStrand(
+              context,
+              strandPoints,
+              familyIndex,
+              strandIndex,
+              strandWidth * 0.95,
+              time,
+              animated,
+            );
+            context.fillStyle = pulsePaint;
+            context.globalAlpha = strandAlpha * pulseStrength * 0.82;
+            context.fill();
           }
         }
       }
@@ -604,12 +708,12 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
     };
   }, [animated, theme]);
 
-  return (
+  return animated ? (
     <canvas
       ref={canvasRef}
       className="liquid-wave-background"
-      data-animated={animated ? "true" : "false"}
+      data-animated="true"
       aria-hidden="true"
     />
-  );
+  ) : null;
 }

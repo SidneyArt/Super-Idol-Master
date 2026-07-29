@@ -1,0 +1,827 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/hwbqtkby",
+    "id": "hwbqtkby",
+    "slide": 2,
+    "layoutId": "/ppt/slideLayouts/slideLayout10.xml",
+    "layoutName": "Title, Subtitle, Bullets",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 3840,
+      "height": 2160
+    }
+  },
+  "theme": {
+    "colorSchemeName": "NVIDIA26_v2",
+    "colors": {
+      "accent1": "#76B900",
+      "accent2": "#1DBBA4",
+      "accent3": "#0074DF",
+      "accent4": "#952FC6",
+      "accent5": "#EF9100",
+      "accent6": "#757575",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#313131",
+      "lt2": "#F7F7F7",
+      "hlink": "#757575",
+      "folHlink": "#757575"
+    },
+    "fontScheme": {
+      "name": "NVIDIA Template 26",
+      "majorFont": {
+        "latinTypeface": "NVIDIA Sans Medium"
+      },
+      "minorFont": {
+        "latinTypeface": "NVIDIA Sans"
+      }
+    },
+    "typefaces": [
+      "NVIDIA Sans",
+      "NVIDIA Sans Medium"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout10.xml",
+      "name": "Title, Subtitle, Bullets",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout10.xml/9",
+          "id": "9",
+          "name": "Slide Number Placeholder",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "text": "‹#›",
+          "textPreview": "‹#›",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "‹#›",
+              "lineSpacingPercent": 90000,
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "‹#›"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout10.xml/3",
+          "id": "3",
+          "name": "Text Placeholder",
+          "bbox": [
+            192,
+            624,
+            3456,
+            1344
+          ],
+          "text": "Click to edit paragraph text\nSecond level\nThird level\nFourth level\nFifth level",
+          "textPreview": "Click to edit paragraph text | Second level | Third level | Fourth level | Fifth level",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to edit paragraph text",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to edit paragraph text"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "Second level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Second level"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "Third level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Third level"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "Fourth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fourth level"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "Fifth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fifth level"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout10.xml/4",
+          "id": "4",
+          "name": "Subtitle",
+          "bbox": [
+            192,
+            355.2,
+            3456,
+            96
+          ],
+          "text": "Click to edit subtitle here",
+          "textPreview": "Click to edit subtitle here",
+          "resolvedTextStyle": {
+            "autoFit": "none",
+            "insets": {
+              "top": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to edit subtitle here",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to edit subtitle here"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout10.xml/16",
+          "id": "16",
+          "name": "Title",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "text": "Click to Edit Title Here",
+          "textPreview": "Click to Edit Title Here",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to Edit Title Here",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to Edit Title Here"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster1.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/3",
+          "id": "3",
+          "name": "Logo Text",
+          "bbox": [
+            3626.56,
+            2041.82,
+            117.56,
+            22.04
+          ],
+          "geometry": "custom",
+          "fillColor": "tx1",
+          "lineWidth": 0.07
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/2",
+          "id": "2",
+          "name": "Logo Eye",
+          "bbox": [
+            3567.58,
+            2035.51,
+            50.66,
+            33.53
+          ],
+          "geometry": "custom",
+          "fillColor": "accent1",
+          "lineWidth": 0.07
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/8",
+          "id": "8",
+          "name": "Footer (Source) Placeholder",
+          "bbox": [
+            792,
+            2040,
+            2256,
+            38.78
+          ],
+          "geometry": "rect",
+          "text": "Source information in NVIDIA Sans, medium gray; 20 pt",
+          "textPreview": "Source information in NVIDIA Sans, medium gray; 20 pt",
+          "resolvedTextStyle": {
+            "anchor": 3,
+            "vertical": 1,
+            "verticalAlignment": "bottom",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Source information in NVIDIA Sans, medium gray; 20 pt",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Source information in NVIDIA Sans, medium gray; 20 pt"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/4",
+          "id": "4",
+          "name": "Slide Number Placeholder",
+          "bbox": [
+            96,
+            2040,
+            67.2,
+            38.78
+          ],
+          "geometry": "rect",
+          "text": "‹#›",
+          "textPreview": "‹#›",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "‹#›",
+              "lineSpacingPercent": 90000,
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "‹#›"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/17",
+          "id": "17",
+          "name": "Text Placeholder",
+          "bbox": [
+            192,
+            624,
+            3456,
+            1344
+          ],
+          "geometry": "rect",
+          "text": "Click to edit paragraph text\nSecond level\nThird level\nFourth level\nFifth level",
+          "textPreview": "Click to edit paragraph text | Second level | Third level | Fourth level | Fifth level",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to edit paragraph text",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to edit paragraph text"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "Second level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Second level"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "Third level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Third level"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "Fourth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fourth level"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "Fifth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fifth level"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 6,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/6",
+          "id": "6",
+          "name": "Title Placeholder",
+          "bbox": [
+            192,
+            96,
+            3456,
+            259.2
+          ],
+          "geometry": "rect",
+          "text": "Click to Edit Title Here\n2-lines Maximum Length",
+          "textPreview": "Click to Edit Title Here | 2-lines Maximum Length",
+          "resolvedTextStyle": {
+            "anchor": 3,
+            "vertical": 1,
+            "verticalAlignment": "bottom",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to Edit Title Here\n2-lines Maximum Length",
+              "lineSpacingPercent": 90000,
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to Edit Title Here",
+                  "fontSize": 117.33
+                },
+                {
+                  "index": 2,
+                  "text": "\n"
+                },
+                {
+                  "index": 3,
+                  "text": "2-lines Maximum Length",
+                  "fontSize": 117.33
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 7,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/5",
+          "id": "5",
+          "name": "Date (Confidential) Placeholder",
+          "bbox": [
+            192,
+            2040,
+            595.2,
+            38.78
+          ],
+          "geometry": "rect",
+          "text": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE.",
+          "textPreview": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE.",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE.",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ozy1ofad",
+      "id": "3",
+      "name": "Text Placeholder",
+      "bbox": [
+        192,
+        624,
+        3456,
+        1344
+      ],
+      "text": "中文字体用Noto Sans，英文字体用NVIDIA Sans \nSecond level of text at 40 pt\nThird level of text at 36 pt\nText goes here\nText goes here",
+      "textPreview": "中文字体用Noto Sans，英文字体用NVIDIA Sans  | Second level of text at 40 pt | Third level of text at 36 pt | Text goes here | Text goes here",
+      "resolvedFontSize": 58.67,
+      "resolvedTextStyle": {
+        "vertical": 1,
+        "fontSize": 58.67,
+        "typeface": "NVIDIA Sans",
+        "color": "tx1",
+        "alignment": "left",
+        "autoFit": "none",
+        "insets": {
+          "top": 4.8,
+          "right": 0,
+          "bottom": 4.8,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 9,
+        "lines": [
+          {
+            "index": 1,
+            "text": "​ 中文字体用Noto Sans，英文字体用NVIDIA Sans"
+          },
+          {
+            "index": 2,
+            "text": ""
+          },
+          {
+            "index": 3,
+            "text": "​ Second level of text at 40 pt"
+          },
+          {
+            "index": 4,
+            "text": ""
+          },
+          {
+            "index": 5,
+            "text": "• Third level of text at 36 pt"
+          },
+          {
+            "index": 6,
+            "text": ""
+          },
+          {
+            "index": 7,
+            "text": "​ Text goes here"
+          },
+          {
+            "index": 8,
+            "text": ""
+          },
+          {
+            "index": 9,
+            "text": "​ Text goes here"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "中文字体用Noto Sans，英文字体用NVIDIA Sans ",
+          "runs": [
+            {
+              "index": 1,
+              "text": "中文字体用"
+            },
+            {
+              "index": 2,
+              "text": "Noto Sans，"
+            },
+            {
+              "index": 3,
+              "text": "英文字体用"
+            },
+            {
+              "index": 4,
+              "text": "NVIDIA Sans "
+            }
+          ],
+          "bulletCharacter": "​",
+          "marginLeft": 0,
+          "indent": 0,
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 2,
+          "text": "Second level of text at 40 pt",
+          "runs": [
+            {
+              "index": 1,
+              "text": "Second level of text at 40 pt"
+            }
+          ],
+          "bulletCharacter": "​",
+          "marginLeft": 0,
+          "indent": 0,
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 3,
+          "text": "Third level of text at 36 pt",
+          "runs": [
+            {
+              "index": 1,
+              "text": "Third level of text at 36 pt"
+            }
+          ],
+          "bulletCharacter": "•",
+          "marginLeft": 914400,
+          "indent": -457200,
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 4,
+          "text": "Text goes here",
+          "runs": [
+            {
+              "index": 1,
+              "text": "Text goes here"
+            }
+          ],
+          "bulletCharacter": "​",
+          "marginLeft": 0,
+          "indent": 0,
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 5,
+          "text": "Text goes here",
+          "runs": [
+            {
+              "index": 1,
+              "text": "Text goes here"
+            }
+          ],
+          "bulletCharacter": "​",
+          "marginLeft": 0,
+          "indent": 0,
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/b29kza94",
+      "id": "4",
+      "name": "Subtitle",
+      "bbox": [
+        192,
+        355.2,
+        3456,
+        96
+      ],
+      "text": "1分钟",
+      "textPreview": "1分钟",
+      "resolvedFontSize": 64,
+      "resolvedTextStyle": {
+        "vertical": 1,
+        "fontSize": 64,
+        "typeface": "NVIDIA Sans",
+        "color": "accent6",
+        "alignment": "left",
+        "autoFit": "none",
+        "insets": {
+          "top": 9.6,
+          "right": 0,
+          "bottom": 4.8,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "1分钟"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "1分钟",
+          "runs": [
+            {
+              "index": 1,
+              "text": "1",
+              "color": "#FF0000"
+            },
+            {
+              "index": 2,
+              "text": "分钟",
+              "color": "#FF0000"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/9072xkry",
+      "id": "2",
+      "name": "Title",
+      "bbox": [
+        192,
+        96,
+        3456,
+        259.2
+      ],
+      "text": "路演团队+项目简介 (中文字体用Noto Sans，英文字体用NVIDIA Sans )",
+      "textPreview": "路演团队+项目简介 (中文字体用Noto Sans，英文字体用NVIDIA Sans )",
+      "resolvedFontSize": 117.33,
+      "resolvedTextStyle": {
+        "anchor": 3,
+        "vertical": 1,
+        "fontSize": 117.33,
+        "typeface": "NVIDIA Sans Medium",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "bottom",
+        "autoFit": "none",
+        "insets": {
+          "top": 4.8,
+          "right": 0,
+          "bottom": 4.8,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "路演团队+项目简介 (中文字体用Noto Sans，英文字体用NVIDIA Sans )"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "路演团队+项目简介 (中文字体用Noto Sans，英文字体用NVIDIA Sans )",
+          "runs": [
+            {
+              "index": 1,
+              "text": "路演团队",
+              "fontSize": 96
+            },
+            {
+              "index": 2,
+              "text": "+",
+              "fontSize": 96
+            },
+            {
+              "index": 3,
+              "text": "项目简介 ",
+              "fontSize": 96
+            },
+            {
+              "index": 4,
+              "text": "(",
+              "fontSize": 96
+            },
+            {
+              "index": 5,
+              "text": "中文字体用",
+              "fontSize": 96
+            },
+            {
+              "index": 6,
+              "text": "Noto Sans",
+              "fontSize": 96
+            },
+            {
+              "index": 7,
+              "text": "，英文字体用",
+              "fontSize": 96
+            },
+            {
+              "index": 8,
+              "text": "NVIDIA Sans )",
+              "fontSize": 96
+            }
+          ],
+          "bulletCharacter": "",
+          "indent": 0,
+          "lineSpacingPercent": 90000
+        }
+      ]
+    }
+  ],
+  "composeRuns": []
+}
