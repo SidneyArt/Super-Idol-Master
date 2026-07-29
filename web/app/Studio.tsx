@@ -2756,6 +2756,17 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     if (workspaceAssetFilter === "2d" || workspaceAssetFilter === "3d") return asset.group === workspaceAssetFilter;
     return asset.kind === workspaceAssetFilter;
   });
+  const workspaceAssetCounts = {
+    all: workspaceAssets.length,
+    "2d": workspaceAssets.filter((asset) => asset.group === "2d").length,
+    "3d": workspaceAssets.filter((asset) => asset.group === "3d").length,
+    model: workspaceAssets.filter((asset) => asset.kind === "model").length,
+    topology: workspaceAssets.filter((asset) => asset.kind === "topology").length,
+    rigged: workspaceAssets.filter((asset) => asset.kind === "rigged").length,
+  };
+  const workspaceAssetGroupFilter = workspaceAssetFilter === "all" || workspaceAssetFilter === "2d"
+    ? workspaceAssetFilter
+    : "3d";
   const selectedWorkspaceAsset = filteredWorkspaceAssets.find((asset) => asset.id === selectedWorkspaceAssetId)
     || filteredWorkspaceAssets[0]
     || null;
@@ -4090,19 +4101,41 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             <div className="asset-library-body">
               <aside className="asset-library-browser">
                 <nav className="asset-library-filters" aria-label="资产类型筛选">
-                  {([
-                    ["all", "全部"],
-                    ["2d", "2D 图片"],
-                    ["3d", "全部 3D"],
-                    ["model", "静态模型"],
-                    ["topology", "拓扑模型"],
-                    ["rigged", "绑定模型"],
-                  ] as Array<[WorkspaceAssetFilter, string]>).map(([value, label]) => {
-                    const count = value === "all"
-                      ? workspaceAssets.length
-                      : workspaceAssets.filter((asset) => value === "2d" || value === "3d" ? asset.group === value : asset.kind === value).length;
-                    return <button type="button" key={value} className={workspaceAssetFilter === value ? "active" : ""} onClick={() => { setWorkspaceAssetFilter(value); setSelectedWorkspaceAssetId(null); }}><span>{label}</span><em>{count}</em></button>;
-                  })}
+                  <div className="asset-library-filter-groups" role="group" aria-label="资产大类">
+                    <button type="button" className={workspaceAssetGroupFilter === "all" ? "active" : ""} aria-pressed={workspaceAssetGroupFilter === "all"} onClick={() => { setWorkspaceAssetFilter("all"); setSelectedWorkspaceAssetId(null); }}>
+                      <Library size={13} aria-hidden="true" /><span>全部</span><em>{workspaceAssetCounts.all}</em>
+                    </button>
+                    <button type="button" className={workspaceAssetGroupFilter === "2d" ? "active" : ""} aria-pressed={workspaceAssetGroupFilter === "2d"} onClick={() => { setWorkspaceAssetFilter("2d"); setSelectedWorkspaceAssetId(null); }}>
+                      <ImageIcon size={13} aria-hidden="true" /><span>2D</span><em>{workspaceAssetCounts["2d"]}</em>
+                    </button>
+                    <button type="button" className={workspaceAssetGroupFilter === "3d" ? "active" : ""} aria-pressed={workspaceAssetGroupFilter === "3d"} onClick={() => { setWorkspaceAssetFilter("3d"); setSelectedWorkspaceAssetId(null); }}>
+                      <Box size={13} aria-hidden="true" /><span>3D</span><em>{workspaceAssetCounts["3d"]}</em>
+                    </button>
+                  </div>
+                  {workspaceAssetGroupFilter === "3d" && (
+                    <div className="asset-library-filter-detail">
+                      <span>3D 类型</span>
+                      <div role="group" aria-label="3D 资产类型">
+                        {([
+                          ["3d", "全部"],
+                          ["model", "静态"],
+                          ["topology", "拓扑"],
+                          ["rigged", "绑定"],
+                        ] as Array<["3d" | "model" | "topology" | "rigged", string]>).map(([value, label]) => (
+                          <button
+                            type="button"
+                            key={value}
+                            className={workspaceAssetFilter === value ? "active" : ""}
+                            aria-pressed={workspaceAssetFilter === value}
+                            title={value === "3d" ? "全部 3D 资产" : `${label}模型`}
+                            onClick={() => { setWorkspaceAssetFilter(value); setSelectedWorkspaceAssetId(null); }}
+                          >
+                            <span>{label}</span><em>{workspaceAssetCounts[value]}</em>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </nav>
                 <div className="asset-library-list" aria-label="资产列表">
                   {workspaceAssetsLoading && <div className="asset-library-empty"><LoaderCircle className="spinning" size={22} /><span>正在读取资产…</span></div>}
