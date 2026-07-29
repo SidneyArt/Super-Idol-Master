@@ -22,58 +22,49 @@ type WaveFamily = {
   phase: number;
   weight: number;
   crossT: number;
+  leftBend: number;
+  rightBend: number;
+};
+
+type CurveGeometrySample = {
+  progress: number;
+  x: number;
+  y: number;
+  normalX: number;
+  normalY: number;
+  normalizedDistance: number;
+  flareDistance: number;
+  spreadScale: number;
+  centerEnvelope: number;
+  sideEnvelope: number;
+  sideArcStrength: number;
+  signedFocusDistance: number;
+  focusWeaveEnvelope: number;
+  sharedFlow: number;
 };
 
 const TARGET_FRAME_INTERVAL = 1000 / 30;
+const CURVE_STEPS = 40;
+const FLARE_NORMALIZER = 1 - Math.exp(-8);
 const WAVE_ROTATION = -15 * Math.PI / 180;
 const WAVE_PIVOT_X = 0.64;
 const WAVE_PIVOT_Y = 0.695;
 const WAVE_VERTICAL_SHIFT = -0.055;
+const WAVE_SCALE = 1.06;
 
 const WAVE_FAMILIES: WaveFamily[] = [
   {
-    start: { x: -0.08, y: 0.52 },
-    controlA: { x: 0.24, y: 0.56 },
-    controlB: { x: 0.59, y: 0.75 },
-    end: { x: 1.08, y: 0.6 },
-    spread: 0.06,
-    strands: 9,
+    start: { x: -0.08, y: 0.65 },
+    controlA: { x: 0.24, y: 0.65 },
+    controlB: { x: 0.62, y: 0.69 },
+    end: { x: 1.08, y: 0.665 },
+    spread: 0.132,
+    strands: 32,
     phase: 0.2,
     weight: 1,
-    crossT: 0.65,
-  },
-  {
-    start: { x: -0.08, y: 0.7 },
-    controlA: { x: 0.24, y: 0.71 },
-    controlB: { x: 0.6, y: 0.62 },
-    end: { x: 1.08, y: 0.72 },
-    spread: 0.058,
-    strands: 9,
-    phase: 1.75,
-    weight: 0.92,
-    crossT: 0.61,
-  },
-  {
-    start: { x: -0.08, y: 0.8 },
-    controlA: { x: 0.28, y: 0.74 },
-    controlB: { x: 0.62, y: 0.67 },
-    end: { x: 1.08, y: 0.78 },
-    spread: 0.042,
-    strands: 7,
-    phase: 3.15,
-    weight: 0.72,
-    crossT: 0.59,
-  },
-  {
-    start: { x: -0.08, y: 0.59 },
-    controlA: { x: 0.23, y: 0.6 },
-    controlB: { x: 0.69, y: 0.71 },
-    end: { x: 1.08, y: 0.56 },
-    spread: 0.034,
-    strands: 7,
-    phase: 4.55,
-    weight: 0.64,
-    crossT: 0.68,
+    crossT: 0.62,
+    leftBend: 0,
+    rightBend: 0,
   },
 ];
 
@@ -107,18 +98,17 @@ function applyWaveTransform(
   context.translate(0, height * WAVE_VERTICAL_SHIFT);
   context.translate(width * WAVE_PIVOT_X, height * WAVE_PIVOT_Y);
   context.rotate(WAVE_ROTATION);
+  context.scale(WAVE_SCALE, WAVE_SCALE);
   context.translate(-width * WAVE_PIVOT_X, -height * WAVE_PIVOT_Y);
 }
 
-function traceFamilyStrand(
-  context: CanvasRenderingContext2D,
+function buildFamilyGeometry(
   width: number,
   height: number,
   familyIndex: number,
-  strandPosition: number,
   time: number,
   animated: boolean,
-) {
+): CurveGeometrySample[] {
   const family = WAVE_FAMILIES[familyIndex];
   const motionStrength = animated ? 1 : 0;
   const controlA = {
@@ -129,54 +119,164 @@ function traceFamilyStrand(
     x: family.controlB.x + Math.cos(time * 0.14 + family.phase) * 0.009 * motionStrength,
     y: family.controlB.y + Math.cos(time * 0.19 + family.phase * 0.78) * 0.033 * family.weight * motionStrength,
   };
-  const focusY = 0.695 + (familyIndex - 1.5) * 0.006;
+  const focusY = 0.695;
   const focusedPoint = (progress: number) => {
     const point = cubicPoint(family.start, controlA, controlB, family.end, progress);
-    const focusEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.18, 2));
+    const focusEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.14, 2));
     const archEnvelope = Math.sin(Math.PI * progress);
-    const upwardArch = archEnvelope * archEnvelope * 0.045;
+    const upwardArch = archEnvelope * archEnvelope * 0.075;
+    const leftSag = archEnvelope
+      * archEnvelope
+      * Math.pow(1 - progress, 1.6)
+      * 0.24;
+    const rightProgress = Math.max(0, Math.min(1, (progress - 0.62) / 0.38));
+    const rightLiftEase = rightProgress * rightProgress * (3 - 2 * rightProgress);
+    const rightLift = rightLiftEase * 0.15;
+    const distanceFromFocus = progress <= family.crossT
+      ? (family.crossT - progress) / family.crossT
+      : (progress - family.crossT) / (1 - family.crossT);
+    const familyArcEnvelope = Math.sin(Math.PI * distanceFromFocus);
+    const familyArc = familyArcEnvelope * (
+      progress <= family.crossT ? family.leftBend : family.rightBend
+    );
     return {
       x: point.x,
-      y: point.y + (focusY - point.y) * focusEnvelope * 0.85 - upwardArch,
+      y: point.y
+        + (focusY - point.y) * focusEnvelope * 0.93
+        - upwardArch
+        + leftSag
+        - rightLift
+        + familyArc,
     };
   };
 
-  context.beginPath();
-  for (let step = 0; step <= 64; step += 1) {
-    const progress = step / 64;
+  const basePoints = Array.from({ length: CURVE_STEPS + 1 }, (_, step) => {
+    const progress = step / CURVE_STEPS;
     const point = focusedPoint(progress);
-    const previousPoint = focusedPoint(Math.max(0, progress - 0.003));
-    const nextPoint = focusedPoint(Math.min(1, progress + 0.003));
-    const tangentX = (nextPoint.x - previousPoint.x) * width;
-    const tangentY = (nextPoint.y - previousPoint.y) * height;
+    return {
+      progress,
+      x: point.x * width,
+      y: point.y * height,
+    };
+  });
+
+  return basePoints.map((point, step) => {
+    const previousPoint = basePoints[Math.max(0, step - 1)];
+    const nextPoint = basePoints[Math.min(CURVE_STEPS, step + 1)];
+    const tangentX = nextPoint.x - previousPoint.x;
+    const tangentY = nextPoint.y - previousPoint.y;
     const tangentLength = Math.max(1, Math.hypot(tangentX, tangentY));
-    const normalX = -tangentY / tangentLength;
-    const normalY = tangentX / tangentLength;
-    const normalizedDistance = Math.min(
-      1,
-      Math.abs(progress - family.crossT) / Math.max(family.crossT, 1 - family.crossT),
+    const distanceToFocus = Math.abs(point.progress - family.crossT);
+    const distanceToEdge = point.progress <= family.crossT
+      ? family.crossT
+      : 1 - family.crossT;
+    const normalizedDistance = Math.min(1, distanceToFocus / distanceToEdge);
+    const flareDistance = (1 - Math.exp(-8 * normalizedDistance * normalizedDistance))
+      / FLARE_NORMALIZER;
+    const endFlare = Math.pow(normalizedDistance, 1.6);
+    const centerEnvelope = Math.exp(-Math.pow((point.progress - family.crossT) / 0.29, 2));
+    const signedFocusDistance = (point.progress - family.crossT) / 0.13;
+    return {
+      progress: point.progress,
+      x: point.x,
+      y: point.y,
+      normalX: -tangentY / tangentLength,
+      normalY: tangentX / tangentLength,
+      normalizedDistance,
+      flareDistance,
+      spreadScale: 0.085 + flareDistance * 0.775 + endFlare * 0.965,
+      centerEnvelope,
+      sideEnvelope: Math.sin(Math.PI * normalizedDistance),
+      sideArcStrength: point.progress <= family.crossT ? 0.55 : -0.42,
+      signedFocusDistance,
+      focusWeaveEnvelope: Math.exp(-signedFocusDistance * signedFocusDistance),
+      sharedFlow: animated
+        ? Math.sin(time * 0.42 + family.phase + point.progress * 3.6)
+          * height
+          * 0.0056
+          * family.weight
+          * centerEnvelope
+        : 0,
+    };
+  });
+}
+
+function traceFamilyStrand(
+  context: CanvasRenderingContext2D,
+  height: number,
+  familyIndex: number,
+  geometry: CurveGeometrySample[],
+  strandPosition: number,
+  strandIndex: number,
+  time: number,
+  animated: boolean,
+) {
+  const family = WAVE_FAMILIES[familyIndex];
+  const hasStrandIdentity = strandIndex >= 0;
+  const curveSeedA = hasStrandIdentity ? strandVariation(familyIndex + 3, strandIndex + 7) : 0;
+  const curveSeedB = hasStrandIdentity ? strandVariation(familyIndex + 7, strandIndex + 13) : 0;
+  const curveSeedC = hasStrandIdentity ? strandVariation(familyIndex + 13, strandIndex + 19) : 0;
+  const curveSeedD = hasStrandIdentity ? strandVariation(familyIndex + 19, strandIndex + 23) : 0;
+  const curveSeedE = hasStrandIdentity ? strandVariation(familyIndex + 23, strandIndex + 29) : 0;
+  const leftCurvePhase = curveSeedA * Math.PI * 2;
+  const rightCurvePhase = curveSeedB * Math.PI * 2;
+  const leftCurveFrequency = 0.72 + curveSeedC * 0.86;
+  const rightCurveFrequency = 0.68 + curveSeedD * 0.94;
+  const organicCurveAmplitude = hasStrandIdentity
+    ? height * (0.011 + curveSeedE * 0.014)
+    : 0;
+  const organicMotionAmplitude = hasStrandIdentity
+    ? height * (0.0035 + curveSeedC * 0.0045)
+    : 0;
+  const focusWeaveBias = Math.sin(strandPosition * 8.6 + family.phase) * 0.0035;
+
+  context.beginPath();
+  for (let step = 0; step < geometry.length; step += 1) {
+    const sample = geometry[step];
+    const strandSideArc = strandPosition
+      * family.spread
+      * height
+      * sample.sideEnvelope
+      * sample.sideArcStrength;
+    const curvePhase = sample.progress <= family.crossT ? leftCurvePhase : rightCurvePhase;
+    const curveFrequency = sample.progress <= family.crossT
+      ? leftCurveFrequency
+      : rightCurveFrequency;
+    const primaryCurve = Math.sin(
+      curvePhase + sample.normalizedDistance * Math.PI * curveFrequency,
     );
-    const smoothDistance = normalizedDistance * normalizedDistance * (3 - 2 * normalizedDistance);
-    const endFlare = Math.pow(smoothDistance, 1.45);
-    const spreadScale = 0.11 + smoothDistance * 0.77 + endFlare * 0.58;
-    const centerEnvelope = Math.exp(-Math.pow((progress - family.crossT) / 0.29, 2));
-    const contourEnvelope = Math.sin(Math.PI * progress) * (1 - centerEnvelope * 0.42);
-    const strandContour = Math.sin(
-      family.phase * 1.7 + strandPosition * 7.2 + progress * 5.4,
-    ) * height * 0.0019 * contourEnvelope;
-    const sharedFlow = animated
-      ? Math.sin(time * 0.42 + family.phase + progress * 3.6) * height * 0.0056 * family.weight * centerEnvelope
-      : 0;
+    const secondaryCurve = Math.sin(
+      curvePhase * 0.63
+        + sample.normalizedDistance * Math.PI * (curveFrequency * 2.15 + curveSeedE * 0.7),
+    );
+    const strandContour = (primaryCurve + secondaryCurve * 0.34)
+      / 1.34
+      * organicCurveAmplitude
+      * sample.sideEnvelope;
+    const focusWeave = (
+      strandPosition * family.spread * 0.11
+      + focusWeaveBias
+    ) * height * sample.signedFocusDistance * sample.focusWeaveEnvelope;
     const strandRipple = animated
-      ? Math.sin(time * 0.54 + family.phase + progress * 4.8 + strandPosition * 6.4)
-        * height * 0.0028 * centerEnvelope
+      ? Math.sin(time * 0.54 + family.phase + sample.progress * 4.8 + strandPosition * 6.4)
+        * height * 0.0028 * sample.centerEnvelope
       : 0;
-    const offset = strandPosition * family.spread * height * spreadScale
+    const organicRipple = animated
+      ? Math.sin(
+        time * 0.54
+          + curvePhase
+          + sample.normalizedDistance * Math.PI * (1.35 + curveSeedD * 0.85),
+      ) * organicMotionAmplitude * sample.sideEnvelope
+      : 0;
+    const offset = strandPosition * family.spread * height * sample.spreadScale
+      + strandSideArc
       + strandContour
-      + sharedFlow
-      + strandRipple;
-    const x = point.x * width + normalX * offset;
-    const y = point.y * height + normalY * offset;
+      + focusWeave
+      + sample.sharedFlow
+      + strandRipple
+      + organicRipple;
+    const x = sample.x + sample.normalX * offset;
+    const y = sample.y + sample.normalY * offset;
     if (step === 0) context.moveTo(x, y);
     else context.lineTo(x, y);
   }
@@ -190,9 +290,11 @@ function strandVariation(familyIndex: number, strandIndex: number) {
 function clusteredStrandPosition(familyIndex: number, strandIndex: number, strandCount: number) {
   if (strandCount <= 1) return 0;
   const linearPosition = strandIndex / (strandCount - 1) * 2 - 1;
-  const clusteredPosition = Math.sign(linearPosition) * Math.pow(Math.abs(linearPosition), 1.24);
+  const clusteredPosition = Math.sign(linearPosition) * Math.pow(Math.abs(linearPosition), 1.14);
+  const strandSpacing = 2 / (strandCount - 1);
   const irregularity = Math.sin((strandIndex + 1) * 2.17 + familyIndex * 0.93)
-    * 0.052
+    * strandSpacing
+    * 0.28
     * (1 - Math.abs(clusteredPosition) * 0.35);
   return Math.max(-1, Math.min(1, clusteredPosition + irregularity));
 }
@@ -302,7 +404,10 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
     const resize = () => {
       width = Math.max(1, window.innerWidth);
       height = Math.max(1, window.innerHeight);
-      pixelRatio = Math.min(window.devicePixelRatio || 1, width < 900 ? 1 : 1.25);
+      pixelRatio = Math.min(
+        window.devicePixelRatio || 1,
+        width < 900 ? 1 : animated ? 1.1 : 1.25,
+      );
       canvas.width = Math.round(width * pixelRatio);
       canvas.height = Math.round(height * pixelRatio);
       canvas.style.width = `${width}px`;
@@ -323,6 +428,10 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       context.fillStyle = ambientPaint;
       context.fillRect(0, 0, width, height);
 
+      const familyGeometries = WAVE_FAMILIES.map((_, familyIndex) => (
+        buildFamilyGeometry(width, height, familyIndex, time, animated)
+      ));
+
       context.save();
       applyWaveTransform(context, width, height);
 
@@ -331,7 +440,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       if (animated) {
         for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
           const family = WAVE_FAMILIES[familyIndex];
-          const pulseProgress = ((time * 0.085 + familyIndex * 0.047) % 1.34) - 0.17;
+          const pulseProgress = ((time * 0.085 + familyIndex * 0.018) % 1.34) - 0.17;
           const pulseX = pulseProgress * width;
           const pulseRadius = width * (0.13 + familyIndex * 0.004);
           const pulsePaint = context.createLinearGradient(
@@ -366,21 +475,25 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
 
       for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
         const family = WAVE_FAMILIES[familyIndex];
-        traceFamilyStrand(context, width, height, familyIndex, 0, time, animated);
-        context.globalAlpha = family.weight * (theme === "dark" ? 0.095 : 0.06);
-        context.lineWidth = (theme === "dark" ? 54 : 40) * (0.72 + family.weight * 0.28);
-        context.shadowColor = theme === "dark" ? "rgba(132, 184, 247, 0.42)" : "rgba(48, 96, 184, 0.18)";
-        context.shadowBlur = theme === "dark" ? 26 : 17;
+        traceFamilyStrand(
+          context,
+          height,
+          familyIndex,
+          familyGeometries[familyIndex],
+          0,
+          -1,
+          time,
+          animated,
+        );
+        context.globalAlpha = family.weight * (theme === "dark" ? 0.045 : 0.035);
+        context.lineWidth = (theme === "dark" ? 72 : 52) * (0.72 + family.weight * 0.28);
+        context.shadowColor = theme === "dark" ? "rgba(132, 184, 247, 0.34)" : "rgba(48, 96, 184, 0.14)";
+        context.shadowBlur = theme === "dark" ? 28 : 18;
         context.stroke();
-      }
-
-      for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
-        const family = WAVE_FAMILIES[familyIndex];
-        traceFamilyStrand(context, width, height, familyIndex, 0, time, animated);
-        context.globalAlpha = family.weight * (theme === "dark" ? 0.18 : 0.11);
-        context.lineWidth = (theme === "dark" ? 20 : 15) * (0.74 + family.weight * 0.26);
-        context.shadowColor = theme === "dark" ? "rgba(153, 198, 255, 0.42)" : "rgba(60, 107, 188, 0.2)";
-        context.shadowBlur = theme === "dark" ? 16 : 10;
+        context.globalAlpha = family.weight * (theme === "dark" ? 0.075 : 0.055);
+        context.lineWidth = (theme === "dark" ? 34 : 25) * (0.74 + family.weight * 0.26);
+        context.shadowColor = theme === "dark" ? "rgba(153, 198, 255, 0.3)" : "rgba(60, 107, 188, 0.14)";
+        context.shadowBlur = theme === "dark" ? 18 : 12;
         context.stroke();
       }
 
@@ -402,11 +515,16 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
           const strandWidth = (theme === "dark" ? 2 : 1.75) * thicknessScale;
           const strandAlpha = (theme === "dark" ? 0.42 : 0.3) * brightnessScale * familyScale;
 
-          traceFamilyStrand(context, width, height, familyIndex, strandPosition, time, animated);
-          context.strokeStyle = glowPaint;
-          context.globalAlpha = strandAlpha * 0.13;
-          context.lineWidth = strandWidth * 3.6;
-          context.stroke();
+          traceFamilyStrand(
+            context,
+            height,
+            familyIndex,
+            familyGeometries[familyIndex],
+            strandPosition,
+            strandIndex,
+            time,
+            animated,
+          );
           context.strokeStyle = wavePaint;
           context.globalAlpha = strandAlpha * 0.44;
           context.lineWidth = strandWidth * 1.85;
@@ -418,11 +536,8 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
 
           if (animated) {
             context.strokeStyle = pulsePaints[familyIndex];
-            context.globalAlpha = strandAlpha * pulseStrengths[familyIndex] * 0.08;
-            context.lineWidth = strandWidth * 2.8;
-            context.stroke();
-            context.globalAlpha = strandAlpha * pulseStrengths[familyIndex] * 0.3;
-            context.lineWidth = strandWidth * 0.64;
+            context.globalAlpha = strandAlpha * pulseStrengths[familyIndex] * 0.24;
+            context.lineWidth = strandWidth * 0.9;
             context.stroke();
           }
         }
