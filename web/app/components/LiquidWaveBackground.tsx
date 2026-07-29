@@ -500,39 +500,6 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       context.save();
       applyWaveTransform(context, width, height);
 
-      const pulsePaints: CanvasGradient[] = [];
-      const pulseStrengths: number[] = [];
-      if (animated) {
-        for (let familyIndex = 0; familyIndex < WAVE_FAMILIES.length; familyIndex += 1) {
-          const family = WAVE_FAMILIES[familyIndex];
-          const pulseProgress = ((time * 0.085 + familyIndex * 0.018) % 1.34) - 0.17;
-          const pulseX = pulseProgress * width;
-          const pulseRadius = width * (0.13 + familyIndex * 0.004);
-          const pulsePaint = context.createLinearGradient(
-            pulseX - pulseRadius,
-            0,
-            pulseX + pulseRadius,
-            0,
-          );
-          pulsePaint.addColorStop(0, "rgba(255, 255, 255, 0)");
-          pulsePaint.addColorStop(
-            0.28,
-            theme === "dark" ? "rgba(178, 215, 255, 0.13)" : "rgba(45, 91, 177, 0.08)",
-          );
-          pulsePaint.addColorStop(
-            0.5,
-            theme === "dark" ? "rgba(207, 233, 255, 0.84)" : "rgba(31, 76, 164, 0.68)",
-          );
-          pulsePaint.addColorStop(
-            0.72,
-            theme === "dark" ? "rgba(169, 209, 255, 0.11)" : "rgba(48, 95, 181, 0.07)",
-          );
-          pulsePaint.addColorStop(1, "rgba(255, 255, 255, 0)");
-          pulsePaints.push(pulsePaint);
-          pulseStrengths.push(0.92 + Math.sin(time * 0.46 + family.phase) * 0.08);
-        }
-      }
-
       context.globalCompositeOperation = theme === "dark" ? "screen" : "source-over";
       context.strokeStyle = glowPaint;
       context.lineCap = "round";
@@ -615,17 +582,66 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
           context.fill();
 
           if (animated) {
+            const pulseOffset = strandVariation(familyIndex + 61, strandIndex + 67);
+            const pulseSpeedSeed = strandVariation(familyIndex + 71, strandIndex + 73);
+            const pulseSpeed = 0.0375 + pulseSpeedSeed * 0.0175;
+            const pulseProgress = ((time * pulseSpeed + pulseOffset * 1.24) % 1.3) - 0.15;
+            const pulseX = pulseProgress * width;
+            const pulseRadius = width * (0.3 + pulseSpeedSeed * 0.14);
+            const pulsePaint = context.createLinearGradient(
+              pulseX - pulseRadius,
+              0,
+              pulseX + pulseRadius,
+              0,
+            );
+            pulsePaint.addColorStop(0, "rgba(255, 255, 255, 0)");
+            pulsePaint.addColorStop(
+              0.28,
+              theme === "dark" ? "rgba(145, 199, 248, 0.08)" : "rgba(54, 94, 180, 0.06)",
+            );
+            pulsePaint.addColorStop(
+              0.46,
+              theme === "dark" ? "rgba(202, 233, 255, 0.58)" : "rgba(43, 84, 177, 0.4)",
+            );
+            pulsePaint.addColorStop(
+              0.5,
+              theme === "dark" ? "rgba(239, 249, 255, 0.98)" : "rgba(31, 72, 166, 0.78)",
+            );
+            pulsePaint.addColorStop(
+              0.54,
+              theme === "dark" ? "rgba(194, 229, 255, 0.54)" : "rgba(48, 89, 181, 0.36)",
+            );
+            pulsePaint.addColorStop(
+              0.72,
+              theme === "dark" ? "rgba(132, 190, 242, 0.07)" : "rgba(60, 100, 184, 0.05)",
+            );
+            pulsePaint.addColorStop(1, "rgba(255, 255, 255, 0)");
+            const pulseStrength = 0.82
+              + Math.sin(time * 0.62 + pulseOffset * Math.PI * 2) * 0.18;
+
             traceVariableWidthStrand(
               context,
               strandPoints,
               familyIndex,
               strandIndex,
-              strandWidth * 0.9,
+              strandWidth * 2.15,
               time,
               animated,
             );
-            context.fillStyle = pulsePaints[familyIndex];
-            context.globalAlpha = strandAlpha * pulseStrengths[familyIndex] * 0.24;
+            context.fillStyle = pulsePaint;
+            context.globalAlpha = strandAlpha * pulseStrength * 0.2;
+            context.fill();
+            traceVariableWidthStrand(
+              context,
+              strandPoints,
+              familyIndex,
+              strandIndex,
+              strandWidth * 0.95,
+              time,
+              animated,
+            );
+            context.fillStyle = pulsePaint;
+            context.globalAlpha = strandAlpha * pulseStrength * 0.82;
             context.fill();
           }
         }
