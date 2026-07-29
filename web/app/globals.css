@@ -1728,7 +1728,7 @@ body {
   width: clamp(220px, 17vw, 286px);
   height: auto;
   display: block;
-  transform: translateY(-5px);
+  transform: translateY(-6px);
   filter: grayscale(1) brightness(0) invert(1) drop-shadow(0 0 12px rgba(255, 255, 255, 0.08));
 }
 
@@ -4260,7 +4260,7 @@ body {
   .screen-home .brand-logo,
   .screen-task .brand-logo {
     width: clamp(235px, 17vw, 276px);
-    transform: translateY(-4px);
+    transform: translateY(-6px);
   }
 
   .screen-home .topbar-center,
