@@ -2884,6 +2884,10 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       {screen === "home" ? (
         <section className="home-frame">
           <nav className="workspace-sidebar" aria-label="工作空间列表">
+            <header className="workspace-sidebar-header">
+              <strong>工作空间</strong>
+              <span>{workspaces.length} 个工作空间</span>
+            </header>
             <div className="workspace-list">
               {[...workspaces].sort((first, second) => {
                 if (first.id === "default") return -1;
@@ -2973,7 +2977,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               >
                 <Plus size={18} /><span>创建工作空间</span>
               </button>
-              <span>{workspaces.length} 个工作空间</span>
             </footer>
           </nav>
 
@@ -3139,11 +3142,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             <Home size={17} /><span>返回首页</span>
           </button>
           <div className="sidebar-header">
-            <div className="sidebar-copy"><span>{workspaces.find((item) => item.id === run?.workspaceId)?.name || "工作空间"}</span><strong>{runs.filter((item) => item.workspaceId === run?.workspaceId).length} 个角色任务</strong></div>
+            <div className="sidebar-copy">
+              <strong>{workspaces.find((item) => item.id === run?.workspaceId)?.name || "工作空间"}</strong>
+              <span>{runs.filter((item) => item.workspaceId === run?.workspaceId).length} 个角色任务</span>
+            </div>
             <div className="sidebar-actions">
-              <button className="icon-button accent new-task-button" type="button" onClick={() => { setForm({ name: "", workspaceId: run?.workspaceId || selectedWorkspaceId, pipelineType: "text_to_model" }); setTaskSourceImage(null); setShowCreate(true); }} title="新建任务" aria-label="新建角色任务">
-                <Plus size={18} />
-              </button>
               <button
                 className="icon-button sidebar-toggle"
                 type="button"
@@ -3215,6 +3218,22 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </div>
             ))}
           </div>
+          <footer className="task-sidebar-footer">
+            <button
+              className="task-sidebar-create"
+              type="button"
+              onClick={() => {
+                setForm({ name: "", workspaceId: run?.workspaceId || selectedWorkspaceId, pipelineType: "text_to_model" });
+                setTaskSourceImage(null);
+                setShowCreate(true);
+              }}
+              title="创建角色任务"
+              aria-label="创建角色任务"
+            >
+              <Plus size={18} />
+              <span>创建角色任务</span>
+            </button>
+          </footer>
         </aside>
 
         <section className="workspace">
