@@ -2825,8 +2825,8 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         </nav>
         <div className="topbar-right">
           {screen === "home" && (
-            <button className="topbar-workspace-button" type="button" onClick={() => setShowWorkspaceCreate(true)}>
-              <span>创建工作空间</span>
+            <button className="icon-button topbar-global-settings-button" type="button" onClick={() => void openGlobalSettings()} title="全局设置" aria-label="打开全局设置面板">
+              <Settings size={20} />
             </button>
           )}
           {globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
@@ -2965,13 +2965,13 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             </div>
             <footer className="workspace-sidebar-footer">
               <button
-                className="workspace-sidebar-settings"
+                className="workspace-sidebar-create"
                 type="button"
-                onClick={() => void openGlobalSettings()}
-                title="全局设置"
-                aria-label="打开全局设置面板"
+                onClick={() => setShowWorkspaceCreate(true)}
+                title="创建工作空间"
+                aria-label="创建工作空间"
               >
-                <Settings size={21} />
+                <Plus size={18} /><span>创建工作空间</span>
               </button>
               <span>{workspaces.length} 个工作空间</span>
             </footer>

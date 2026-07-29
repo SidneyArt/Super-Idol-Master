@@ -138,10 +138,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .notification-list article { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: start; gap: 9px; padding: 11px 12px; border-bottom: 1px solid var(--border); }
 .notification-list article.unread { background: var(--accent-soft); }
 .notification-list article > span { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--surface-soft); color: var(--accent); }
-.notification-list article strong, .notification-list article small { display: block; }
+.notification-list article strong, .notification-list article small, .notification-list article time { display: block; }
 .notification-list article strong { font-size: 12px; }
 .notification-list article p { margin: 3px 0; color: var(--text-secondary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
-.notification-list article small { color: var(--muted); font-size: 10px; }
+.notification-list article small, .notification-list article time { color: var(--muted); font-size: 10px; font-weight: 400; line-height: 1.3; font-variant-numeric: tabular-nums; }
 .notification-item-actions { align-self: center; display: flex; align-items: center; gap: 5px; }
 .notification-item-actions > button, .notification-toast > button:not(.toast-close) { min-height: 28px; padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--surface); color: var(--accent); font-size: 10px; cursor: pointer; }
 .notification-item-actions > button.delete { width: 28px; display: grid; place-items: center; padding: 0; color: var(--muted); }
@@ -1772,7 +1772,7 @@ body {
 }
 
 .topbar-center button::before,
-.topbar-workspace-button::before,
+.workspace-sidebar-create::before,
 .primary-button::before,
 .icon-button.accent::before,
 .composer-actions button[type="submit"]::before {
@@ -1795,7 +1795,7 @@ body {
 }
 
 .topbar-center button:hover::before,
-.topbar-workspace-button:hover::before,
+.workspace-sidebar-create:hover::before,
 .primary-button:hover::before,
 .icon-button.accent:hover::before,
 .composer-actions button[type="submit"]:hover::before {
@@ -1825,23 +1825,9 @@ body {
   white-space: nowrap;
 }
 
-.topbar-workspace-button {
-  position: relative;
-  height: 42px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 15px;
-  border: 1px solid var(--border-strong);
-  border-radius: 13px;
-  background: var(--glass-fill-strong);
-  color: var(--text);
-  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 10px 24px rgba(0, 0, 0, 0.14);
-  cursor: pointer;
-  overflow: hidden;
+.topbar-global-settings-button {
+  flex: 0 0 auto;
 }
-
-.topbar-workspace-button span { font-size: 12px; font-weight: 620; }
 
 .icon-button,
 .secondary-button,
@@ -2374,8 +2360,7 @@ body {
   .brand-logo { width: 48px; height: 42px; object-fit: cover; object-position: left; transform: translateY(-3px); }
   .topbar-center { min-width: 0; width: 100%; height: 48px; grid-template-columns: repeat(3, 1fr); }
   .topbar-center button span { display: none; }
-  .topbar-workspace-button { width: 38px; height: 38px; justify-content: center; padding: 0; }
-  .topbar-workspace-button span { display: none; }
+  .topbar-global-settings-button { width: 38px; height: 38px; justify-content: center; padding: 0; }
   .topbar-right { gap: 5px; }
   .topbar-right .icon-button { width: 34px; height: 34px; }
   .home-frame { min-height: calc(100vh - 70px); }
@@ -2399,7 +2384,7 @@ body {
   .brand-logo { width: 43px; height: 40px; transform: translateY(-2px); }
   .topbar-center { height: 44px; border-radius: 14px; }
   .topbar-center button { border-radius: 11px; }
-  .topbar-right > .topbar-workspace-button { display: none; }
+  .topbar-right > .topbar-global-settings-button { display: inline-grid; }
   .dispatcher-title h1 { font-size: 15px; }
   .dispatcher-welcome { margin-top: 34px; }
   .dispatcher-welcome h2 { font-size: 24px; }
@@ -2528,21 +2513,12 @@ body {
     gap: 14px;
   }
 
-  .screen-home .topbar-workspace-button {
-    width: var(--home-topbar-action-width);
-    min-width: var(--home-topbar-action-width);
-    max-width: var(--home-topbar-action-width);
+  .screen-home .topbar-global-settings-button {
+    width: 48px;
+    min-width: 48px;
+    max-width: 48px;
     height: 48px;
-    justify-content: center;
-    padding: 0 20px;
-    border-radius: 11px;
-    background: linear-gradient(140deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.035));
-  }
-
-  .screen-home .topbar-workspace-button span {
-    font-size: 16px;
-    font-weight: 480;
-    white-space: nowrap;
+    padding: 0;
   }
 
   .screen-home .topbar-right .icon-button {
@@ -2940,26 +2916,36 @@ body {
   white-space: nowrap;
 }
 
-.workspace-sidebar-settings {
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
-  padding: 0;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
+.workspace-sidebar-create {
+  position: relative;
+  width: auto;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.035));
   color: #fff;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 10px 24px rgba(0, 0, 0, 0.14);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
   cursor: pointer;
+  overflow: hidden;
 }
 
-.workspace-sidebar-settings:hover {
-  background: rgba(255, 255, 255, 0.08);
+.workspace-sidebar-create:hover {
+  border-color: color-mix(in srgb, var(--text) 38%, transparent);
+  background: var(--glass-fill-strong);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 8px 22px rgba(0, 0, 0, 0.12);
 }
 
-.workspace-sidebar-settings > svg {
-  width: 25px;
-  height: 25px;
+.workspace-sidebar-create > svg {
+  width: 18px;
+  height: 18px;
 }
 
 .screen-home .workspace-icon {
@@ -3159,7 +3145,7 @@ body {
   filter: drop-shadow(0 0 5px rgba(98, 149, 255, 0.24));
 }
 
-:root[data-theme="light"] .screen-home .topbar-workspace-button {
+:root[data-theme="light"] .screen-home .workspace-sidebar-create {
   border-color: rgba(125, 137, 243, 0.36);
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.26), transparent 42%),
@@ -3170,7 +3156,7 @@ body {
     0 10px 28px rgba(115, 104, 235, 0.24);
 }
 
-:root[data-theme="light"] .screen-home .topbar-workspace-button:hover {
+:root[data-theme="light"] .screen-home .workspace-sidebar-create:hover {
   border-color: rgba(117, 104, 235, 0.52);
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.34), transparent 42%),
@@ -3288,12 +3274,12 @@ body {
   color: #30384a;
 }
 
-:root[data-theme="light"] .screen-home .workspace-sidebar-settings {
+:root[data-theme="light"] .screen-home .topbar-global-settings-button {
   color: #4b6fb7;
   filter: drop-shadow(0 0 5px rgba(81, 146, 255, 0.2));
 }
 
-:root[data-theme="light"] .screen-home .workspace-sidebar-settings:hover {
+:root[data-theme="light"] .screen-home .topbar-global-settings-button:hover {
   background: rgba(255, 255, 255, 0.72);
 }
 
@@ -4298,17 +4284,12 @@ body {
     gap: 8px;
   }
 
-  .screen-home .topbar-workspace-button {
-    width: 150px;
-    min-width: 150px;
-    max-width: 150px;
-    height: 42px;
-    padding-inline: 14px;
-    border-radius: 10px;
-  }
-
-  .screen-home .topbar-workspace-button span {
-    font-size: 14px;
+  .screen-home .topbar-global-settings-button {
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+    height: 40px;
+    padding: 0;
   }
 
   .screen-home .topbar-right .icon-button,
@@ -4396,18 +4377,20 @@ body {
   }
 
   .screen-home .workspace-sidebar-footer {
-    min-height: 52px;
-    padding-inline: 9px 14px;
+    min-height: 64px;
+    padding: 8px 14px 8px 9px;
   }
 
-  .screen-home .workspace-sidebar-settings {
-    width: 38px;
-    height: 38px;
+  .screen-home .workspace-sidebar-create {
+    width: 150px;
+    min-width: 150px;
+    max-width: 150px;
+    height: 42px;
   }
 
-  .screen-home .workspace-sidebar-settings > svg {
-    width: 21px;
-    height: 21px;
+  .screen-home .workspace-sidebar-create > svg {
+    width: 18px;
+    height: 18px;
   }
 
   .screen-home .workspace-sidebar-footer > span {
@@ -4504,7 +4487,13 @@ body {
     min-width: 404px;
   }
 
-  .screen-home .topbar-workspace-button {
+  .screen-home .topbar-global-settings-button {
+    width: 40px;
+    min-width: 40px;
+    max-width: 40px;
+  }
+
+  .screen-home .workspace-sidebar-create {
     width: 132px;
     min-width: 132px;
     max-width: 132px;
@@ -4547,7 +4536,8 @@ body {
   }
 
   .screen-home .workspace-sidebar-footer {
-    min-height: 48px;
+    min-height: 60px;
+    padding-block: 7px;
   }
 
   .screen-home .dispatcher-panel {
