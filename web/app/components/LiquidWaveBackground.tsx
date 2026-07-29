@@ -318,10 +318,10 @@ function traceVariableWidthStrand(
     const tangentY = nextPoint.y - previousPoint.y;
     const tangentLength = Math.max(1, Math.hypot(tangentX, tangentY));
     const widthScale = Math.max(
-      0.52,
+      0.28,
       0.92
-        + Math.sin(point.progress * Math.PI * 2.1 + widthPhaseA + motionOffset) * 0.28
-        + Math.sin(point.progress * Math.PI * 4.6 + widthPhaseB - motionOffset * 0.6) * 0.11,
+        + Math.sin(point.progress * Math.PI * 2.1 + widthPhaseA + motionOffset) * 0.48
+        + Math.sin(point.progress * Math.PI * 4.6 + widthPhaseB - motionOffset * 0.6) * 0.2,
     );
     const halfWidth = baseWidth * widthScale * 0.5;
     const normalX = -tangentY / tangentLength;
@@ -541,7 +541,7 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
           );
           const thicknessVariation = strandVariation(familyIndex, strandIndex);
           const brightnessVariation = strandVariation(familyIndex + 11, strandIndex + 17);
-          const thicknessScale = 0.86 + thicknessVariation * 0.28;
+          const thicknessScale = 0.45 + thicknessVariation * 1.35;
           const brightnessScale = 0.85 + brightnessVariation * 0.3;
           const familyScale = 0.9 + family.weight * 0.1;
           const strandWidth = (theme === "dark" ? 2 : 1.75) * thicknessScale;
