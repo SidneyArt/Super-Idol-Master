@@ -43,6 +43,7 @@ const generatedDir = join(webRoot, "public", "generated");
 const dataDir = join(webRoot, "data");
 const runtimeWorkflowDir = join(dataDir, "runtime-workflows");
 const animationDir = join(dataDir, "mixamo-animations");
+const animationManifestPath = join(animationDir, "manifest.json");
 const dbPath = process.env.DATABASE_PATH || join(dataDir, "super-idol-master.db");
 const pipelineDir = join(webRoot, "server", "pipeline");
 const managedPython = process.platform === "win32"
@@ -74,6 +75,14 @@ mkdirSync(dataDir, { recursive: true });
 mkdirSync(generatedDir, { recursive: true });
 mkdirSync(runtimeWorkflowDir, { recursive: true });
 mkdirSync(animationDir, { recursive: true });
+const bundledAnimationManifest = existsSync(animationManifestPath)
+  ? JSON.parse(readFileSync(animationManifestPath, "utf8"))
+  : { version: 1, boneNames: [], animations: [] };
+const bundledAnimationIds = new Set(
+  Array.isArray(bundledAnimationManifest.animations)
+    ? bundledAnimationManifest.animations.map((animation) => animation.id)
+    : [],
+);
 
 // Hard cap for a single source-image payload. Mirrors the 12 MB limit enforced
 // in the Studio UI (`readImage(file, 12 * 1024 * 1024, ...)`); the create-run
@@ -759,6 +768,7 @@ function serializeAnimationAsset(row) {
     ...publicRow,
     compatible: Boolean(row.compatible),
     boneNames,
+    bundled: bundledAnimationIds.has(row.id),
     fileUrl: `/api/animations/${encodeURIComponent(row.id)}/file`,
   };
 }
@@ -772,6 +782,57 @@ function listAnimationAssets() {
     .filter((row) => row.filePath && existsSync(row.filePath) && statSync(row.filePath).isFile())
     .map(serializeAnimationAsset);
 }
+
+function syncBundledAnimationAssets() {
+  const animations = Array.isArray(bundledAnimationManifest.animations) ? bundledAnimationManifest.animations : [];
+  const boneNames = Array.isArray(bundledAnimationManifest.boneNames) ? bundledAnimationManifest.boneNames : [];
+  const upsert = db.prepare(`
+    INSERT INTO animation_assets (
+      id, name, filename, file_path, size, duration, track_count, bone_count,
+      mapped_bone_count, compatible, bone_names, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      name = excluded.name,
+      filename = excluded.filename,
+      file_path = excluded.file_path,
+      size = excluded.size,
+      duration = excluded.duration,
+      track_count = excluded.track_count,
+      bone_count = excluded.bone_count,
+      mapped_bone_count = excluded.mapped_bone_count,
+      compatible = excluded.compatible,
+      bone_names = excluded.bone_names,
+      updated_at = excluded.updated_at
+  `);
+  for (const animation of animations) {
+    const file = basename(String(animation.file || ""));
+    if (!animation.id || file !== animation.file || extname(file).toLowerCase() !== ".fbx") {
+      throw new Error("内置动画清单包含无效条目");
+    }
+    const filePath = join(animationDir, file);
+    if (!existsSync(filePath) || !statSync(filePath).isFile()) {
+      throw new Error(`内置动画文件不存在：${file}`);
+    }
+    const createdAt = animation.createdAt || new Date(0).toISOString();
+    upsert.run(
+      animation.id,
+      animation.name || basename(animation.filename || file, extname(file)),
+      animation.filename || file,
+      filePath,
+      statSync(filePath).size,
+      Number(animation.duration || 0),
+      Number(animation.trackCount || 0),
+      Number(animation.boneCount || boneNames.length),
+      Number(animation.mappedBoneCount || 0),
+      animation.compatible ? 1 : 0,
+      JSON.stringify(boneNames),
+      createdAt,
+      createdAt,
+    );
+  }
+}
+
+syncBundledAnimationAssets();
 
 async function createAnimationAsset(input = {}) {
   const filename = basename(cleanText(input.filename, 180, "动画文件名", true));
@@ -806,6 +867,7 @@ async function createAnimationAsset(input = {}) {
 function deleteAnimationAsset(id) {
   const row = getAnimationAsset(id);
   if (!row) throw new Error("动画不存在");
+  if (bundledAnimationIds.has(id)) throw new Error("内置动画由仓库版本管理，不能从界面删除");
   const candidate = resolve(row.filePath);
   const root = resolve(animationDir);
   const normalized = process.platform === "win32" ? candidate.toLowerCase() : candidate;

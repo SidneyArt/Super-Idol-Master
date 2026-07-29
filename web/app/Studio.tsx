@@ -47,7 +47,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, PointerEvent as ReactPointerEvent, Suspense, UIEvent as ReactUIEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { CSSProperties, DragEvent as ReactDragEvent, FormEvent, KeyboardEvent as ReactKeyboardEvent, lazy, PointerEvent as ReactPointerEvent, Suspense, UIEvent as ReactUIEvent, useCallback, useEffect, useId, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { chatMessagesEqual, isChatNearBottom } from "./chat-scroll";
@@ -962,6 +962,8 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [workflowPreviewOpen, setWorkflowPreviewOpen] = useState(false);
   const [workflowDragging, setWorkflowDragging] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [stageRailCollapsed, setStageRailCollapsed] = useState(false);
+  const [taskMenuRunId, setTaskMenuRunId] = useState<string | null>(null);
   const [agentCollapsed, setAgentCollapsed] = useState(false);
   const [agentWidth, setAgentWidth] = useState(360);
   const [theme, setTheme] = useState<Theme>("dark");
@@ -1034,6 +1036,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const dispatcherNearBottomRef = useRef(true);
   const dispatcherForceScrollRef = useRef(false);
   const notificationCenterRef = useRef<HTMLDivElement | null>(null);
+  const taskMenuRef = useRef<HTMLDivElement | null>(null);
   const agentFileRef = useRef<HTMLInputElement | null>(null);
   const dispatcherFileRef = useRef<HTMLInputElement | null>(null);
   const taskSourceFileRef = useRef<HTMLInputElement | null>(null);
@@ -1068,11 +1071,28 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     setError("");
   }
 
+  useEffect(() => {
+    if (!taskMenuRunId) return;
+    const closeTaskMenu = (event: PointerEvent) => {
+      if (!taskMenuRef.current?.contains(event.target as Node)) setTaskMenuRunId(null);
+    };
+    const closeTaskMenuOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTaskMenuRunId(null);
+    };
+    window.addEventListener("pointerdown", closeTaskMenu);
+    window.addEventListener("keydown", closeTaskMenuOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeTaskMenu);
+      window.removeEventListener("keydown", closeTaskMenuOnEscape);
+    };
+  }, [taskMenuRunId]);
+
   function openTask(runId: string) {
     router.push(`/?task=${encodeURIComponent(runId)}`);
   }
 
   function selectTask(run: Run) {
+    setTaskMenuRunId(null);
     window.history.replaceState(null, "", `/?task=${encodeURIComponent(run.id)}`);
     selectWorkspace(run.workspaceId);
     selectRun(run.id);
@@ -1592,7 +1612,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         : item)
     : stages;
   const stage = activeStages[viewStage];
-  const progress = useMemo(() => Math.round((current / (stages.length - 1)) * 100), [current]);
+  const progress = Math.round((current / (stages.length - 1)) * 100);
   const isCurrentView = viewStage === current;
   const visiblePreview = viewStage > 0 && viewStage < 3
     ? viewStage === 2 && run?.qaOverlayPath ? run.qaOverlayPath : run?.previewPath
@@ -1644,21 +1664,11 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     }
   }
 
-  function resetRun() {
-    if (!run || busy) return;
-    setUiConfirmation({
-      title: `重置“${run.name}”？`,
-      description: "这会清除当前任务的产物引用和流程进度，任务本身及聊天记录会保留。",
-      confirmLabel: "确认重置",
-      tone: "warning",
-      action: () => runAction("reset", "重置失败"),
-    });
-  }
-
-  function deleteRun() {
-    if (!run || busy) return;
-    const runId = run.id;
-    const runName = run.name;
+  function requestDeleteRun(targetRun: Run) {
+    if (busy || targetRun.jobStatus === "running") return;
+    const runId = targetRun.id;
+    const runName = targetRun.name;
+    const deletingSelectedRun = selectedIdRef.current === runId;
     setUiConfirmation({
       title: `删除"${runName}"？`,
       description: "任务、流程进度、Agent 对话和历史记录都会被永久删除。",
@@ -1668,14 +1678,23 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         setBusy(true);
         try {
           await api(`/api/runs/${runId}`, { method: "DELETE" });
-          selectRun(null);
-          setDetail(null);
-          clearTaskConversation();
-          await refreshRuns();
-          setError(`"${runName}" 已删除，即将返回首页…`);
-          setTimeout(() => {
-            if (selectedIdRef.current === null) openHome();
-          }, 2000);
+          setTaskMenuRunId(null);
+          const [runData] = await Promise.all([
+            api<{ runs: Run[] }>("/api/runs"),
+            refreshWorkspaces(targetRun.workspaceId),
+          ]);
+          setRuns(runData.runs);
+          if (deletingSelectedRun) {
+            selectRun(null);
+            setDetail(null);
+            clearTaskConversation();
+            setError(`"${runName}" 已删除，即将返回首页…`);
+            setTimeout(() => {
+              if (selectedIdRef.current === null) openHome();
+            }, 2000);
+          } else {
+            setError(`"${runName}" 已删除。`);
+          }
         } catch (reason) {
           setError(reason instanceof Error ? reason.message : "删除失败");
         } finally {
@@ -3140,23 +3159,60 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             {loading && runs.length === 0 && <p className="empty-note">正在读取任务…</p>}
             {!loading && runs.filter((item) => item.workspaceId === run?.workspaceId).length === 0 && <p className="empty-note">还没有角色任务。</p>}
             {runs.filter((item) => item.workspaceId === run?.workspaceId).map((item) => (
-              <button
+              <div
+                className={`run-item-shell ${item.id === selectedId ? "selected" : ""} ${taskMenuRunId === item.id ? "menu-open" : ""}`}
                 key={item.id}
-                className={`run-item ${item.id === selectedId ? "selected" : ""}`}
-                onClick={() => selectTask(item)}
-                title={sidebarCollapsed ? item.name : undefined}
+                ref={taskMenuRunId === item.id ? taskMenuRef : undefined}
               >
-                <span className={`run-avatar ${item.jobStatus === "running" ? "running" : ""}`}>
-                  {item.jobStatus === "running"
-                    ? <LoaderCircle size={18} aria-hidden="true" />
-                    : item.name.trim().slice(0, 1).toUpperCase() || "R"}
-                </span>
-                <span className="run-copy">
-                  <span className="run-row"><strong>{item.name}</strong><ClientTime value={item.updatedAt} /></span>
-                  <span className="run-meta">{item.jobStatus === "running" ? `${jobName(item.jobType)} 执行中` : stages[item.currentStage].title}</span>
-                  <span className="run-progress"><i style={{ width: `${Math.round((item.currentStage / (stages.length - 1)) * 100)}%` }} /></span>
-                </span>
-              </button>
+                <button
+                  className={`run-item ${item.id === selectedId ? "selected" : ""}`}
+                  onClick={() => selectTask(item)}
+                  title={sidebarCollapsed ? item.name : undefined}
+                >
+                  <span className={`run-avatar ${item.jobStatus === "running" ? "running" : ""}`}>
+                    {item.jobStatus === "running"
+                      ? <LoaderCircle size={18} aria-hidden="true" />
+                      : item.name.trim().slice(0, 1).toUpperCase() || "R"}
+                  </span>
+                  <span className="run-copy">
+                    <span className="run-row"><strong>{item.name}</strong><ClientTime value={item.updatedAt} /></span>
+                    <span className="run-meta">{item.jobStatus === "running" ? `${jobName(item.jobType)} 执行中` : stages[item.currentStage].title}</span>
+                    <span className="run-progress"><i style={{ width: `${Math.round((item.currentStage / (stages.length - 1)) * 100)}%` }} /></span>
+                  </span>
+                </button>
+                {!sidebarCollapsed && (
+                  <div className="run-item-settings">
+                    <button
+                      className="run-item-settings-trigger"
+                      type="button"
+                      aria-label={`设置 ${item.name}`}
+                      aria-expanded={taskMenuRunId === item.id}
+                      aria-haspopup="menu"
+                      onClick={() => setTaskMenuRunId((current) => current === item.id ? null : item.id)}
+                    >
+                      <Settings size={16} />
+                    </button>
+                    {taskMenuRunId === item.id && (
+                      <div className="run-item-settings-menu" role="menu">
+                        <span>任务设置</span>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          disabled={busy || item.jobStatus === "running"}
+                          title={item.jobStatus === "running" ? "任务运行中，暂时无法删除" : "删除当前任务"}
+                          onClick={() => {
+                            setTaskMenuRunId(null);
+                            requestDeleteRun(item);
+                          }}
+                        >
+                          <Trash2 size={15} />
+                          删除任务
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </aside>
@@ -3177,17 +3233,26 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   <h1>{run.name}</h1>
                   <p><span className="pipeline-type-badge">{run.pipelineType === "image_to_model" ? "图生模型" : "文生模型"}</span>更新于 <ClientTime value={run.updatedAt} /> · {progress}% 完成</p>
                 </div>
-                <div className="workspace-actions">
-                  <button className="secondary-button workspace-asset-library-button" type="button" onClick={() => void openAssetLibrary(run.workspaceId)}><Library size={16} />资产库</button>
-                  <button className="icon-button" type="button" onClick={resetRun} disabled={busy || run.jobStatus === "running"} title="重置任务" aria-label="重置任务"><RotateCcw size={17} /></button>
-                  <button className="icon-button danger" type="button" onClick={deleteRun} disabled={busy || run.jobStatus === "running"} title="删除任务" aria-label="删除任务"><Trash2 size={17} /></button>
-                </div>
               </div>
 
-              <div className="production-board">
-                <nav className="stage-rail" aria-label="资产生成阶段">
-                  <div className="stage-rail-header"><span>流程</span><strong>{current + 1} / {stages.length}</strong></div>
-                  <div className="stage-list">
+              <div className={`production-board ${stageRailCollapsed ? "stage-rail-collapsed" : ""}`}>
+                <nav className={`stage-rail ${stageRailCollapsed ? "collapsed" : ""}`} aria-label="资产生成阶段">
+                  <div className="stage-rail-header">
+                    <span>流程</span>
+                    <small title={activeStages[current]?.title}>{activeStages[current]?.title || "角色资产生成"}</small>
+                    <strong>{current + 1} / {stages.length}</strong>
+                    <button
+                      className="stage-rail-toggle"
+                      type="button"
+                      onClick={() => setStageRailCollapsed((value) => !value)}
+                      title={stageRailCollapsed ? "展开任务流程" : "收起任务流程"}
+                      aria-label={stageRailCollapsed ? "展开任务流程" : "收起任务流程"}
+                      aria-expanded={!stageRailCollapsed}
+                    >
+                      {stageRailCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
+                    </button>
+                  </div>
+                  {!stageRailCollapsed && <div className="stage-list">
                     {activeStages.map((item, index) => {
                       const state = index < current || (index === current && run.status === "completed") ? "done" : index === current ? "active" : "pending";
                       let stateLabel = state === "done" ? "已完成" : state === "active" ? "当前" : "待处理";
@@ -3219,7 +3284,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                         </div>
                       );
                     })}
-                  </div>
+                  </div>}
                 </nav>
 
                 <div className="asset-column">
