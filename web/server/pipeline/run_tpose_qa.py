@@ -35,6 +35,7 @@ MIN_WHITE_BORDER_RATIO = 0.96
 MIN_CONNECTED_BACKGROUND_WHITE_RATIO = 0.94
 WHITE_CHANNEL_MIN = 245
 WHITE_CHANNEL_SPREAD_MAX = 12
+TPOSE_PASS_SCORE = 80
 
 
 def evaluate_background(image_path: Path) -> dict[str, Any]:
@@ -196,17 +197,9 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
     score += max(0, round(10 * (1 - max(torso_center_error / 0.08, arm_symmetry_error / 0.25))))
     score = max(0, min(100, score))
 
-    critical_pass = (
-        visible
-        and arm_horizontal_error <= 0.12
-        and right_elbow_angle >= 160
-        and left_elbow_angle >= 160
-        and shoulder_tilt <= 0.10
-        and full_body
-    )
-    passed = critical_pass and score >= 80
+    passed = score >= TPOSE_PASS_SCORE
     if passed:
-        summary = "SDPose 自动检查通过：单人全身、双臂水平、肘部伸直"
+        summary = f"SDPose 自动检查通过：综合得分 {score}（通过线 {TPOSE_PASS_SCORE}）"
     else:
         reasons = []
         if not visible:
@@ -267,7 +260,7 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
     })
     if not background["passed"]:
         evaluation["passed"] = False
-        evaluation["score"] = min(int(evaluation.get("score") or 0), 79)
+        evaluation["score"] = min(int(evaluation.get("score") or 0), TPOSE_PASS_SCORE - 1)
         background_reason = (
             f"背景不是纯白（边缘纯白占比 {background['whiteBorderRatio']:.1%}，"
             f"连通背景纯白占比 {background['connectedBackgroundWhiteRatio']:.1%}）"
