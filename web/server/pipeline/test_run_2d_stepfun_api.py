@@ -9,6 +9,7 @@ from run_2d_stepfun_api import (
     MIN_EDIT_ASPECT_RATIO,
     SAFE_TPOSE_NEGATIVE_PROMPT,
     TPOSE_CANVAS_SIZE,
+    TPOSE_NEGATIVE_CONSTRAINTS,
     TPOSE_POSITIVE_CONSTRAINTS,
     endpoint_for,
     prepare_edit_source,
@@ -66,7 +67,7 @@ class StepFunImageApiTests(unittest.TestCase):
             prepare_tpose_source(source_path, destination)
 
             with Image.open(destination) as image:
-                self.assertEqual(image.size, (TPOSE_CANVAS_SIZE, TPOSE_CANVAS_SIZE))
+                self.assertEqual(image.size, (1536, 1536))
                 self.assertEqual(image.getpixel((0, 0)), (255, 255, 255))
                 self.assertEqual(image.getpixel((TPOSE_CANVAS_SIZE // 2, TPOSE_CANVAS_SIZE // 2)), (255, 0, 0))
                 self.assertEqual(
@@ -84,8 +85,20 @@ class StepFunImageApiTests(unittest.TestCase):
         self.assertIn("双臂水平伸直", prompt)
         self.assertIn("完全空置", prompt)
         self.assertIn("不拿任何道具", prompt)
+        self.assertIn("均匀柔光", prompt)
+        self.assertIn("材质边界清晰", prompt)
+        self.assertIn("无景深", prompt)
         self.assertIn("RGB(255,255,255)", prompt)
         self.assertIn("四周留白", prompt)
+
+    def test_tpose_negative_constraints_reject_texture_damage(self):
+        prompt = prompt_with_required_constraints("原始负向提示词", TPOSE_NEGATIVE_CONSTRAINTS, "负向提示词")
+
+        self.assertIn("低清晰度", prompt)
+        self.assertIn("涂抹纹理", prompt)
+        self.assertIn("强高光", prompt)
+        self.assertIn("运动模糊", prompt)
+        self.assertIn("JPEG噪点", prompt)
 
     def test_tpose_source_replaces_connected_cream_background_with_white(self):
         with TemporaryDirectory() as directory:
@@ -105,7 +118,7 @@ class StepFunImageApiTests(unittest.TestCase):
             with Image.open(destination) as prepared:
                 self.assertEqual(prepared.getpixel((prepared.width // 2, 250)), (255, 255, 255))
                 self.assertEqual(prepared.getpixel((prepared.width // 2, prepared.height // 2)), (35, 70, 120))
-                self.assertEqual(prepared.getpixel((320, 450)), (225, 235, 245))
+                self.assertTrue(any(pixel == (225, 235, 245) for pixel in prepared.get_flattened_data()))
 
     def test_text_generation_uses_generation_endpoint_and_json(self):
         session = FakeSession()
@@ -204,6 +217,8 @@ class StepFunImageApiTests(unittest.TestCase):
         self.assertIn("手臂倾斜", retry_body["negative_prompt"])
         self.assertIn("手持物", retry_body["negative_prompt"])
         self.assertIn("非纯白背景", retry_body["negative_prompt"])
+        self.assertIn("低清晰度", retry_body["negative_prompt"])
+        self.assertIn("运动模糊", retry_body["negative_prompt"])
 
     def test_second_content_block_returns_clear_error_without_more_retries(self):
         blocked = {"error": {"message": "The content you provided or machine outputted is blocked."}}

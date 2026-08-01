@@ -1038,8 +1038,8 @@
   },
   "305": {
     "inputs": {
-      "width": 1024,
-      "height": 1024,
+      "width": 1536,
+      "height": 1536,
       "pad_factor": 1.1,
       "mask_offset": 0,
       "background": "#000000",
