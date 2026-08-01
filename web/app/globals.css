@@ -2826,7 +2826,7 @@ body {
 
 .screen-home .home-frame {
   position: relative;
-  background-color: #000;
+  background-color: transparent;
   background-image: none;
 }
 
@@ -2836,7 +2836,7 @@ body {
   z-index: 0;
   inset: 0;
   pointer-events: none;
-  background-color: #000;
+  background-color: transparent;
   background-image: url("/super-idol-master-background.png");
   background-repeat: no-repeat;
   background-position: 6% clamp(56px, 8vh, 116px);

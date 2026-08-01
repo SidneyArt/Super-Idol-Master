@@ -284,19 +284,6 @@ export default function LiquidWaveBackground({ theme, animated }: LiquidWaveBack
       }
       context.restore();
 
-      const vignette = context.createRadialGradient(
-        width * 0.58,
-        height * 0.57,
-        Math.min(width, height) * 0.1,
-        width * 0.58,
-        height * 0.57,
-        Math.max(width, height) * 0.8,
-      );
-      vignette.addColorStop(0, "rgba(0,0,0,0)");
-      vignette.addColorStop(1, theme === "dark" ? "rgba(0,0,0,.55)" : "rgba(60,75,103,.055)");
-      context.fillStyle = vignette;
-      context.fillRect(0, 0, width, height);
-
       if (animated && !reducedMotion.matches) animationFrame = window.requestAnimationFrame(draw);
     }
 
