@@ -236,7 +236,7 @@ QT_QPA_PLATFORM=xcb
 
 `TOPOLOGY_PREPROCESS_VOXEL_RESOLUTION` 控制临时网格的体素重建精度，默认值为 `256`。该步骤把重复半边、孔洞和非流形结构转换为较规则的临时表面，是规避原生崩溃的主要措施。设置为 `0` 会关闭体素重建，不建议用于未经验证的生成模型。
 
-`TOPOLOGY_PREPROCESS_MAX_FACES` 只限制送入 AutoRemesher 的临时 OBJ，默认上限为 150,000。原始 GLB 不会被覆盖，纹理回烘仍读取原始 GLB。
+`TOPOLOGY_PREPROCESS_MAX_FACES` 只限制送入 AutoRemesher 的临时 OBJ，默认上限为 150,000；该数值按 OBJ 中实际导出的三角面计数。原始 GLB 不会被覆盖，纹理回烘仍读取原始 GLB。
 
 `TOPOLOGY_PREPROCESS_MERGE_DISTANCE_RATIO` 按模型包围盒对角线计算近邻点合并阈值。默认值只用于清理几乎完全重合的顶点，不应将其当作减面强度参数。
 
@@ -479,7 +479,36 @@ sudo bash install.sh --service-only
 
 已有的 `/etc/autoremesher-api.env` 会保留其他运行参数；旧版留下的 `TOPOLOGY_SERVICE_TOKEN` 会在升级时删除。
 
-### 10.2 Qt 样式文本后出现 `double free or corruption`
+### 10.2 上传阶段返回空 `HTTP 502`
+
+`urllib3` 的 `NotOpenSSLWarning` 不是 502 的根因；它说明调用方绕过了项目的 Python 3.12 虚拟环境。先在调用方执行：
+
+```bash
+cd web
+npm run python:check
+```
+
+如果该检查成功，停止旧的本地后端并用 `npm run local` 重新启动。不要把 `PYTHON_COMMAND` 指向 macOS 系统 Python 3.9。
+
+拓扑客户端会绕过桌面 HTTP 代理，并对 `502`、`503`、`504` 最多重试三次。如果仍然失败，直接检查私网服务，不要继续调整 `urllib3`：
+
+```bash
+curl --noproxy "*" --max-time 5 http://100.120.236.113:8190/healthz
+```
+
+如果 Tailscale 节点可达但该命令超时，在 DGX 上恢复并验证服务：
+
+```bash
+sudo systemctl restart autoremesher-api
+sudo systemctl status autoremesher-api --no-pager
+sudo journalctl -u autoremesher-api -n 100 --no-pager
+ss -ltn 'sport = :8190'
+curl --fail-with-body http://127.0.0.1:8190/healthz
+```
+
+健康检查返回 `ready: true` 后，再从页面重试自动拓扑。
+
+### 10.3 Qt 样式文本后出现 `double free or corruption`
 
 如果任务错误中出现 `QComboBox`、`QPushButton` 等样式文本，并在 DGX 日志中看到以下内容：
 
@@ -518,7 +547,7 @@ bash api-regression-test.sh \
   /tmp/api-retopologized.glb
 ```
 
-### 10.3 DGX Spark 实测记录
+### 10.4 DGX Spark 实测记录
 
 2026-07-22 已在 DGX Spark AArch64 环境完成以下验证：
 

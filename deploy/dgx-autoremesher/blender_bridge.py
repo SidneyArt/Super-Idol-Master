@@ -96,13 +96,29 @@ def prepare_for_remesher(
         mesh.update()
         voxel_faces = len(mesh.polygons)
 
-    if max_faces > 0 and voxel_faces > max_faces:
+    # AutoRemesher consumes OBJ triangles.  Voxel Remesh normally produces quads,
+    # so applying a ratio to the pre-triangulation polygon count can send roughly
+    # twice the configured face limit to the native process.  Triangulate first so
+    # max_faces describes the actual faces written to source.obj.
+    editable = bmesh.new()
+    editable.from_mesh(mesh)
+    if editable.faces:
+        bmesh.ops.triangulate(editable, faces=list(editable.faces))
+    editable.to_mesh(mesh)
+    editable.free()
+    mesh.validate(verbose=False, clean_customdata=False)
+    mesh.update()
+    triangulated_faces = len(mesh.polygons)
+
+    current_faces = triangulated_faces
+    if max_faces > 0 and current_faces > max_faces:
         modifier = target.modifiers.new(name="AutoRemesherInputLimit", type="DECIMATE")
         modifier.decimate_type = "COLLAPSE"
-        modifier.ratio = max_faces / voxel_faces
+        modifier.ratio = max_faces / current_faces
         modifier.use_collapse_triangulate = True
         select_only([target], target)
         bpy.ops.object.modifier_apply(modifier=modifier.name)
+        mesh = target.data
         mesh.validate(verbose=False, clean_customdata=False)
         mesh.update()
 
@@ -110,12 +126,17 @@ def prepare_for_remesher(
     print(
         f"[topology] preprocess input_faces={input_faces} "
         f"cleaned_faces={cleaned_faces} voxel_faces={voxel_faces} "
+        f"triangulated_faces={triangulated_faces} "
         f"output_faces={output_faces} max_faces={max_faces} "
         f"voxel_resolution={voxel_resolution}",
         flush=True,
     )
     if output_faces == 0:
         raise RuntimeError("Mesh preprocessing removed every face")
+    if max_faces > 0 and output_faces > max_faces:
+        raise RuntimeError(
+            f"Mesh preprocessing exceeded face limit: {output_faces} > {max_faces}"
+        )
     return input_faces, output_faces
 
 

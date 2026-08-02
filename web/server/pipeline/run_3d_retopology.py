@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -16,6 +17,8 @@ import requests
 DEFAULT_TIMEOUT = 60 * 60
 DEFAULT_TARGET_QUADS = 50_000
 MAX_RESPONSE_BYTES = 512 * 1024 * 1024
+MAX_REQUEST_ATTEMPTS = 3
+RETRYABLE_HTTP_STATUSES = frozenset({502, 503, 504})
 
 
 def service_endpoint(base_url: str) -> str:
@@ -44,6 +47,19 @@ def response_error_detail(response: requests.Response) -> str:
     return response.text[:2_000].strip()
 
 
+def topology_session() -> requests.Session:
+    session = requests.Session()
+    # The topology API normally lives on Tailscale or an SSH loopback tunnel.
+    # A desktop/corporate proxy cannot route those addresses and commonly
+    # answers with an empty 502 instead of reaching the DGX service.
+    session.trust_env = False
+    return session
+
+
+def retry_delay(attempt: int) -> int:
+    return 2 ** (attempt - 1)
+
+
 def run_retopology(
     mesh: Path,
     service_url: str,
@@ -69,29 +85,48 @@ def run_retopology(
         headers["Authorization"] = f"Bearer {token}"
 
     print("[topology] progress=10 message=uploading_glb", file=sys.stderr, flush=True)
-    with mesh.open("rb") as source:
-        response = requests.post(
-            service_endpoint(service_url),
-            params={"target_quads": target_quads},
-            data=source,
-            headers=headers,
-            timeout=(30, timeout),
-            stream=True,
-        )
-    if not response.ok:
-        detail = response_error_detail(response)
-        raise RuntimeError(f"Topology service returned HTTP {response.status_code}: {detail}")
+    session = topology_session()
+    try:
+        response: requests.Response | None = None
+        for attempt in range(1, MAX_REQUEST_ATTEMPTS + 1):
+            with mesh.open("rb") as source:
+                response = session.post(
+                    service_endpoint(service_url),
+                    params={"target_quads": target_quads},
+                    data=source,
+                    headers=headers,
+                    timeout=(30, timeout),
+                    stream=True,
+                )
+            if response.ok:
+                break
+            detail = response_error_detail(response) or (
+                "empty response; verify the topology /healthz endpoint and the Tailscale/SSH route"
+            )
+            if response.status_code not in RETRYABLE_HTTP_STATUSES or attempt == MAX_REQUEST_ATTEMPTS:
+                raise RuntimeError(f"Topology service returned HTTP {response.status_code}: {detail}")
+            response.close()
+            delay = retry_delay(attempt)
+            print(
+                f"[topology] retry={attempt} delay={delay} reason=http_{response.status_code}",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(delay)
 
-    print("[topology] progress=85 message=downloading_glb", file=sys.stderr, flush=True)
-    received = 0
-    with output_path.open("wb") as target:
-        for chunk in response.iter_content(1024 * 1024):
-            if not chunk:
-                continue
-            received += len(chunk)
-            if received > MAX_RESPONSE_BYTES:
-                raise RuntimeError("Topology service response exceeds 512 MB")
-            target.write(chunk)
+        assert response is not None
+        print("[topology] progress=85 message=downloading_glb", file=sys.stderr, flush=True)
+        received = 0
+        with output_path.open("wb") as target:
+            for chunk in response.iter_content(1024 * 1024):
+                if not chunk:
+                    continue
+                received += len(chunk)
+                if received > MAX_RESPONSE_BYTES:
+                    raise RuntimeError("Topology service response exceeds 512 MB")
+                target.write(chunk)
+    finally:
+        session.close()
     validate_glb(output_path)
     print("[topology] progress=95 message=validating_glb", file=sys.stderr, flush=True)
     return output_path
