@@ -23,3 +23,10 @@ test("2D image API start message includes the configured model", () => {
     "正在调用图片 API step-image-edit-2 生成 2D 概念图",
   );
 });
+
+test("QA model repair message states that the image-edit model is repairing the failed T-Pose", () => {
+  assert.equal(
+    jobStartMessage("2d", { mode: "api", repairMode: true, api: { model: "step-image-edit-2" } }),
+    "正在调用图片编辑模型 step-image-edit-2 修复失败的 T-Pose",
+  );
+});

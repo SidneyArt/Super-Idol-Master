@@ -73,15 +73,31 @@ export function normalizePromptPlan(report, candidate) {
 }
 
 export function buildQaRepairPrompts(run, failureReason, attempt) {
-  void failureReason;
-  void attempt;
+  const reason = String(failureReason || "");
   const positiveBase = identityPromptOnly(run.positivePrompt);
   const negativeBase = uniquePromptTerms(stripGeneratedTposePolicy(run.negativePrompt))
     .filter((item) => !REQUIRED_TPOSE_NEGATIVE_SUFFIX.includes(item))
     .join("，");
+  const positiveRepairs = [];
+  const negativeRepairs = [];
+  if (/(?:背景不是纯白|backgroundPassed[^a-z]*false|whiteBorderRatio|connectedBackgroundWhiteRatio|灰色|米白|暖白|渐变|阴影)/i.test(reason)) {
+    positiveRepairs.push("主体外区域必须为均匀纯白 RGB(255,255,255)，角色轮廓外不得保留灰边、渐变、地面或投影");
+    negativeRepairs.push("灰色渐变，暖白背景，柔光阴影，接地阴影，地面投影，背景纹理");
+  }
+  if (/(?:双臂不够水平|armHorizontalError|手臂倾斜|手腕)/i.test(reason)) {
+    positiveRepairs.push("双侧手腕与肩同高，肩、肘、腕位于同一水平线，左右手臂完全对称");
+    negativeRepairs.push("手腕高于肩膀，手腕低于肩膀，不对称手臂");
+  }
+  if (/(?:未识别到完整全身|bodyCoverage|裁切|头顶|脚底)/i.test(reason)) {
+    const coverage = Number(attempt) >= 2 ? "70% 至 82%" : "65% 至 80%";
+    positiveRepairs.push(`角色占画布高度 ${coverage}，头顶、双手和脚底完整可见并保留窄幅留白`);
+    negativeRepairs.push("角色过小，留白过多，头顶裁切，脚底裁切，手部出框");
+  }
+  const positiveSuffix = [REQUIRED_TPOSE_SUFFIX, ...positiveRepairs].join("，");
+  const negativeSuffix = [REQUIRED_TPOSE_NEGATIVE_SUFFIX, ...negativeRepairs].join("，");
   return {
-    positivePrompt: withRequiredSuffix(positiveBase, REQUIRED_TPOSE_SUFFIX, MAX_SAVED_POSITIVE_PROMPT),
-    negativePrompt: withRequiredSuffix(negativeBase, REQUIRED_TPOSE_NEGATIVE_SUFFIX, MAX_SAVED_NEGATIVE_PROMPT),
+    positivePrompt: withRequiredSuffix(positiveBase, positiveSuffix, MAX_SAVED_POSITIVE_PROMPT),
+    negativePrompt: withRequiredSuffix(negativeBase, negativeSuffix, MAX_SAVED_NEGATIVE_PROMPT),
   };
 }
 

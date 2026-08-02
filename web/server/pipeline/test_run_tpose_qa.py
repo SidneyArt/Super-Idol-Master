@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from run_tpose_qa import evaluate_background, evaluate_pose
 
@@ -20,6 +20,19 @@ def pose_payload(*, wrist_drop=0):
         "canvas_height": 1000,
         "people": [{"pose_keypoints_2d": [value for point in points for value in point]}],
     }]
+
+
+def draw_white_cow(image):
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((55, 190, 457, 235), fill=(235, 235, 230))
+    draw.ellipse((145, 80, 367, 470), fill=(225, 223, 216))
+    draw.ellipse((210, 115, 302, 220), fill=(70, 55, 48))
+    draw.rectangle((55, 190, 105, 235), fill=(25, 25, 23))
+    draw.rectangle((407, 190, 457, 235), fill=(25, 25, 23))
+    draw.ellipse((170, 250, 230, 330), fill=(30, 30, 28))
+    draw.ellipse((285, 335, 345, 420), fill=(35, 35, 32))
+    draw.rectangle((175, 430, 225, 475), fill=(20, 20, 18))
+    draw.rectangle((287, 430, 337, 475), fill=(20, 20, 18))
 
 
 class TposeBackgroundQaTests(unittest.TestCase):
@@ -65,6 +78,35 @@ class TposeBackgroundQaTests(unittest.TestCase):
             self.assertEqual(result["whiteBorderRatio"], 1.0)
             self.assertLess(result["connectedBackgroundWhiteRatio"], 0.94)
 
+    def test_white_character_shading_is_not_counted_as_background(self):
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "white-cow.png"
+            image = Image.new("RGB", (512, 512), (255, 255, 255))
+            # The light arms visually meet the white background. Dark hands,
+            # feet, face, and spots provide reliable foreground anchors.
+            draw_white_cow(image)
+            image.save(image_path)
+
+            result = evaluate_background(image_path)
+
+            self.assertTrue(result["passed"])
+            self.assertTrue(result["foregroundMaskApplied"])
+            self.assertGreaterEqual(result["connectedBackgroundWhiteRatio"], 0.94)
+
+    def test_foreground_mask_does_not_hide_cream_background(self):
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "cow-on-cream.png"
+            image = Image.new("RGB", (512, 512), (255, 255, 255))
+            ImageDraw.Draw(image).rectangle((48, 48, 464, 464), fill=(248, 242, 226))
+            draw_white_cow(image)
+            image.save(image_path)
+
+            result = evaluate_background(image_path)
+
+            self.assertFalse(result["passed"])
+            self.assertTrue(result["foregroundMaskApplied"])
+            self.assertLess(result["connectedBackgroundWhiteRatio"], 0.94)
+
 
 class TposePoseQaTests(unittest.TestCase):
     def test_strict_horizontal_tpose_passes(self):
@@ -78,7 +120,27 @@ class TposePoseQaTests(unittest.TestCase):
 
         self.assertFalse(result["passed"])
         self.assertIn("双臂不够水平", result["summary"])
-        self.assertGreater(result["metrics"]["armHorizontalError"], 0.12)
+        self.assertGreater(result["metrics"]["armHorizontalError"], 0.19)
+
+    def test_complete_stylized_character_does_not_need_human_body_coverage(self):
+        points = [
+            (500, 350, 0.99), (500, 420, 0.99),
+            (450, 460, 0.99), (320, 460, 0.99), (180, 460, 0.99),
+            (550, 460, 0.99), (680, 460, 0.99), (820, 460, 0.99),
+            (460, 650, 0.99), (460, 760, 0.99), (460, 840, 0.99),
+            (540, 650, 0.99), (540, 760, 0.99), (540, 840, 0.99),
+        ]
+        payload = [{
+            "canvas_width": 1000,
+            "canvas_height": 1000,
+            "people": [{"pose_keypoints_2d": [value for point in points for value in point]}],
+        }]
+
+        result = evaluate_pose(payload)
+
+        self.assertTrue(result["passed"])
+        self.assertLess(result["metrics"]["bodyCoverage"], 0.55)
+        self.assertTrue(result["metrics"]["fullBody"])
 
 
 if __name__ == "__main__":

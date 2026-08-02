@@ -72,6 +72,7 @@ const scripts = {
   topology: join(pipelineDir, "run_3d_retopology.py"),
   rig: join(pipelineDir, "run_3d_skinning.py"),
   crop: join(pipelineDir, "crop_character_sheet.py"),
+  "tpose-repair": join(pipelineDir, "repair_tpose_image.py"),
 };
 const workflowFiles = {
   "2d": join(pipelineDir, "2D_Gen_QwenImage2512.json"),
@@ -568,11 +569,21 @@ function advanceRun(runId, reason = "用户确认当前阶段产物") {
   return runDetail(runId);
 }
 
-function updateRunPrompts(runId, { positivePrompt, negativePrompt, reason = "Agent 更新角色提示词" }) {
+function updateRunPrompts(runId, {
+  positivePrompt,
+  negativePrompt,
+  reason = "Agent 更新角色提示词",
+  preserveFailedTpose = false,
+}) {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
   if (activeJobs.has(runId) || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能修改提示词");
-  if (run.currentStage > 1) throw new Error("已有下游资产，请先回退到概念图生成阶段再修改提示词");
+  const preservesRepairSource = preserveFailedTpose
+    && run.currentStage === 2
+    && run.qaStatus === "failed"
+    && run.imagePathInternal
+    && existsSync(run.imagePathInternal);
+  if (run.currentStage > 1 && !preservesRepairSource) throw new Error("已有下游资产，请先回退到概念图生成阶段再修改提示词");
   if (positivePrompt === undefined && negativePrompt === undefined) throw new Error("至少需要更新一项提示词");
 
   const nextPositive = cleanText(positivePrompt ?? run.positivePrompt, 4000, "正向提示词", true);
@@ -628,10 +639,10 @@ function advanceWorkflow(runId, reason = "用户确认当前阶段产物") {
 }
 
 function runStageJob(runId, action) {
-  const jobTypes = { generate_2d: "2d", check_tpose: "qa", generate_3d: "3d", retopologize: "topology", rig: "rig" };
+  const jobTypes = { generate_2d: "2d", repair_2d: "2d", check_tpose: "qa", generate_3d: "3d", retopologize: "topology", rig: "rig" };
   const jobType = jobTypes[action];
   if (!jobType) throw new Error("未知阶段任务");
-  return startJob(runId, jobType);
+  return startJob(runId, jobType, { repairMode: action === "repair_2d" });
 }
 
 function json(res, status, body) {
@@ -944,6 +955,61 @@ function safeOutputPath(value, expected = "any") {
   return candidate;
 }
 
+function repairTposeImage(runId, context = {}) {
+  const run = getRunRow(runId);
+  if (!run) throw new Error("任务不存在");
+  if (run.currentStage !== 2 || run.qaStatus !== "failed") throw new Error("只有失败的 T-Pose 质检可以执行确定性修复");
+  if (!run.imagePathInternal || !existsSync(run.imagePathInternal)) throw new Error("失败的 T-Pose 图片不存在");
+  const metrics = serializeRun(run).qaMetrics;
+  const child = spawnSync(PYTHON_COMMAND, [
+    scripts["tpose-repair"],
+    run.imagePathInternal,
+    "--metrics-json", JSON.stringify(metrics),
+    "--output-root", outputRoot,
+  ], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 30_000,
+    env: { ...process.env, PYTHONUTF8: "1" },
+  });
+  if (child.error) throw child.error;
+  if (child.status !== 0) throw new Error((child.stderr || "确定性 T-Pose 修复失败").trim().slice(-1200));
+  const line = child.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean).at(-1);
+  const result = JSON.parse(line || "{}");
+  if (result.applied !== true) return result;
+
+  const source = safeOutputPath(result.outputPath, "file");
+  const suffix = extname(source).toLowerCase() || ".png";
+  const filename = `${runId}${suffix}`;
+  copyFileSync(source, join(generatedDir, filename));
+  const previewPath = `/generated/${filename}?v=${Date.now()}`;
+  const now = new Date().toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`
+      UPDATE runs SET current_stage = 2, status = 'active', qa_status = 'pending',
+        job_type = 'none', generation_status = 'idle', generation_message = '确定性 T-Pose 修复完成，等待重新质检',
+        generation_progress = 100, generation_prompt_id = NULL, generation_current_node = NULL,
+        preview_path = ?, image_path = ?, model_path = NULL, topology_path = NULL, rigged_model_path = NULL,
+        qa_score = NULL, qa_summary = '', qa_metrics = '{}', qa_overlay_path = NULL, updated_at = ?
+      WHERE id = ?
+    `).run(previewPath, source, now, runId);
+    addEvent(
+      runId,
+      "qa_deterministic_repair_applied",
+      2,
+      `第 ${Number(context.attempt) || 1} 轮确定性修复：${Array.isArray(result.actions) ? result.actions.join("、") : result.strategy}`,
+      now,
+    );
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return { ...result, outputPath: source, previewPath };
+}
+
 function findLatestGlb(value) {
   const rootPath = safeOutputPath(value);
   if (statSync(rootPath).isFile()) {
@@ -1185,7 +1251,11 @@ function launchJob(run, jobType, processConfig, lease) {
   const usesTopologyApi = jobType === "topology";
   const workflowPath = usesImageApi || usesTopologyApi ? null : join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
   if (workflowPath) writeFileSync(workflowPath, JSON.stringify(processConfig.workflow), "utf8");
-  const sourceImage = run.pipelineType === "image_to_model" ? run.sourceImagePathInternal : run.imagePathInternal;
+  const sourceImage = processConfig.repairMode
+    ? run.imagePathInternal
+    : run.pipelineType === "image_to_model"
+      ? run.sourceImagePathInternal
+      : run.imagePathInternal;
   const args = usesImageApi
     ? [
         scripts["2d-api"],
@@ -1194,7 +1264,7 @@ function launchJob(run, jobType, processConfig, lease) {
         "--base-url", processConfig.api.baseUrl,
         "--model", processConfig.api.model,
         ...(sourceImage && existsSync(sourceImage) ? ["--source-image", sourceImage] : []),
-        ...(run.pipelineType === "image_to_model" ? ["--tpose-output"] : []),
+        ...(run.pipelineType === "image_to_model" || processConfig.repairMode ? ["--tpose-output"] : []),
       ]
     : usesTopologyApi
       ? [
@@ -1275,21 +1345,30 @@ function launchJob(run, jobType, processConfig, lease) {
         const completion = completeJob(run.id, jobType, stdout, {
           imageProvider: usesImageApi ? `图片 API ${processConfig.api.model}` : "DGX Qwen Image",
         });
-        void assetAgent.handleJobCompleted(completion).catch((error) => {
-          console.error(`[Agent] ${jobType} completion hook failed:`, error);
+        // The scheduler ID is released in finally. Deferring the Agent hook by
+        // one microtask prevents an automatic next stage from reusing the same
+        // run ID while the completed lease is still registered.
+        queueMicrotask(() => {
+          void assetAgent.handleJobCompleted(completion).catch((error) => {
+            console.error(`[Agent] ${jobType} completion hook failed:`, error);
+          });
         });
       } else {
         const message = errorMessage || stderr || `Python 退出代码非零`;
         failJob(run.id, jobType, message);
-        void assetAgent.handleJobFailed({ runId: run.id, jobType, message: message.trim().slice(-1200) }).catch((error) => {
-          console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, error);
+        queueMicrotask(() => {
+          void assetAgent.handleJobFailed({ runId: run.id, jobType, message: message.trim().slice(-1200) }).catch((error) => {
+            console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, error);
+          });
         });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "任务结果处理失败";
       failJob(run.id, jobType, message);
-      void assetAgent.handleJobFailed({ runId: run.id, jobType, message }).catch((diagnosisError) => {
-        console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, diagnosisError);
+      queueMicrotask(() => {
+        void assetAgent.handleJobFailed({ runId: run.id, jobType, message }).catch((diagnosisError) => {
+          console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, diagnosisError);
+        });
       });
     } finally {
       lease.release();
@@ -1306,7 +1385,7 @@ function launchJob(run, jobType, processConfig, lease) {
   };
 }
 
-function startJob(runId, jobType) {
+function startJob(runId, jobType, options = {}) {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
   if (run.jobStatus === "running") throw new Error("当前任务仍在执行");
@@ -1326,7 +1405,12 @@ function startJob(runId, jobType) {
     : settingsStore.processConfig(jobType);
   if (jobType === "topology" && !processConfig.url) throw new Error("拓扑 API 未配置，请在“请求设置 → 拓扑 API”中填写服务地址");
   if (jobType === "topology" && (!Number.isInteger(processConfig.targetQuads) || processConfig.targetQuads < 1_000 || processConfig.targetQuads > 1_000_000)) throw new Error("TOPOLOGY_TARGET_QUADS 必须在 1,000 到 1,000,000 之间");
-  if (jobType === "2d" && run.pipelineType === "image_to_model") {
+  if (jobType === "2d" && options.repairMode) {
+    processConfig = { mode: "api", repairMode: true, api: settingsStore.imageConfig("image_to_model") };
+    if (!run.imagePathInternal || !existsSync(run.imagePathInternal)) {
+      throw new Error("图片编辑修复缺少失败的 T-Pose 输入图");
+    }
+  } else if (jobType === "2d" && run.pipelineType === "image_to_model") {
     processConfig = { ...processConfig, mode: "api", api: settingsStore.imageConfig("image_to_model") };
     if (!run.sourceImagePathInternal || !existsSync(run.sourceImagePathInternal)) {
       throw new Error("图生模型工作流缺少角色原画");
@@ -1782,6 +1866,7 @@ const assetAgent = createAssetAgentRuntime({
   updatePrompts: updateRunPrompts,
   advanceWorkflow,
   revertWorkflow: revertRun,
+  repairTposeImage,
   runStageJob,
   getAgentConfig: settingsStore.agentConfig,
   getRunImagePath: (runId) => getRunRow(runId)?.imagePathInternal || null,

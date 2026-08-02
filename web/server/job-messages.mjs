@@ -1,5 +1,8 @@
 export function jobStartMessage(jobType, processConfig) {
   if (jobType === "2d") {
+    if (processConfig.repairMode) {
+      return `正在调用图片编辑模型 ${processConfig.api.model} 修复失败的 T-Pose`;
+    }
     return processConfig.mode === "api"
       ? `正在调用图片 API ${processConfig.api.model} 生成 2D 概念图`
       : "正在调用 DGX Qwen Image 生成 2D 概念图";

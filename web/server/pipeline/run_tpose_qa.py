@@ -35,6 +35,13 @@ MIN_WHITE_BORDER_RATIO = 0.96
 MIN_CONNECTED_BACKGROUND_WHITE_RATIO = 0.94
 WHITE_CHANNEL_MIN = 245
 WHITE_CHANNEL_SPREAD_MAX = 12
+MIN_BODY_COVERAGE = 0.42
+MAX_ARM_HORIZONTAL_ERROR = 0.19
+KEYPOINT_CANVAS_MARGIN = 0.01
+FOREGROUND_MASK_PADDING = 0.015
+MIN_FOREGROUND_ANCHOR_RATIO = 0.002
+MAX_FOREGROUND_ANCHOR_RATIO = 0.45
+MAX_FOREGROUND_BOX_RATIO = 0.75
 
 
 def evaluate_background(image_path: Path) -> dict[str, Any]:
@@ -66,9 +73,53 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
         def is_light_neutral(red: int, green: int, blue: int) -> bool:
             return min(red, green, blue) >= 180 and max(red, green, blue) - min(red, green, blue) <= 55
 
+        # Build a conservative foreground envelope from strongly non-background
+        # pixels. White fur and clothing can be edge-connected to a white canvas;
+        # excluding the anchored character prevents their shading from lowering
+        # the measured background purity. If anchors reach the canvas edge or
+        # cover most of the image, the scene is not safely separable and no mask
+        # is applied, so colored/complex backgrounds still fail closed.
+        anchor_count = 0
+        anchor_left, anchor_top = width, height
+        anchor_right = anchor_bottom = -1
+        for y in range(height):
+            for x in range(width):
+                if not is_light_neutral(*pixels[x, y]):
+                    anchor_count += 1
+                    anchor_left = min(anchor_left, x)
+                    anchor_top = min(anchor_top, y)
+                    anchor_right = max(anchor_right, x)
+                    anchor_bottom = max(anchor_bottom, y)
+        anchor_ratio = anchor_count / max(width * height, 1)
+        foreground_bounds: tuple[int, int, int, int] | None = None
+        if anchor_count and MIN_FOREGROUND_ANCHOR_RATIO <= anchor_ratio <= MAX_FOREGROUND_ANCHOR_RATIO:
+            left, top, right, bottom = anchor_left, anchor_top, anchor_right, anchor_bottom
+            minimum_margin = max(2, round(min(width, height) * KEYPOINT_CANVAS_MARGIN))
+            box_ratio = ((right - left + 1) * (bottom - top + 1)) / max(width * height, 1)
+            safely_inside_canvas = (
+                left >= minimum_margin
+                and top >= minimum_margin
+                and right < width - minimum_margin
+                and bottom < height - minimum_margin
+            )
+            if safely_inside_canvas and box_ratio <= MAX_FOREGROUND_BOX_RATIO:
+                padding = max(2, round(min(width, height) * FOREGROUND_MASK_PADDING))
+                foreground_bounds = (
+                    max(0, left - padding),
+                    max(0, top - padding),
+                    min(width - 1, right + padding),
+                    min(height - 1, bottom + padding),
+                )
+
+        def is_foreground(x: int, y: int) -> bool:
+            if foreground_bounds is None:
+                return False
+            left, top, right, bottom = foreground_bounds
+            return left <= x <= right and top <= y <= bottom
+
         def enqueue(x: int, y: int) -> None:
             index = y * width + x
-            if visited[index] or not is_light_neutral(*pixels[x, y]):
+            if visited[index] or is_foreground(x, y) or not is_light_neutral(*pixels[x, y]):
                 return
             visited[index] = 1
             queue.append((x, y))
@@ -103,6 +154,8 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
             "whiteBorderRatio": round(white_ratio, 4),
             "connectedBackgroundWhiteRatio": round(connected_white_ratio, 4),
             "connectedBackgroundPixelRatio": round(connected_count / max(width * height, 1), 4),
+            "foregroundMaskApplied": foreground_bounds is not None,
+            "foregroundBounds": list(foreground_bounds) if foreground_bounds is not None else None,
             "borderMeanRgb": mean_rgb,
             "borderRatio": BACKGROUND_BORDER_RATIO,
             "imageWidth": width,
@@ -175,8 +228,18 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
     hip_width = max(abs(left_hip[0] - right_hip[0]), 1.0)
     hip_tilt = abs(left_hip[1] - right_hip[1]) / hip_width
     body_height = max(left_ankle[1], right_ankle[1]) - nose[1]
+    required_x = [point[0] for point in required]
+    required_y = [point[1] for point in required]
+    keypoints_within_canvas = (
+        min(required_x) >= canvas_width * KEYPOINT_CANVAS_MARGIN
+        and max(required_x) <= canvas_width * (1 - KEYPOINT_CANVAS_MARGIN)
+        and min(required_y) >= canvas_height * KEYPOINT_CANVAS_MARGIN
+        and max(required_y) <= canvas_height * (1 - KEYPOINT_CANVAS_MARGIN)
+    )
     full_body = (
-        body_height >= canvas_height * 0.55
+        visible
+        and keypoints_within_canvas
+        and body_height >= canvas_height * MIN_BODY_COVERAGE
         and nose[1] < min(left_hip[1], right_hip[1])
         and max(left_hip[1], right_hip[1]) < min(left_ankle[1], right_ankle[1])
     )
@@ -198,7 +261,7 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
 
     critical_pass = (
         visible
-        and arm_horizontal_error <= 0.12
+        and arm_horizontal_error <= MAX_ARM_HORIZONTAL_ERROR
         and right_elbow_angle >= 160
         and left_elbow_angle >= 160
         and shoulder_tilt <= 0.10
@@ -211,7 +274,7 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
         reasons = []
         if not visible:
             reasons.append("关键点置信度不足")
-        if arm_horizontal_error > 0.12:
+        if arm_horizontal_error > MAX_ARM_HORIZONTAL_ERROR:
             reasons.append("双臂不够水平")
         if min(right_elbow_angle, left_elbow_angle) < 160:
             reasons.append("肘部未充分伸直")
@@ -236,6 +299,16 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
             "torsoCenterError": round(torso_center_error, 4),
             "armSymmetryError": round(arm_symmetry_error, 4),
             "bodyCoverage": round(body_height / canvas_height, 4),
+            "fullBody": full_body,
+            "keypointsWithinCanvas": keypoints_within_canvas,
+            "poseKeypoints": {
+                "rightShoulder": list(right_shoulder),
+                "rightElbow": list(right_elbow),
+                "rightWrist": list(right_wrist),
+                "leftShoulder": list(left_shoulder),
+                "leftElbow": list(left_elbow),
+                "leftWrist": list(left_wrist),
+            },
         },
     }
 
@@ -260,6 +333,8 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
         "whiteBorderRatio": background["whiteBorderRatio"],
         "connectedBackgroundWhiteRatio": background["connectedBackgroundWhiteRatio"],
         "connectedBackgroundPixelRatio": background["connectedBackgroundPixelRatio"],
+        "foregroundMaskApplied": background["foregroundMaskApplied"],
+        "foregroundBounds": background["foregroundBounds"],
         "borderMeanRgb": background["borderMeanRgb"],
         "borderRatio": background["borderRatio"],
         "imageWidth": background["imageWidth"],

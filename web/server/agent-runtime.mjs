@@ -61,6 +61,7 @@ export function createAssetAgentRuntime({
   updatePrompts,
   advanceWorkflow,
   revertWorkflow,
+  repairTposeImage = async () => ({ applied: false, strategy: "image_edit_model", reason: "没有确定性修复适配器" }),
   runStageJob,
   getAgentConfig,
   getRunImagePath,
@@ -456,12 +457,13 @@ export function createAssetAgentRuntime({
     });
   }
 
-  async function prepareCharacterPrompts(runId, candidate, reason = "Art Director 检查角色提示词", image = null) {
+  async function prepareCharacterPrompts(runId, candidate, reason = "Art Director 检查角色提示词", image = null, updateOptions = {}) {
     const promptPlan = await reviewPrompts(runId, candidate, reason, image);
     const detail = updatePrompts(runId, {
       positivePrompt: promptPlan.positivePrompt,
       negativePrompt: promptPlan.negativePrompt,
       reason,
+      ...updateOptions,
     });
     addRunEvent(runId, "art_director_completed", detail.run.currentStage, `Art Director：${promptPlan.summary}`);
     return { promptPlan, detail };
@@ -640,22 +642,51 @@ export function createAssetAgentRuntime({
     const attempt = previousAttempts + 1;
     const reason = String(failureReason || "T-Pose 质量门禁未通过").trim().slice(0, 900);
     addRunEvent(runId, "agent_qa_repair_started", 2, `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮 QA 自动修复：${reason.slice(0, 420)}`);
-    addMessage(runId, "assistant", `QA 未通过，正在执行第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮自动修复：先修正提示词，再重新生成并复检。失败依据：${reason}`);
+    addMessage(runId, "assistant", `QA 未通过，正在执行第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮自动修复：先按失败类型尝试确定性处理，不适用时切换图片编辑模型。失败依据：${reason}`);
 
-    const reverted = revertWorkflow(runId, 1, `QA 未通过，自动回退并执行第 ${attempt} 轮提示词修复`);
-    const candidate = buildQaRepairPrompts(reverted.run, reason, attempt);
+    let deterministicRepair;
     try {
-      await prepareCharacterPrompts(runId, candidate, `根据 QA 失败证据执行第 ${attempt} 轮自动提示词修复`);
+      deterministicRepair = await repairTposeImage(runId, { reason, attempt });
+    } catch (error) {
+      deterministicRepair = {
+        applied: false,
+        strategy: "image_edit_model",
+        reason: error instanceof Error ? error.message : "确定性修复执行失败",
+      };
+      addRunEvent(runId, "qa_deterministic_repair_failed", 2, `确定性修复未执行：${deterministicRepair.reason}`);
+    }
+    if (deterministicRepair?.applied) {
+      const actions = Array.isArray(deterministicRepair.actions) ? deterministicRepair.actions.join("、") : deterministicRepair.strategy;
+      addRunEvent(runId, "qa_repair_strategy_selected", 2, `失败类型已路由到确定性修复：${actions || "图像处理"}`);
+      addMessage(runId, "assistant", `已完成确定性修复（${actions || "图像处理"}），现在直接重新执行 SDPose，不消耗一次模型重绘。`);
+      const detail = runStageJob(runId, "check_tpose", `第 ${attempt} 轮确定性修复后重新执行 SDPose`);
+      updateWorkflowPlan(runId, "running", `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮确定性修复已完成，${detail.run.jobMessage}；随后自动复核专业 QA`);
+      return getWorkflowPlan(runId);
+    }
+
+    addRunEvent(runId, "qa_repair_strategy_selected", 2, `确定性修复不适用，切换图片编辑模型：${deterministicRepair?.reason || reason}`);
+    addMessage(runId, "assistant", `该失败不适合安全的像素变换，自动修复已切换到图片编辑模型，并以当前失败的 T-Pose 为输入重绘。`);
+    const current = getRunDetail(runId);
+    const candidate = buildQaRepairPrompts(current.run, reason, attempt);
+    try {
+      await prepareCharacterPrompts(
+        runId,
+        candidate,
+        `根据 QA 失败证据执行第 ${attempt} 轮图片编辑修复`,
+        null,
+        { preserveFailedTpose: true },
+      );
     } catch (error) {
       updatePrompts(runId, {
         ...candidate,
         reason: `Art Director 不可用，应用第 ${attempt} 轮确定性 QA 修复约束`,
+        preserveFailedTpose: true,
       });
       addRunEvent(runId, "qa_repair_prompt_fallback", 1, `第 ${attempt} 轮使用确定性修复提示词：${error instanceof Error ? error.message : "Art Director 调用失败"}`);
     }
 
-    const detail = runStageJob(runId, "generate_2d", `第 ${attempt} 轮 QA 修复后自动重新生成 T-Pose`);
-    updateWorkflowPlan(runId, "running", `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮提示词已修复，${detail.run.jobMessage}；完成后自动重新执行 SDPose 与专业 QA`);
+    const detail = runStageJob(runId, "repair_2d", `第 ${attempt} 轮 QA 修复切换图片编辑模型`);
+    updateWorkflowPlan(runId, "running", `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮已切换图片编辑模型，${detail.run.jobMessage}；完成后自动重新执行 SDPose 与专业 QA`);
     return getWorkflowPlan(runId);
   }
 
