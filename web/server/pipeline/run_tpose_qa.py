@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 
 from comfy_client import (
     SCRIPT_DIR,
@@ -39,6 +39,8 @@ MIN_BODY_COVERAGE = 0.42
 MAX_ARM_HORIZONTAL_ERROR = 0.19
 KEYPOINT_CANVAS_MARGIN = 0.01
 FOREGROUND_MASK_PADDING = 0.015
+FOREGROUND_MASK_DILATION = 0.10
+FOREGROUND_MASK_MAX_DIMENSION = 256
 MIN_FOREGROUND_ANCHOR_RATIO = 0.002
 MAX_FOREGROUND_ANCHOR_RATIO = 0.45
 MAX_FOREGROUND_BOX_RATIO = 0.75
@@ -94,6 +96,8 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
                     anchor_bottom = max(anchor_bottom, y)
         anchor_ratio = anchor_count / max(width * height, 1)
         foreground_bounds: tuple[int, int, int, int] | None = None
+        foreground_anchor_bounds: tuple[int, int, int, int] | None = None
+        foreground_mask: bytes | None = None
         if anchor_count and MIN_FOREGROUND_ANCHOR_RATIO <= anchor_ratio <= MAX_FOREGROUND_ANCHOR_RATIO:
             left, top, right, bottom = anchor_left, anchor_top, anchor_right, anchor_bottom
             minimum_margin = max(2, round(min(width, height) * KEYPOINT_CANVAS_MARGIN))
@@ -105,6 +109,7 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
                 and bottom < height - minimum_margin
             )
             if safely_inside_canvas and box_ratio <= MAX_FOREGROUND_BOX_RATIO:
+                foreground_anchor_bounds = (left, top, right, bottom)
                 padding = max(2, round(min(width, height) * FOREGROUND_MASK_PADDING))
                 foreground_bounds = (
                     max(0, left - padding),
@@ -112,12 +117,40 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
                     min(width - 1, right + padding),
                     min(height - 1, bottom + padding),
                 )
+                scale = min(1.0, FOREGROUND_MASK_MAX_DIMENSION / max(width, height))
+                mask_width = max(1, round(width * scale))
+                mask_height = max(1, round(height * scale))
+                reduced = image.resize((mask_width, mask_height), Image.Resampling.BOX)
+                anchor_mask = Image.new("L", reduced.size)
+                anchor_mask.putdata([0 if is_light_neutral(pixel) else 255 for pixel in reduced.get_flattened_data()])
+                dilation_radius = max(1, round(min(mask_width, mask_height) * FOREGROUND_MASK_DILATION))
+                foreground = anchor_mask.filter(ImageFilter.MaxFilter(dilation_radius * 2 + 1))
+                foreground_mask = foreground.resize((width, height), Image.Resampling.NEAREST).tobytes()
 
         def is_foreground(x: int, y: int) -> bool:
-            if foreground_bounds is None:
+            if foreground_mask is None:
                 return False
-            left, top, right, bottom = foreground_bounds
-            return left <= x <= right and top <= y <= bottom
+            return foreground_mask[y * width + x] > 0
+
+        wide_ground_shadow = False
+        if foreground_anchor_bounds is not None:
+            _, anchor_top, _, anchor_bottom = foreground_anchor_bounds
+            lower_start = max(anchor_top, anchor_bottom - round(height * 0.15))
+            for y in range(lower_start, min(height, anchor_bottom + 1)):
+                muted = [
+                    x for x in range(width)
+                    if is_light_neutral(pixels[x, y])
+                    and not (
+                        min(pixels[x, y]) >= WHITE_CHANNEL_MIN
+                        and max(pixels[x, y]) - min(pixels[x, y]) <= WHITE_CHANNEL_SPREAD_MAX
+                    )
+                ]
+                if (
+                    len(muted) >= width * 0.22
+                    and muted[-1] - muted[0] >= width * 0.38
+                ):
+                    wide_ground_shadow = True
+                    break
 
         def enqueue(x: int, y: int) -> None:
             index = y * width + x
@@ -152,12 +185,18 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
 
         connected_white_ratio = connected_white_count / max(connected_count, 1)
         return {
-            "passed": white_ratio >= MIN_WHITE_BORDER_RATIO and connected_white_ratio >= MIN_CONNECTED_BACKGROUND_WHITE_RATIO,
+            "passed": (
+                white_ratio >= MIN_WHITE_BORDER_RATIO
+                and connected_white_ratio >= MIN_CONNECTED_BACKGROUND_WHITE_RATIO
+                and not wide_ground_shadow
+            ),
             "whiteBorderRatio": round(white_ratio, 4),
             "connectedBackgroundWhiteRatio": round(connected_white_ratio, 4),
             "connectedBackgroundPixelRatio": round(connected_count / max(width * height, 1), 4),
             "foregroundMaskApplied": foreground_bounds is not None,
             "foregroundBounds": list(foreground_bounds) if foreground_bounds is not None else None,
+            "foregroundAnchorBounds": list(foreground_anchor_bounds) if foreground_anchor_bounds is not None else None,
+            "wideGroundShadowDetected": wide_ground_shadow,
             "borderMeanRgb": mean_rgb,
             "borderRatio": BACKGROUND_BORDER_RATIO,
             "imageWidth": width,
@@ -232,6 +271,7 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
     body_height = max(left_ankle[1], right_ankle[1]) - nose[1]
     required_x = [point[0] for point in required]
     required_y = [point[1] for point in required]
+    pose_bounds = [min(required_x), min(required_y), max(required_x), max(required_y)]
     keypoints_within_canvas = (
         min(required_x) >= canvas_width * KEYPOINT_CANVAS_MARGIN
         and max(required_x) <= canvas_width * (1 - KEYPOINT_CANVAS_MARGIN)
@@ -311,6 +351,7 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
                 "leftElbow": list(left_elbow),
                 "leftWrist": list(left_wrist),
             },
+            "poseBounds": [round(value, 2) for value in pose_bounds],
         },
     }
 
@@ -330,6 +371,18 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
         keypoint_file,
     )
     evaluation = evaluate_pose(json.loads(keypoint_file.read_text(encoding="utf-8")))
+    anchor_bounds = background["foregroundAnchorBounds"]
+    pose_bounds = evaluation.get("metrics", {}).get("poseBounds")
+    subject_bounds = None
+    if isinstance(anchor_bounds, list) and isinstance(pose_bounds, list):
+        width, height = background["imageWidth"], background["imageHeight"]
+        padding = max(2, round(min(width, height) * 0.04))
+        subject_bounds = [
+            max(0, round(min(anchor_bounds[0], pose_bounds[0])) - padding),
+            max(0, round(min(anchor_bounds[1], pose_bounds[1])) - padding),
+            min(width - 1, round(max(anchor_bounds[2], pose_bounds[2])) + padding),
+            min(height - 1, round(max(anchor_bounds[3], pose_bounds[3])) + padding),
+        ]
     evaluation.setdefault("metrics", {}).update({
         "backgroundPassed": background["passed"],
         "whiteBorderRatio": background["whiteBorderRatio"],
@@ -337,6 +390,9 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
         "connectedBackgroundPixelRatio": background["connectedBackgroundPixelRatio"],
         "foregroundMaskApplied": background["foregroundMaskApplied"],
         "foregroundBounds": background["foregroundBounds"],
+        "foregroundAnchorBounds": background["foregroundAnchorBounds"],
+        "wideGroundShadowDetected": background["wideGroundShadowDetected"],
+        "subjectBounds": subject_bounds,
         "borderMeanRgb": background["borderMeanRgb"],
         "borderRatio": background["borderRatio"],
         "imageWidth": background["imageWidth"],

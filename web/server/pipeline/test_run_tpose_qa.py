@@ -107,6 +107,19 @@ class TposeBackgroundQaTests(unittest.TestCase):
             self.assertTrue(result["foregroundMaskApplied"])
             self.assertLess(result["connectedBackgroundWhiteRatio"], 0.94)
 
+    def test_foreground_mask_does_not_hide_ground_shadow(self):
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "cow-with-shadow.png"
+            image = Image.new("RGB", (512, 512), (255, 255, 255))
+            draw_white_cow(image)
+            ImageDraw.Draw(image).ellipse((120, 420, 392, 465), fill=(205, 205, 205))
+            image.save(image_path)
+
+            result = evaluate_background(image_path)
+
+            self.assertFalse(result["passed"])
+            self.assertTrue(result["wideGroundShadowDetected"])
+
 
 class TposePoseQaTests(unittest.TestCase):
     def test_strict_horizontal_tpose_passes(self):

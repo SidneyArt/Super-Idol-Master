@@ -31,6 +31,7 @@ import { createAgentRoutes } from "./features/agents/routes.mjs";
 import { createApprovalRoutes } from "./features/approvals/routes.mjs";
 import { createAssetRoutes } from "./features/assets/routes.mjs";
 import { createJobRoutes } from "./features/jobs/routes.mjs";
+import { select2dExecution } from "./features/jobs/2d-execution-policy.mjs";
 import { createQualityGateRoutes } from "./features/quality-gates/routes.mjs";
 import { createRunRoutes } from "./features/runs/routes.mjs";
 import { createSettingsRoutes } from "./features/settings/routes.mjs";
@@ -1246,16 +1247,12 @@ function failJob(runId, jobType, errorMessage) {
   addEvent(runId, `${jobType}_failed`, { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType], `${jobType.toUpperCase()} 任务失败：${message}`, now);
 }
 
-function launchJob(run, jobType, processConfig, lease) {
+function launchJob(run, jobType, processConfig, lease, execution2d = null) {
   const usesImageApi = jobType === "2d" && processConfig.mode === "api";
   const usesTopologyApi = jobType === "topology";
   const workflowPath = usesImageApi || usesTopologyApi ? null : join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
   if (workflowPath) writeFileSync(workflowPath, JSON.stringify(processConfig.workflow), "utf8");
-  const sourceImage = processConfig.repairMode
-    ? run.imagePathInternal
-    : run.pipelineType === "image_to_model"
-      ? run.sourceImagePathInternal
-      : run.imagePathInternal;
+  const sourceImage = execution2d?.sourceImage ?? run.imagePathInternal;
   const args = usesImageApi
     ? [
         scripts["2d-api"],
@@ -1264,7 +1261,7 @@ function launchJob(run, jobType, processConfig, lease) {
         "--base-url", processConfig.api.baseUrl,
         "--model", processConfig.api.model,
         ...(sourceImage && existsSync(sourceImage) ? ["--source-image", sourceImage] : []),
-        ...(run.pipelineType === "image_to_model" || processConfig.repairMode ? ["--tpose-output"] : []),
+        ...(execution2d?.tposeOutput ? ["--tpose-output"] : []),
       ]
     : usesTopologyApi
       ? [
@@ -1405,14 +1402,20 @@ function startJob(runId, jobType, options = {}) {
     : settingsStore.processConfig(jobType);
   if (jobType === "topology" && !processConfig.url) throw new Error("拓扑 API 未配置，请在“请求设置 → 拓扑 API”中填写服务地址");
   if (jobType === "topology" && (!Number.isInteger(processConfig.targetQuads) || processConfig.targetQuads < 1_000 || processConfig.targetQuads > 1_000_000)) throw new Error("TOPOLOGY_TARGET_QUADS 必须在 1,000 到 1,000,000 之间");
-  if (jobType === "2d" && options.repairMode) {
-    processConfig = { mode: "api", repairMode: true, api: settingsStore.imageConfig("image_to_model") };
-    if (!run.imagePathInternal || !existsSync(run.imagePathInternal)) {
+  const execution2d = jobType === "2d"
+    ? select2dExecution({
+        run,
+        repairMode: options.repairMode === true,
+        defaultProcessConfig: processConfig,
+        imageEditConfig: settingsStore.imageConfig("image_to_model"),
+      })
+    : null;
+  if (execution2d) {
+    processConfig = execution2d.processConfig;
+    if (options.repairMode && (!execution2d.sourceImage || !existsSync(execution2d.sourceImage))) {
       throw new Error("图片编辑修复缺少失败的 T-Pose 输入图");
     }
-  } else if (jobType === "2d" && run.pipelineType === "image_to_model") {
-    processConfig = { ...processConfig, mode: "api", api: settingsStore.imageConfig("image_to_model") };
-    if (!run.sourceImagePathInternal || !existsSync(run.sourceImagePathInternal)) {
+    if (!options.repairMode && run.pipelineType === "image_to_model" && (!execution2d.sourceImage || !existsSync(execution2d.sourceImage))) {
       throw new Error("图生模型工作流缺少角色原画");
     }
   }
@@ -1467,7 +1470,7 @@ function startJob(runId, jobType, options = {}) {
           WHERE id = ? AND generation_status = 'running' AND job_type = ?
         `).run(message, startedAt, runId, jobType);
         addEvent(runId, `${jobType}_started`, stage, `获得全局 GPU 资源，启动${message.replace("正在调用 ", "")}`, startedAt);
-        return launchJob(getRunRow(runId), jobType, processConfig, lease);
+        return launchJob(getRunRow(runId), jobType, processConfig, lease, execution2d);
       },
       onStartError: (error) => {
         failJob(runId, jobType, error instanceof Error ? error.message : "任务进程启动失败");
