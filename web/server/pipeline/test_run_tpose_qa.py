@@ -146,7 +146,7 @@ class TposeBackgroundQaTests(unittest.TestCase):
 
             self.assertFalse(result["passed"])
             self.assertTrue(result["poseForegroundMaskApplied"])
-            self.assertGreater(result["poseGroundArtifactRatio"], 0.003)
+            self.assertGreater(result["poseGroundArtifactRatio"], 0.01)
 
 
 class TposePoseQaTests(unittest.TestCase):

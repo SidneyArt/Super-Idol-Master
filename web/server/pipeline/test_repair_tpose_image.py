@@ -260,6 +260,8 @@ class TposeImageRepairTests(unittest.TestCase):
             draw.rectangle((105, 70, 151, 160), fill=fur)
             draw.line(((115, 155), (115, 220)), fill=fur, width=14)
             draw.line(((141, 155), (141, 220)), fill=fur, width=14)
+            draw.ellipse((72, 55, 100, 76), fill=fur)
+            draw.line(((151, 155), (188, 174)), fill=fur, width=10)
             draw.ellipse((112, 90, 126, 108), fill=(30, 30, 30))
             draw.ellipse((132, 125, 147, 145), fill=(30, 30, 30))
             image.save(source)
@@ -283,6 +285,8 @@ class TposeImageRepairTests(unittest.TestCase):
             self.assertTrue(result["applied"])
             with Image.open(result["outputPath"]) as repaired:
                 self.assertEqual(repaired.getpixel((128, 128)), fur)
+                self.assertEqual(repaired.getpixel((82, 65)), fur)
+                self.assertEqual(repaired.getpixel((180, 170)), fur)
                 self.assertEqual(repaired.getpixel((10, 10)), (255, 255, 255))
 
     def test_pose_and_anchor_subject_bounds_reframe_light_character_without_cropping_it(self):

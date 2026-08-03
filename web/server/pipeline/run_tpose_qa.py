@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from comfy_client import (
     SCRIPT_DIR,
@@ -44,6 +44,7 @@ FOREGROUND_MASK_MAX_DIMENSION = 256
 MIN_FOREGROUND_ANCHOR_RATIO = 0.002
 MAX_FOREGROUND_ANCHOR_RATIO = 0.45
 MAX_FOREGROUND_BOX_RATIO = 0.75
+MAX_POSE_GROUND_ARTIFACT_RATIO = 0.01
 
 
 def is_light_neutral(rgb: tuple[int, int, int] | list[float]) -> bool:
@@ -89,13 +90,13 @@ def pose_foreground_mask(size: tuple[int, int], metrics: dict[str, Any] | None) 
     line(("rightHip", "rightKnee", "rightAnkle"), 0.34)
     line(("leftHip", "leftKnee", "leftAnkle"), 0.34)
     torso_mid = (
-        (resolved["rightHip"][0] + resolved["leftHip"][0]) / 2,
-        (resolved["rightHip"][1] + resolved["leftHip"][1]) / 2,
+        (resolved["rightKnee"][0] + resolved["leftKnee"][0]) / 2,
+        (resolved["rightKnee"][1] + resolved["leftKnee"][1]) / 2,
     )
     draw.line(
         [tuple(round(axis) for axis in resolved["neck"]), tuple(round(axis) for axis in torso_mid)],
         fill=255,
-        width=max(8, round(shoulder_width * 1.25)),
+        width=max(8, round(shoulder_width * 1.35)),
     )
     head_center = (
         (resolved["nose"][0] + resolved["neck"][0]) / 2,
@@ -112,6 +113,72 @@ def pose_foreground_mask(size: tuple[int, int], metrics: dict[str, Any] | None) 
     )
     padding = max(1, round(shoulder_width * 0.04))
     return mask.filter(ImageFilter.MaxFilter(padding * 2 + 1))
+
+
+def pose_constrained_foreground_mask(image: Image.Image, metrics: dict[str, Any] | None) -> Image.Image | None:
+    pose_mask = pose_foreground_mask(image.size, metrics)
+    if pose_mask is None:
+        return None
+    scale = min(1.0, FOREGROUND_MASK_MAX_DIMENSION / max(image.size))
+    small_size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+    reduced = image.resize(small_size, Image.Resampling.BOX)
+    pose_small = pose_mask.resize(small_size, Image.Resampling.NEAREST)
+    anchors = bytearray(
+        0 if is_light_neutral(pixel) else 1
+        for pixel in reduced.get_flattened_data()
+    )
+    pose_bytes = pose_small.tobytes()
+    visited = bytearray(len(anchors))
+    retained = Image.new("L", small_size, 0)
+    retained_pixels = retained.load()
+    points = (metrics or {}).get("poseKeypoints") or {}
+    ankle_y = min(float(points["rightAnkle"][1]), float(points["leftAnkle"][1])) * scale
+    shoulder_width = abs(float(points["rightShoulder"][0]) - float(points["leftShoulder"][0])) * scale
+
+    for start in range(len(anchors)):
+        if not anchors[start] or visited[start]:
+            continue
+        queue = deque([start])
+        visited[start] = 1
+        component: list[int] = []
+        touches_pose = False
+        left, top = small_size[0], small_size[1]
+        right = bottom = -1
+        while queue:
+            index = queue.popleft()
+            component.append(index)
+            x, y = index % small_size[0], index // small_size[0]
+            left, top = min(left, x), min(top, y)
+            right, bottom = max(right, x), max(bottom, y)
+            touches_pose = touches_pose or pose_bytes[index] > 0
+            for neighbor in (index - 1, index + 1, index - small_size[0], index + small_size[0]):
+                if neighbor < 0 or neighbor >= len(anchors) or visited[neighbor] or not anchors[neighbor]:
+                    continue
+                neighbor_x = neighbor % small_size[0]
+                if abs(neighbor_x - x) > 1:
+                    continue
+                visited[neighbor] = 1
+                queue.append(neighbor)
+        component_width = right - left + 1
+        component_height = bottom - top + 1
+        looks_like_ground = (
+            bottom >= ankle_y - max(2, shoulder_width * 0.1)
+            and component_width >= max(8, shoulder_width * 0.8)
+            and component_height <= component_width * 0.45
+        )
+        if touches_pose and not looks_like_ground:
+            for index in component:
+                retained_pixels[index % small_size[0], index // small_size[0]] = 255
+
+    dilation_radius = max(1, round(min(small_size) * FOREGROUND_MASK_DILATION))
+    visual_subject = retained.filter(ImageFilter.MaxFilter(dilation_radius * 2 + 1))
+    visual_pixels = visual_subject.load()
+    ground_cutoff = max(0, round(ankle_y - max(1, shoulder_width * 0.05)))
+    for y in range(ground_cutoff, small_size[1]):
+        for x in range(small_size[0]):
+            visual_pixels[x, y] = 0
+    combined = ImageChops.lighter(pose_small, visual_subject)
+    return combined.resize(image.size, Image.Resampling.NEAREST)
 
 
 def evaluate_background(image_path: Path, pose_metrics: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -190,7 +257,7 @@ def evaluate_background(image_path: Path, pose_metrics: dict[str, Any] | None = 
                 foreground = anchor_mask.filter(ImageFilter.MaxFilter(dilation_radius * 2 + 1))
                 foreground_mask = foreground.resize((width, height), Image.Resampling.NEAREST).tobytes()
 
-        pose_mask_image = pose_foreground_mask((width, height), pose_metrics)
+        pose_mask_image = pose_constrained_foreground_mask(image, pose_metrics)
         pose_mask_applied = pose_mask_image is not None
         if pose_mask_image is not None:
             foreground_mask = pose_mask_image.tobytes()
@@ -207,7 +274,8 @@ def evaluate_background(image_path: Path, pose_metrics: dict[str, Any] | None = 
             for y in range(lower_start, min(height, anchor_bottom + 1)):
                 muted = [
                     x for x in range(width)
-                    if is_light_neutral(pixels[x, y])
+                    if (not pose_mask_applied or not is_foreground(x, y))
+                    and is_light_neutral(pixels[x, y])
                     and not (
                         min(pixels[x, y]) >= WHITE_CHANNEL_MIN
                         and max(pixels[x, y]) - min(pixels[x, y]) <= WHITE_CHANNEL_SPREAD_MAX
@@ -258,9 +326,9 @@ def evaluate_background(image_path: Path, pose_metrics: dict[str, Any] | None = 
         pose_ground_start = round(height * 0.5)
         pose_points = (pose_metrics or {}).get("poseKeypoints")
         if isinstance(pose_points, dict):
-            hip_y = [pose_points.get(name, [0, 0])[1] for name in ("rightHip", "leftHip")]
-            if all(isinstance(value, (int, float)) for value in hip_y):
-                pose_ground_start = max(0, round(min(hip_y)))
+            ankle_values = [pose_points.get(name, [0, 0])[1] for name in ("rightAnkle", "leftAnkle")]
+            if all(isinstance(value, (int, float)) for value in ankle_values):
+                pose_ground_start = max(0, round(min(ankle_values)))
         if pose_mask_applied:
             for y in range(height):
                 for x in range(width):
@@ -281,7 +349,7 @@ def evaluate_background(image_path: Path, pose_metrics: dict[str, Any] | None = 
                 and connected_white_ratio >= MIN_CONNECTED_BACKGROUND_WHITE_RATIO
                 and not wide_ground_shadow
                 and (pose_background_white_ratio is None or pose_background_white_ratio >= MIN_CONNECTED_BACKGROUND_WHITE_RATIO)
-                and (pose_ground_artifact_ratio is None or pose_ground_artifact_ratio <= 0.003)
+                and (pose_ground_artifact_ratio is None or pose_ground_artifact_ratio <= MAX_POSE_GROUND_ARTIFACT_RATIO)
             ),
             "whiteBorderRatio": round(white_ratio, 4),
             "connectedBackgroundWhiteRatio": round(connected_white_ratio, 4),

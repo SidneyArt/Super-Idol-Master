@@ -20,7 +20,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
-from run_tpose_qa import evaluate_background, is_light_neutral, pose_foreground_mask
+from run_tpose_qa import evaluate_background, is_light_neutral, pose_constrained_foreground_mask
 
 
 MAX_DETERMINISTIC_ARM_ERROR = 0.35
@@ -92,14 +92,16 @@ def _whiten_connected_background(image: Image.Image, border_mean: list[float], p
         exact_white = min(red, green, blue) >= 250 and max(red, green, blue) - min(red, green, blue) <= 8
         close_to_dominant = (
             min(red, green, blue) >= 170
-            and max(abs(red - background[0]), abs(green - background[1]), abs(blue - background[2])) <= 24
+            and max(abs(red - background[0]), abs(green - background[1]), abs(blue - background[2])) <= 8
             and abs((red - blue) - background_warmth) <= 12
         )
         return exact_white or close_to_dominant
 
     def enqueue(x: int, y: int) -> None:
         index = y * width + x
-        if visited[index] or protected_mask[index] or not is_background(*pixels[x, y]):
+        color = pixels[x, y]
+        differs_from_background = max(abs(color[channel] - background[channel]) for channel in range(3)) > 8
+        if visited[index] or (protected_mask[index] and differs_from_background) or not is_background(*color):
             return
         visited[index] = 1
         queue.append((x, y))
@@ -276,7 +278,7 @@ def repair_tpose_image(
         repaired = ImageOps.exif_transpose(source).convert("RGB")
     actions: list[str] = []
     if background_failed:
-        protected = pose_foreground_mask(repaired.size, metrics)
+        protected = pose_constrained_foreground_mask(repaired, metrics)
         if protected is None:
             return _result_for_model("缺少完整姿态主体掩码，不能安全执行确定性抠图")
         repaired = _whiten_connected_background(repaired, border_mean, protected.tobytes())
