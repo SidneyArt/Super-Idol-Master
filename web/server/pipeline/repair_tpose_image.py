@@ -17,25 +17,22 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
+
+from run_tpose_qa import evaluate_background, is_light_neutral
 
 
 MAX_DETERMINISTIC_ARM_ERROR = 0.35
 MIN_DETERMINISTIC_ARM_ERROR = 0.19
-MIN_LIGHT_NEUTRAL_CHANNEL = 180
-MAX_LIGHT_NEUTRAL_SPREAD = 55
-
-
-def _is_light_neutral(rgb: tuple[int, int, int] | list[float]) -> bool:
-    values = [float(value) for value in rgb]
-    return min(values) >= MIN_LIGHT_NEUTRAL_CHANNEL and max(values) - min(values) <= MAX_LIGHT_NEUTRAL_SPREAD
+MAX_LIGHT_FOREGROUND_RATIO_FOR_MATTING = 0.08
 
 
 def _has_unsafe_pose_failure(metrics: dict[str, Any]) -> bool:
+    person_count = int(metrics["personCount"]) if "personCount" in metrics else 1
     right_elbow = float(metrics["rightElbowAngle"]) if "rightElbowAngle" in metrics else 180
     left_elbow = float(metrics["leftElbowAngle"]) if "leftElbowAngle" in metrics else 180
     return (
-        int(metrics.get("personCount") or 1) != 1
+        person_count != 1
         or ("minConfidence" in metrics and float(metrics["minConfidence"]) < 0.25)
         or float(metrics.get("armHorizontalError") or 0) > MAX_DETERMINISTIC_ARM_ERROR
         or right_elbow < 160
@@ -54,11 +51,61 @@ def _result_for_model(reason: str) -> dict[str, Any]:
     }
 
 
+def _passes_current_pose_gate(metrics: dict[str, Any]) -> bool:
+    full_body = metrics.get("fullBody")
+    if full_body is None:
+        full_body = float(metrics.get("bodyCoverage") or 0) >= 0.42
+    return not _has_unsafe_pose_failure(metrics) and bool(full_body) and float(metrics.get("armHorizontalError") or 0) <= 0.19
+
+
+def _destination(output_root: Path) -> Path:
+    destination = output_root.resolve() / "qa-repair" / uuid.uuid4().hex / "concept.png"
+    destination.parent.mkdir(parents=True, exist_ok=False)
+    return destination
+
+
 def _pose_point(points: dict[str, Any], name: str) -> tuple[float, float] | None:
     value = points.get(name)
     if not isinstance(value, list) or len(value) < 2:
         return None
     return float(value[0]), float(value[1])
+
+
+def _validated_foreground_bounds(image: Image.Image, metrics: dict[str, Any]) -> tuple[int, int, int, int] | None:
+    bounds = metrics.get("foregroundBounds")
+    if not isinstance(bounds, list) or len(bounds) != 4:
+        return None
+    left, top, right, bottom = [int(value) for value in bounds]
+    if not (0 <= left < right < image.width and 0 <= top < bottom < image.height):
+        return None
+    total = (right - left + 1) * (bottom - top + 1)
+    light_count = sum(
+        is_light_neutral(image.getpixel((x, y)))
+        for y in range(top, bottom + 1)
+        for x in range(left, right + 1)
+    )
+    if light_count / total > MAX_LIGHT_FOREGROUND_RATIO_FOR_MATTING:
+        return None
+    return left, top, right, bottom
+
+
+def _arm_is_safely_segmentable(
+    image: Image.Image,
+    shoulder: tuple[float, float],
+    elbow: tuple[float, float],
+    wrist: tuple[float, float],
+) -> bool:
+    samples: list[tuple[int, int]] = []
+    for start, end in ((shoulder, elbow), (elbow, wrist)):
+        for index in range(1, 6):
+            ratio = index / 6
+            samples.append((round(start[0] + (end[0] - start[0]) * ratio), round(start[1] + (end[1] - start[1]) * ratio)))
+    return all(
+        0 <= x < image.width
+        and 0 <= y < image.height
+        and not is_light_neutral(image.getpixel((x, y)))
+        for x, y in samples
+    )
 
 
 def _rotate_arm(
@@ -70,13 +117,18 @@ def _rotate_arm(
 ) -> Image.Image:
     """Rotate a narrow arm-shaped pixel layer around its shoulder."""
 
-    mask = Image.new("L", image.size, 0)
-    draw = ImageDraw.Draw(mask)
+    corridor = Image.new("L", image.size, 0)
+    draw = ImageDraw.Draw(corridor)
     points = [tuple(round(value) for value in point) for point in (shoulder, elbow, wrist)]
     draw.line(points, fill=255, width=line_width, joint="curve")
     radius = max(2, line_width // 2)
     for x, y in points:
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=255)
+
+    subject = Image.new("L", image.size)
+    subject.putdata([0 if is_light_neutral(pixel) else 255 for pixel in image.get_flattened_data()])
+    subject = subject.filter(ImageFilter.MaxFilter(9))
+    mask = ImageChops.multiply(corridor, subject)
 
     layer = image.convert("RGBA")
     layer.putalpha(mask)
@@ -114,10 +166,23 @@ def repair_tpose_image(
     """Repair safe background/framing defects or request model-based repair."""
 
     image_path = image_path.resolve(strict=True)
+    background_failed = metrics.get("backgroundPassed") is False
+    if background_failed and evaluate_background(image_path)["passed"] and _passes_current_pose_gate(metrics):
+        with Image.open(image_path) as source:
+            source.load()
+            repaired = ImageOps.exif_transpose(source).convert("RGB")
+        destination = _destination(output_root)
+        repaired.save(destination, format="PNG")
+        return {
+            "applied": True,
+            "strategy": "deterministic_recheck",
+            "actions": ["qa_recheck"],
+            "reason": "旧失败指标在当前确定性门禁下已不成立，保留原图并重新质检",
+            "outputPath": str(destination),
+        }
     if _has_unsafe_pose_failure(metrics):
         return _result_for_model("姿态偏差需要重绘肢体细节，确定性像素变换不安全")
 
-    background_failed = metrics.get("backgroundPassed") is False
     arm_error = float(metrics.get("armHorizontalError") or 0)
     pose_failed = MIN_DETERMINISTIC_ARM_ERROR < arm_error <= MAX_DETERMINISTIC_ARM_ERROR
     framing_failed = (
@@ -131,7 +196,7 @@ def repair_tpose_image(
     if background_failed and (
         not isinstance(border_mean, list)
         or len(border_mean) != 3
-        or not _is_light_neutral(border_mean)
+        or not is_light_neutral(border_mean)
     ):
         return _result_for_model("背景不是可安全分离的浅色中性背景")
     if not background_failed and not framing_failed and not pose_failed:
@@ -142,20 +207,20 @@ def repair_tpose_image(
         repaired = ImageOps.exif_transpose(source).convert("RGB")
     actions: list[str] = []
     if background_failed:
+        if _validated_foreground_bounds(repaired, metrics) is None:
+            return _result_for_model("前景包含大量浅色细节，确定性抠图可能擦除角色材质")
         pixels = repaired.load()
         for y in range(repaired.height):
             for x in range(repaired.width):
-                if _is_light_neutral(pixels[x, y]):
+                if is_light_neutral(pixels[x, y]):
                     pixels[x, y] = (255, 255, 255)
         actions.append("background_matting")
 
     if framing_failed:
-        bounds = metrics.get("foregroundBounds")
-        if not isinstance(bounds, list) or len(bounds) != 4:
-            return _result_for_model("缺少可验证的前景边界，不能确定性调整构图")
-        left, top, right, bottom = [int(value) for value in bounds]
-        if not (0 <= left < right < repaired.width and 0 <= top < bottom < repaired.height):
-            return _result_for_model("前景边界无效，不能确定性调整构图")
+        bounds = _validated_foreground_bounds(repaired, metrics)
+        if bounds is None:
+            return _result_for_model("前景包含浅色细节或边界不可靠，不能确定性调整构图")
+        left, top, right, bottom = bounds
         foreground = repaired.crop((left, top, right + 1, bottom + 1))
         target_width = round(repaired.width * 0.88)
         target_height = round(repaired.height * 0.82)
@@ -180,14 +245,15 @@ def repair_tpose_image(
         left = tuple(_pose_point(pose_points, name) for name in ("leftShoulder", "leftElbow", "leftWrist"))
         if any(point is None for point in (*right, *left)):
             return _result_for_model("肢体关键点不完整，不能执行确定性姿态变换")
-        shoulder_width = math.dist(right[0], left[0])
-        line_width = max(8, round(shoulder_width * 0.28))
-        repaired = _rotate_arm(repaired, right[0], right[1], right[2], line_width)
-        repaired = _rotate_arm(repaired, left[0], left[1], left[2], line_width)
+        if not _arm_is_safely_segmentable(repaired, right[0], right[1], right[2]) or not _arm_is_safely_segmentable(repaired, left[0], left[1], left[2]):
+            return _result_for_model("手臂与浅色背景无法可靠分割，确定性姿态变换不安全")
+        right_width = max(8, round(min(math.dist(right[0], right[1]), math.dist(right[1], right[2])) * 0.45))
+        left_width = max(8, round(min(math.dist(left[0], left[1]), math.dist(left[1], left[2])) * 0.45))
+        repaired = _rotate_arm(repaired, right[0], right[1], right[2], right_width)
+        repaired = _rotate_arm(repaired, left[0], left[1], left[2], left_width)
         actions.append("straighten_arms")
 
-    destination = output_root.resolve() / "qa-repair" / uuid.uuid4().hex / "concept.png"
-    destination.parent.mkdir(parents=True, exist_ok=False)
+    destination = _destination(output_root)
     repaired.save(destination, format="PNG")
     return {
         "applied": True,

@@ -44,6 +44,11 @@ MAX_FOREGROUND_ANCHOR_RATIO = 0.45
 MAX_FOREGROUND_BOX_RATIO = 0.75
 
 
+def is_light_neutral(rgb: tuple[int, int, int] | list[float]) -> bool:
+    values = [float(value) for value in rgb]
+    return min(values) >= 180 and max(values) - min(values) <= 55
+
+
 def evaluate_background(image_path: Path) -> dict[str, Any]:
     with Image.open(image_path) as source:
         source.load()
@@ -70,9 +75,6 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
         visited = bytearray(width * height)
         queue: deque[tuple[int, int]] = deque()
 
-        def is_light_neutral(red: int, green: int, blue: int) -> bool:
-            return min(red, green, blue) >= 180 and max(red, green, blue) - min(red, green, blue) <= 55
-
         # Build a conservative foreground envelope from strongly non-background
         # pixels. White fur and clothing can be edge-connected to a white canvas;
         # excluding the anchored character prevents their shading from lowering
@@ -84,7 +86,7 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
         anchor_right = anchor_bottom = -1
         for y in range(height):
             for x in range(width):
-                if not is_light_neutral(*pixels[x, y]):
+                if not is_light_neutral(pixels[x, y]):
                     anchor_count += 1
                     anchor_left = min(anchor_left, x)
                     anchor_top = min(anchor_top, y)
@@ -119,7 +121,7 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
 
         def enqueue(x: int, y: int) -> None:
             index = y * width + x
-            if visited[index] or is_foreground(x, y) or not is_light_neutral(*pixels[x, y]):
+            if visited[index] or is_foreground(x, y) or not is_light_neutral(pixels[x, y]):
                 return
             visited[index] = 1
             queue.append((x, y))
