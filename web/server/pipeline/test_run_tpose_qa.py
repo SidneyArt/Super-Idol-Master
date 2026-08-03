@@ -35,6 +35,16 @@ def draw_white_cow(image):
     draw.rectangle((287, 430, 337, 475), fill=(20, 20, 18))
 
 
+def tpose_keypoints_256():
+    return {
+        "nose": [128, 45, 0.99], "neck": [128, 75, 0.99],
+        "rightShoulder": [105, 95, 0.99], "rightElbow": [65, 95, 0.99], "rightWrist": [25, 95, 0.99],
+        "leftShoulder": [151, 95, 0.99], "leftElbow": [191, 95, 0.99], "leftWrist": [231, 95, 0.99],
+        "rightHip": [115, 155, 0.99], "rightKnee": [115, 188, 0.99], "rightAnkle": [115, 220, 0.99],
+        "leftHip": [141, 155, 0.99], "leftKnee": [141, 188, 0.99], "leftAnkle": [141, 220, 0.99],
+    }
+
+
 class TposeBackgroundQaTests(unittest.TestCase):
     def test_pure_white_background_passes(self):
         with TemporaryDirectory() as directory:
@@ -119,6 +129,24 @@ class TposeBackgroundQaTests(unittest.TestCase):
 
             self.assertFalse(result["passed"])
             self.assertTrue(result["wideGroundShadowDetected"])
+
+    def test_pose_mask_counts_narrow_dark_shadow_as_background(self):
+        with TemporaryDirectory() as directory:
+            image_path = Path(directory) / "tpose-with-narrow-shadow.png"
+            image = Image.new("RGB", (256, 256), (255, 255, 255))
+            draw = ImageDraw.Draw(image)
+            draw.line(((25, 95), (128, 95), (231, 95)), fill=(35, 45, 55), width=18)
+            draw.rectangle((105, 70, 151, 160), fill=(35, 45, 55))
+            draw.line(((115, 155), (115, 220)), fill=(35, 45, 55), width=14)
+            draw.line(((141, 155), (141, 220)), fill=(35, 45, 55), width=14)
+            draw.ellipse((92, 218, 164, 238), fill=(120, 120, 120))
+            image.save(image_path)
+
+            result = evaluate_background(image_path, {"poseKeypoints": tpose_keypoints_256()})
+
+            self.assertFalse(result["passed"])
+            self.assertTrue(result["poseForegroundMaskApplied"])
+            self.assertGreater(result["poseGroundArtifactRatio"], 0.003)
 
 
 class TposePoseQaTests(unittest.TestCase):

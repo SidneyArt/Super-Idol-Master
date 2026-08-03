@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from comfy_client import (
     SCRIPT_DIR,
@@ -51,7 +51,70 @@ def is_light_neutral(rgb: tuple[int, int, int] | list[float]) -> bool:
     return min(values) >= 180 and max(values) - min(values) <= 55
 
 
-def evaluate_background(image_path: Path) -> dict[str, Any]:
+def pose_foreground_mask(size: tuple[int, int], metrics: dict[str, Any] | None) -> Image.Image | None:
+    points = (metrics or {}).get("poseKeypoints")
+    if not isinstance(points, dict):
+        return None
+
+    def point(name: str) -> tuple[float, float] | None:
+        value = points.get(name)
+        if not isinstance(value, list) or len(value) < 2:
+            return None
+        return float(value[0]), float(value[1])
+
+    names = (
+        "nose", "neck", "rightShoulder", "rightElbow", "rightWrist",
+        "leftShoulder", "leftElbow", "leftWrist", "rightHip", "rightKnee",
+        "rightAnkle", "leftHip", "leftKnee", "leftAnkle",
+    )
+    resolved = {name: point(name) for name in names}
+    if any(value is None for value in resolved.values()):
+        return None
+    shoulder_width = math.dist(resolved["rightShoulder"], resolved["leftShoulder"])
+    if shoulder_width < 4:
+        return None
+    mask = Image.new("L", size, 0)
+    draw = ImageDraw.Draw(mask)
+
+    def line(names_to_draw: tuple[str, ...], width_ratio: float) -> None:
+        draw.line(
+            [tuple(round(axis) for axis in resolved[name]) for name in names_to_draw],
+            fill=255,
+            width=max(6, round(shoulder_width * width_ratio)),
+            joint="curve",
+        )
+
+    line(("rightShoulder", "rightElbow", "rightWrist"), 0.28)
+    line(("leftShoulder", "leftElbow", "leftWrist"), 0.28)
+    line(("rightHip", "rightKnee", "rightAnkle"), 0.34)
+    line(("leftHip", "leftKnee", "leftAnkle"), 0.34)
+    torso_mid = (
+        (resolved["rightHip"][0] + resolved["leftHip"][0]) / 2,
+        (resolved["rightHip"][1] + resolved["leftHip"][1]) / 2,
+    )
+    draw.line(
+        [tuple(round(axis) for axis in resolved["neck"]), tuple(round(axis) for axis in torso_mid)],
+        fill=255,
+        width=max(8, round(shoulder_width * 1.25)),
+    )
+    head_center = (
+        (resolved["nose"][0] + resolved["neck"][0]) / 2,
+        (resolved["nose"][1] + resolved["neck"][1]) / 2,
+    )
+    head_rx = shoulder_width * 0.58
+    head_ry = max(abs(resolved["neck"][1] - resolved["nose"][1]) * 1.25, shoulder_width * 0.5)
+    draw.ellipse(
+        (
+            round(head_center[0] - head_rx), round(head_center[1] - head_ry),
+            round(head_center[0] + head_rx), round(head_center[1] + head_ry),
+        ),
+        fill=255,
+    )
+    padding = max(1, round(shoulder_width * 0.04))
+    return mask.filter(ImageFilter.MaxFilter(padding * 2 + 1))
+
+
+def evaluate_background(image_path: Path, pose_metrics: dict[str, Any] | None = None) -> dict[str, Any]:
     with Image.open(image_path) as source:
         source.load()
         image = ImageOps.exif_transpose(source).convert("RGB")
@@ -127,6 +190,11 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
                 foreground = anchor_mask.filter(ImageFilter.MaxFilter(dilation_radius * 2 + 1))
                 foreground_mask = foreground.resize((width, height), Image.Resampling.NEAREST).tobytes()
 
+        pose_mask_image = pose_foreground_mask((width, height), pose_metrics)
+        pose_mask_applied = pose_mask_image is not None
+        if pose_mask_image is not None:
+            foreground_mask = pose_mask_image.tobytes()
+
         def is_foreground(x: int, y: int) -> bool:
             if foreground_mask is None:
                 return False
@@ -184,11 +252,36 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
                 enqueue(x, y + 1)
 
         connected_white_ratio = connected_white_count / max(connected_count, 1)
+        outside_count = 0
+        outside_white_count = 0
+        pose_ground_artifact_count = 0
+        pose_ground_start = round(height * 0.5)
+        pose_points = (pose_metrics or {}).get("poseKeypoints")
+        if isinstance(pose_points, dict):
+            hip_y = [pose_points.get(name, [0, 0])[1] for name in ("rightHip", "leftHip")]
+            if all(isinstance(value, (int, float)) for value in hip_y):
+                pose_ground_start = max(0, round(min(hip_y)))
+        if pose_mask_applied:
+            for y in range(height):
+                for x in range(width):
+                    if is_foreground(x, y):
+                        continue
+                    outside_count += 1
+                    red, green, blue = pixels[x, y]
+                    is_white = min(red, green, blue) >= WHITE_CHANNEL_MIN and max(red, green, blue) - min(red, green, blue) <= WHITE_CHANNEL_SPREAD_MAX
+                    if is_white:
+                        outside_white_count += 1
+                    elif y >= pose_ground_start:
+                        pose_ground_artifact_count += 1
+        pose_background_white_ratio = outside_white_count / max(outside_count, 1) if pose_mask_applied else None
+        pose_ground_artifact_ratio = pose_ground_artifact_count / max(width * height, 1) if pose_mask_applied else None
         return {
             "passed": (
                 white_ratio >= MIN_WHITE_BORDER_RATIO
                 and connected_white_ratio >= MIN_CONNECTED_BACKGROUND_WHITE_RATIO
                 and not wide_ground_shadow
+                and (pose_background_white_ratio is None or pose_background_white_ratio >= MIN_CONNECTED_BACKGROUND_WHITE_RATIO)
+                and (pose_ground_artifact_ratio is None or pose_ground_artifact_ratio <= 0.003)
             ),
             "whiteBorderRatio": round(white_ratio, 4),
             "connectedBackgroundWhiteRatio": round(connected_white_ratio, 4),
@@ -197,6 +290,9 @@ def evaluate_background(image_path: Path) -> dict[str, Any]:
             "foregroundBounds": list(foreground_bounds) if foreground_bounds is not None else None,
             "foregroundAnchorBounds": list(foreground_anchor_bounds) if foreground_anchor_bounds is not None else None,
             "wideGroundShadowDetected": wide_ground_shadow,
+            "poseForegroundMaskApplied": pose_mask_applied,
+            "poseBackgroundWhiteRatio": round(pose_background_white_ratio, 4) if pose_background_white_ratio is not None else None,
+            "poseGroundArtifactRatio": round(pose_ground_artifact_ratio, 4) if pose_ground_artifact_ratio is not None else None,
             "borderMeanRgb": mean_rgb,
             "borderRatio": BACKGROUND_BORDER_RATIO,
             "imageWidth": width,
@@ -344,12 +440,20 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
             "fullBody": full_body,
             "keypointsWithinCanvas": keypoints_within_canvas,
             "poseKeypoints": {
+                "nose": list(nose),
+                "neck": list(neck),
                 "rightShoulder": list(right_shoulder),
                 "rightElbow": list(right_elbow),
                 "rightWrist": list(right_wrist),
                 "leftShoulder": list(left_shoulder),
                 "leftElbow": list(left_elbow),
                 "leftWrist": list(left_wrist),
+                "rightHip": list(right_hip),
+                "rightKnee": list(right_knee),
+                "rightAnkle": list(right_ankle),
+                "leftHip": list(left_hip),
+                "leftKnee": list(left_knee),
+                "leftAnkle": list(left_ankle),
             },
             "poseBounds": [round(value, 2) for value in pose_bounds],
         },
@@ -357,7 +461,6 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE) -> dict[str, Any]:
-    background = evaluate_background(image_path)
     uploaded = client.upload_file(image_path)
     token = uuid.uuid4().hex
     prefix = f"sim_tpose_qa/{token}"
@@ -371,6 +474,7 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
         keypoint_file,
     )
     evaluation = evaluate_pose(json.loads(keypoint_file.read_text(encoding="utf-8")))
+    background = evaluate_background(image_path, evaluation.get("metrics"))
     anchor_bounds = background["foregroundAnchorBounds"]
     pose_bounds = evaluation.get("metrics", {}).get("poseBounds")
     subject_bounds = None
@@ -392,6 +496,9 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
         "foregroundBounds": background["foregroundBounds"],
         "foregroundAnchorBounds": background["foregroundAnchorBounds"],
         "wideGroundShadowDetected": background["wideGroundShadowDetected"],
+        "poseForegroundMaskApplied": background["poseForegroundMaskApplied"],
+        "poseBackgroundWhiteRatio": background["poseBackgroundWhiteRatio"],
+        "poseGroundArtifactRatio": background["poseGroundArtifactRatio"],
         "subjectBounds": subject_bounds,
         "borderMeanRgb": background["borderMeanRgb"],
         "borderRatio": background["borderRatio"],

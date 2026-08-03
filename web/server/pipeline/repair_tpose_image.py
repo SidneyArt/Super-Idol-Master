@@ -20,7 +20,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
-from run_tpose_qa import evaluate_background, is_light_neutral
+from run_tpose_qa import evaluate_background, is_light_neutral, pose_foreground_mask
 
 
 MAX_DETERMINISTIC_ARM_ERROR = 0.35
@@ -79,7 +79,7 @@ def _validated_subject_bounds(image: Image.Image, metrics: dict[str, Any]) -> tu
     return left, top, right, bottom
 
 
-def _whiten_connected_background(image: Image.Image, border_mean: list[float]) -> Image.Image:
+def _whiten_connected_background(image: Image.Image, border_mean: list[float], protected_mask: bytes) -> Image.Image:
     canvas = image.convert("RGB")
     width, height = canvas.size
     pixels = canvas.load()
@@ -99,7 +99,7 @@ def _whiten_connected_background(image: Image.Image, border_mean: list[float]) -
 
     def enqueue(x: int, y: int) -> None:
         index = y * width + x
-        if visited[index] or not is_background(*pixels[x, y]):
+        if visited[index] or protected_mask[index] or not is_background(*pixels[x, y]):
             return
         visited[index] = 1
         queue.append((x, y))
@@ -236,7 +236,7 @@ def repair_tpose_image(
 
     image_path = image_path.resolve(strict=True)
     background_failed = metrics.get("backgroundPassed") is False
-    if background_failed and evaluate_background(image_path)["passed"] and _passes_current_pose_gate(metrics):
+    if background_failed and evaluate_background(image_path, metrics)["passed"] and _passes_current_pose_gate(metrics):
         with Image.open(image_path) as source:
             source.load()
             repaired = ImageOps.exif_transpose(source).convert("RGB")
@@ -276,7 +276,10 @@ def repair_tpose_image(
         repaired = ImageOps.exif_transpose(source).convert("RGB")
     actions: list[str] = []
     if background_failed:
-        repaired = _whiten_connected_background(repaired, border_mean)
+        protected = pose_foreground_mask(repaired.size, metrics)
+        if protected is None:
+            return _result_for_model("缺少完整姿态主体掩码，不能安全执行确定性抠图")
+        repaired = _whiten_connected_background(repaired, border_mean, protected.tobytes())
         actions.append("background_matting")
 
     if framing_failed:
@@ -320,7 +323,7 @@ def repair_tpose_image(
 
     destination = _destination(output_root)
     repaired.save(destination, format="PNG")
-    if background_failed and not evaluate_background(destination)["passed"]:
+    if background_failed and not evaluate_background(destination, metrics)["passed"]:
         destination.unlink(missing_ok=True)
         return _result_for_model("边缘连通抠图未能得到可靠纯白背景，切换图片编辑模型")
     return {

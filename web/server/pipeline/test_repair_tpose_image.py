@@ -8,12 +8,26 @@ from repair_tpose_image import repair_tpose_image
 from run_tpose_qa import evaluate_background
 
 
+def tpose_keypoints_256():
+    return {
+        "nose": [128, 45, 0.99], "neck": [128, 75, 0.99],
+        "rightShoulder": [105, 95, 0.99], "rightElbow": [65, 95, 0.99], "rightWrist": [25, 95, 0.99],
+        "leftShoulder": [151, 95, 0.99], "leftElbow": [191, 95, 0.99], "leftWrist": [231, 95, 0.99],
+        "rightHip": [115, 155, 0.99], "rightKnee": [115, 188, 0.99], "rightAnkle": [115, 220, 0.99],
+        "leftHip": [141, 155, 0.99], "leftKnee": [141, 188, 0.99], "leftAnkle": [141, 220, 0.99],
+    }
+
+
 class TposeImageRepairTests(unittest.TestCase):
     def test_light_neutral_background_is_deterministically_whitened(self):
         with TemporaryDirectory() as directory:
             source = Path(directory) / "cream.png"
             image = Image.new("RGB", (256, 256), (248, 242, 226))
-            ImageDraw.Draw(image).rectangle((92, 38, 164, 224), fill=(80, 60, 45))
+            draw = ImageDraw.Draw(image)
+            draw.line(((25, 95), (128, 95), (231, 95)), fill=(80, 60, 45), width=18)
+            draw.rectangle((105, 70, 151, 160), fill=(80, 60, 45))
+            draw.line(((115, 155), (115, 220)), fill=(80, 60, 45), width=14)
+            draw.line(((141, 155), (141, 220)), fill=(80, 60, 45), width=14)
             image.save(source)
 
             result = repair_tpose_image(
@@ -21,13 +35,14 @@ class TposeImageRepairTests(unittest.TestCase):
                 {
                     "backgroundPassed": False,
                     "borderMeanRgb": [248, 242, 226],
-                    "foregroundBounds": [92, 38, 164, 224],
+                    "foregroundBounds": [25, 70, 231, 220],
                     "fullBody": True,
                     "keypointsWithinCanvas": True,
                     "armHorizontalError": 0.03,
                     "rightElbowAngle": 176,
                     "leftElbowAngle": 177,
                     "shoulderTilt": 0.02,
+                    "poseKeypoints": tpose_keypoints_256(),
                 },
                 Path(directory) / "output",
             )
@@ -45,7 +60,9 @@ class TposeImageRepairTests(unittest.TestCase):
             image = Image.new("RGB", (256, 256), (248, 242, 226))
             draw = ImageDraw.Draw(image)
             draw.line(((35, 95), (128, 95), (221, 95)), fill=(40, 50, 60), width=20)
-            draw.rectangle((105, 70, 151, 215), fill=(40, 50, 60))
+            draw.rectangle((105, 70, 151, 160), fill=(40, 50, 60))
+            draw.line(((115, 155), (115, 220)), fill=(40, 50, 60), width=14)
+            draw.line(((141, 155), (141, 220)), fill=(40, 50, 60), width=14)
             image.save(source)
             metrics = {
                 **evaluate_background(source),
@@ -58,6 +75,7 @@ class TposeImageRepairTests(unittest.TestCase):
                 "rightElbowAngle": 178,
                 "leftElbowAngle": 178,
                 "shoulderTilt": 0.01,
+                "poseKeypoints": tpose_keypoints_256(),
             }
             metrics["backgroundPassed"] = metrics.pop("passed")
 
@@ -231,6 +249,41 @@ class TposeImageRepairTests(unittest.TestCase):
 
             self.assertFalse(result["applied"])
             self.assertEqual(result["strategy"], "image_edit_model")
+
+    def test_pose_mask_prevents_connected_matting_from_erasing_light_fur(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "light-cow-on-cream.png"
+            fur = (235, 232, 220)
+            image = Image.new("RGB", (256, 256), (248, 242, 226))
+            draw = ImageDraw.Draw(image)
+            draw.line(((25, 95), (128, 95), (231, 95)), fill=fur, width=18)
+            draw.rectangle((105, 70, 151, 160), fill=fur)
+            draw.line(((115, 155), (115, 220)), fill=fur, width=14)
+            draw.line(((141, 155), (141, 220)), fill=fur, width=14)
+            draw.ellipse((112, 90, 126, 108), fill=(30, 30, 30))
+            draw.ellipse((132, 125, 147, 145), fill=(30, 30, 30))
+            image.save(source)
+            metrics = {
+                "personCount": 1,
+                "minConfidence": 0.9,
+                "backgroundPassed": False,
+                "borderMeanRgb": [248, 242, 226],
+                "fullBody": True,
+                "keypointsWithinCanvas": True,
+                "bodyCoverage": 0.55,
+                "armHorizontalError": 0.02,
+                "rightElbowAngle": 178,
+                "leftElbowAngle": 178,
+                "shoulderTilt": 0.01,
+                "poseKeypoints": tpose_keypoints_256(),
+            }
+
+            result = repair_tpose_image(source, metrics, Path(directory) / "output")
+
+            self.assertTrue(result["applied"])
+            with Image.open(result["outputPath"]) as repaired:
+                self.assertEqual(repaired.getpixel((128, 128)), fur)
+                self.assertEqual(repaired.getpixel((10, 10)), (255, 255, 255))
 
     def test_pose_and_anchor_subject_bounds_reframe_light_character_without_cropping_it(self):
         with TemporaryDirectory() as directory:
