@@ -1,16 +1,39 @@
 import { Agent } from "@earendil-works/pi-agent-core";
-import { Type } from "@earendil-works/pi-ai";
-import { readFileSync, statSync } from "node:fs";
-import { extname } from "node:path";
 import { randomUUID } from "node:crypto";
-import { AGENT_CONTEXT_WINDOW, contextStats } from "./conversation-context.mjs";
 
-const STAGE_NAMES = ["角色描述", "概念图生成", "T-Pose 检查", "3D 模型生成", "自动拓扑", "自动绑骨", "资产导出"];
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+import { contextStats } from "./conversation-context.mjs";
+import {
+  ASSET_INSPECTION_SCHEMA,
+  CHARACTER_CONSISTENCY_SCHEMA,
+  EXPORT_REVIEW_SCHEMA,
+  PROMPT_PLAN_SCHEMA,
+  RIGGING_QA_SCHEMA,
+  VISUAL_QA_SCHEMA,
+  WORKFLOW_DIAGNOSIS_SCHEMA,
+} from "./features/quality-gates/contracts.mjs";
+import {
+  buildQaRepairPrompts,
+  normalizeAssetInspection,
+  normalizePromptPlan,
+  normalizeRiggingQa,
+  normalizeVisualQaReport,
+} from "./features/quality-gates/prompt-policy.mjs";
+import {
+  buildSystemPrompt,
+  compactRunContext,
+  createModel,
+  imageContent,
+  messageText,
+  STAGE_NAMES,
+  textResult,
+  validateImage,
+} from "./features/agents/runtime-support.mjs";
+
 const MAX_TOOL_CALLS = 10;
 const MAX_TURNS = 10;
 const MAX_ROLE_TURNS = 4;
 const MAX_QA_REPAIR_ATTEMPTS = 3;
+
 export const ASSET_AGENT_ROLES = [
   "supervisor",
   "art_director",
@@ -21,6 +44,7 @@ export const ASSET_AGENT_ROLES = [
   "export_specialist",
   "workflow_doctor",
 ];
+
 const PIPELINE_TARGETS = {
   concept_image: { stage: 1, label: "2D 概念图" },
   validated_tpose: { stage: 2, label: "通过质检的 T-Pose" },
@@ -29,380 +53,15 @@ const PIPELINE_TARGETS = {
   rigged_model: { stage: 5, label: "带骨骼 3D 模型" },
   export: { stage: 6, label: "可导出的最终资产" },
 };
-const REQUIRED_TPOSE_CONSTRAINTS = [
-  { label: "单人主体", pattern: /单人|1\s*个|one\s+(person|character|subject)/i },
-  { label: "完整全身", pattern: /完整全身|全身出镜|full[- ]?body/i },
-  { label: "严格正视", pattern: /严格正视|正面朝向|front[- ]?facing|front view/i },
-  { label: "T-Pose", pattern: /t[- ]?pose|t\s*姿势/i },
-  { label: "双臂水平伸展", pattern: /双臂水平|手臂水平|arms?\s+(fully\s+)?horizontal/i },
-  { label: "肢体无遮挡", pattern: /肢体无遮挡|无遮挡|unoccluded/i },
-  { label: "双手完全空置", pattern: /双手(?:完全)?空置|双手空手|不拿任何物品|不持有任何道具|empty[- ]?hands|no (?:held )?(?:items|props|weapons)/i },
-  { label: "纯白背景", pattern: /纯白背景|白色背景|white background/i },
-];
-const REQUIRED_TPOSE_SUFFIX = "严格正视标准 T-Pose，单人完整全身，双臂水平伸直，双手完全空置且不拿任何道具，纯白背景 RGB(255,255,255)";
-const REQUIRED_TPOSE_NEGATIVE_SUFFIX = "非T-Pose，A-Pose，V-Pose，手臂下垂，手臂倾斜，弯肘，手持物，道具，武器，非纯白背景，阴影，裁切";
-const MAX_SAVED_POSITIVE_PROMPT = 600;
-const MAX_SAVED_NEGATIVE_PROMPT = 250;
 
-const PROMPT_PLAN_SCHEMA = Type.Object({
-  positivePrompt: Type.String({ minLength: 1, maxLength: 4000 }),
-  negativePrompt: Type.String({ maxLength: 2000 }),
-  identityAnchors: Type.Array(Type.String({ minLength: 1, maxLength: 160 }), { maxItems: 20 }),
-  poseConstraints: Type.Array(Type.String({ minLength: 1, maxLength: 160 }), { maxItems: 20 }),
-  issues: Type.Array(Type.String({ minLength: 1, maxLength: 240 }), { maxItems: 20 }),
-  decision: Type.Union([Type.Literal("approve"), Type.Literal("revise"), Type.Literal("manual_review")]),
-  summary: Type.String({ minLength: 1, maxLength: 500 }),
-});
-
-const VISUAL_QA_SCHEMA = Type.Object({
-  assetKind: Type.Union([Type.Literal("humanoid"), Type.Literal("non_humanoid"), Type.Literal("unknown")]),
-  fullBody: Type.Boolean(),
-  singleSubject: Type.Boolean(),
-  frontFacing: Type.Boolean(),
-  armsHorizontal: Type.Boolean(),
-  limbsUnoccluded: Type.Boolean(),
-  handsEmpty: Type.Boolean(),
-  whiteBackground: Type.Boolean(),
-  identityConsistent: Type.Union([Type.Boolean(), Type.Null()]),
-  confidence: Type.Number({ minimum: 0, maximum: 1 }),
-  issues: Type.Array(Type.String({ minLength: 1, maxLength: 240 }), { maxItems: 20 }),
-  decision: Type.Union([
-    Type.Literal("pass"),
-    Type.Literal("repairable"),
-    Type.Literal("manual_review"),
-    Type.Literal("reject"),
-  ]),
-  summary: Type.String({ minLength: 1, maxLength: 500 }),
-});
-
-const CHARACTER_CONSISTENCY_SCHEMA = Type.Object({
-  referenceAvailable: Type.Boolean(),
-  identityConsistent: Type.Union([Type.Boolean(), Type.Null()]),
-  matchedAnchors: Type.Array(Type.String({ minLength: 1, maxLength: 160 }), { maxItems: 20 }),
-  driftedAnchors: Type.Array(Type.String({ minLength: 1, maxLength: 240 }), { maxItems: 20 }),
-  confidence: Type.Number({ minimum: 0, maximum: 1 }),
-  decision: Type.Union([
-    Type.Literal("pass"), Type.Literal("repairable"), Type.Literal("manual_review"), Type.Literal("reject"),
-  ]),
-  summary: Type.String({ minLength: 1, maxLength: 500 }),
-});
-
-const ASSET_INSPECTION_SCHEMA = Type.Object({
-  geometryUsable: Type.Boolean(),
-  materialsPresent: Type.Boolean(),
-  visualEvidenceAvailable: Type.Boolean(),
-  confidence: Type.Number({ minimum: 0, maximum: 1 }),
-  issues: Type.Array(Type.String({ minLength: 1, maxLength: 240 }), { maxItems: 20 }),
-  decision: Type.Union([
-    Type.Literal("pass"), Type.Literal("repairable"), Type.Literal("manual_review"), Type.Literal("reject"),
-  ]),
-  summary: Type.String({ minLength: 1, maxLength: 500 }),
-});
-
-const RIGGING_QA_SCHEMA = Type.Object({
-  skinPresent: Type.Boolean(),
-  jointsPresent: Type.Boolean(),
-  hierarchyPlausible: Type.Boolean(),
-  deformationEvidenceAvailable: Type.Boolean(),
-  confidence: Type.Number({ minimum: 0, maximum: 1 }),
-  issues: Type.Array(Type.String({ minLength: 1, maxLength: 240 }), { maxItems: 20 }),
-  decision: Type.Union([
-    Type.Literal("pass"), Type.Literal("repairable"), Type.Literal("manual_review"), Type.Literal("reject"),
-  ]),
-  summary: Type.String({ minLength: 1, maxLength: 500 }),
-});
-
-const EXPORT_REVIEW_SCHEMA = Type.Object({
-  profile: Type.Union([
-    Type.Literal("generic_glb"), Type.Literal("unity"), Type.Literal("unreal"), Type.Literal("vrm"), Type.Literal("web"),
-  ]),
-  structureReady: Type.Boolean(),
-  materialsPackaged: Type.Boolean(),
-  rigReady: Type.Boolean(),
-  warnings: Type.Array(Type.String({ minLength: 1, maxLength: 240 }), { maxItems: 20 }),
-  decision: Type.Union([Type.Literal("pass"), Type.Literal("manual_review"), Type.Literal("reject")]),
-  summary: Type.String({ minLength: 1, maxLength: 500 }),
-});
-
-const WORKFLOW_DIAGNOSIS_SCHEMA = Type.Object({
-  failureCategory: Type.Union([
-    Type.Literal("generation"), Type.Literal("network"), Type.Literal("workflow"),
-    Type.Literal("input"), Type.Literal("resource"), Type.Literal("unknown"),
-  ]),
-  recommendation: Type.Union([
-    Type.Literal("retry_same"), Type.Literal("retry_with_changes"),
-    Type.Literal("manual_intervention"), Type.Literal("abort"),
-  ]),
-  safeActions: Type.Array(Type.String({ minLength: 1, maxLength: 240 }), { maxItems: 12 }),
-  suspectedCause: Type.String({ minLength: 1, maxLength: 500 }),
-  summary: Type.String({ minLength: 1, maxLength: 500 }),
-});
-
-function textResult(message, details) {
-  return {
-    content: [{ type: "text", text: message }],
-    details,
-  };
-}
-
-function messageText(message) {
-  return (message?.content || [])
-    .filter((item) => item.type === "text")
-    .map((item) => item.text)
-    .join("")
-    .trim();
-}
-
-function createModel(agentConfig) {
-  return {
-    id: agentConfig.model,
-    name: "Stepfun Step Plan",
-    api: "openai-completions",
-    provider: "stepfun",
-    baseUrl: agentConfig.baseUrl,
-    reasoning: agentConfig.reasoningEffort !== "off",
-    input: ["text", "image"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: AGENT_CONTEXT_WINDOW,
-    maxTokens: 4096,
-    compat: {
-      supportsStore: false,
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: true,
-      supportsStrictMode: false,
-      supportsUsageInStreaming: false,
-      maxTokensField: "max_tokens",
-    },
-  };
-}
-
-function imageContent(filePath) {
-  const size = statSync(filePath).size;
-  if (size <= 0 || size > MAX_IMAGE_BYTES) throw new Error("专业 Agent 图片不能超过 4 MB");
-  const mimeTypes = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
-  const mimeType = mimeTypes[extname(filePath).toLowerCase()];
-  if (!mimeType) throw new Error("专业 Agent 只支持 PNG、JPEG 或 WebP");
-  return { type: "image", data: readFileSync(filePath).toString("base64"), mimeType };
-}
-
-export { imageContent };
-
-function stripGeneratedTposePolicy(value) {
-  const text = String(value || "").replace(/\s+/g, " ").trim();
-  const marker = text.search(/(?:QA\s*自动修复第\s*\d+\s*轮|(?:严格正视)?标准\s*T-Pose|\bT-Pose\b|最高优先级\s*[:：]|【最高优先级)/i);
-  return (marker >= 0 ? text.slice(0, marker) : text).replace(/[，,。；;\s]+$/g, "").trim();
-}
-
-function uniquePromptTerms(value) {
-  const seen = new Set();
-  return String(value || "")
-    .split(/[，,。；;\n]+/)
-    .map((item) => item.trim())
-    .filter((item) => item && !seen.has(item) && seen.add(item));
-}
-
-function identityPromptOnly(value) {
-  return uniquePromptTerms(stripGeneratedTposePolicy(value))
-    .filter((item) => !/(?:手持|拿着|握着|持有|携带|背着|武器|盾牌|法杖|匕首|刀剑|枪械|锤子|工具包|道具)/i.test(item))
-    .join("，");
-}
-
-function withRequiredSuffix(value, suffix, maxLength) {
-  const base = stripGeneratedTposePolicy(value);
-  const available = Math.max(0, maxLength - suffix.length - (base ? 1 : 0));
-  const trimmed = base.slice(0, available).replace(/[，,。；;\s]+$/g, "");
-  return `${trimmed}${trimmed ? "，" : ""}${suffix}`;
-}
-
-function normalizePromptPlan(report, candidate) {
-  const reviewedPositive = identityPromptOnly(report.positivePrompt || candidate.positivePrompt || "");
-  const missing = REQUIRED_TPOSE_CONSTRAINTS.filter((item) => !item.pattern.test(reviewedPositive));
-  const canonicalPolicyMissing = !reviewedPositive.includes("RGB(255,255,255)");
-  const positivePrompt = withRequiredSuffix(reviewedPositive, REQUIRED_TPOSE_SUFFIX, MAX_SAVED_POSITIVE_PROMPT);
-  const reviewedNegative = stripGeneratedTposePolicy(report.negativePrompt || candidate.negativePrompt || "");
-  const negativeBase = uniquePromptTerms(reviewedNegative)
-    .filter((item) => !REQUIRED_TPOSE_NEGATIVE_SUFFIX.includes(item))
-    .join("，");
-  const negativePrompt = withRequiredSuffix(negativeBase, REQUIRED_TPOSE_NEGATIVE_SUFFIX, MAX_SAVED_NEGATIVE_PROMPT);
-  const issues = [...new Set([
-    ...(Array.isArray(report.issues) ? report.issues : []),
-    ...missing.map((item) => `缺少“${item.label}”约束，已由 PromptPolicy 自动补齐`),
-  ])].slice(0, 20);
-  const poseConstraints = [...new Set([
-    ...(Array.isArray(report.poseConstraints) ? report.poseConstraints : []),
-    ...REQUIRED_TPOSE_CONSTRAINTS.map((item) => item.label),
-  ])].slice(0, 20);
-  const policyNote = missing.length || canonicalPolicyMissing
-    ? ` PromptPolicy 已补齐精简的 T-Pose、空手和纯白背景约束。`
-    : "";
-  return {
-    ...report,
-    positivePrompt,
-    negativePrompt,
-    poseConstraints,
-    issues,
-    decision: report.decision === "manual_review" ? "manual_review" : missing.length || canonicalPolicyMissing ? "revise" : report.decision,
-    summary: `${report.summary}${policyNote}`.slice(0, 500),
-  };
-}
-
-export function buildQaRepairPrompts(run, failureReason, attempt) {
-  void failureReason;
-  void attempt;
-  const positiveBase = identityPromptOnly(run.positivePrompt);
-  const negativeBase = uniquePromptTerms(stripGeneratedTposePolicy(run.negativePrompt))
-    .filter((item) => !REQUIRED_TPOSE_NEGATIVE_SUFFIX.includes(item))
-    .join("，");
-  return {
-    positivePrompt: withRequiredSuffix(positiveBase, REQUIRED_TPOSE_SUFFIX, MAX_SAVED_POSITIVE_PROMPT),
-    negativePrompt: withRequiredSuffix(negativeBase, REQUIRED_TPOSE_NEGATIVE_SUFFIX, MAX_SAVED_NEGATIVE_PROMPT),
-  };
-}
-
-export function normalizeVisualQaReport(report, deterministicQa) {
-  const evidenceText = `${report.summary || ""}\n${Array.isArray(report.issues) ? report.issues.join("\n") : ""}`;
-  const hasPositiveEvidence = (pattern) => [...evidenceText.matchAll(pattern)].some((match) => {
-    const prefix = evidenceText.slice(Math.max(0, Number(match.index) - 4), Number(match.index));
-    return !/(?:无|未|没有|并未|不再|并不)$/.test(prefix);
-  });
-  const heldPropEvidence = hasPositiveEvidence(/(?:手持|拿着|握着|持有|手中有|手里有)[^。；\n]{0,24}(?:武器|道具|刀|剑|枪|法杖|锤|球|滑板|工具|苦无)/gi);
-  const nonWhiteBackgroundEvidence = hasPositiveEvidence(/(?:灰色|彩色|米白|奶油色|暖白|渐变|阴影|投影|纹理|场景|地平线)[^。；\n]{0,12}背景|背景(?:为|是|存在)[^。；\n]{0,12}(?:灰色|彩色|米白|奶油色|暖白|渐变|阴影|投影|纹理|场景|地平线)/gi);
-  const normalized = {
-    ...report,
-    handsEmpty: heldPropEvidence ? false : report.handsEmpty,
-    whiteBackground: nonWhiteBackgroundEvidence ? false : report.whiteBackground,
-  };
-  const failures = [
-    [normalized.singleSubject, "画面不是严格单主体"],
-    [normalized.fullBody, "角色没有完整全身出镜"],
-    [normalized.frontFacing, "角色不是严格正视"],
-    [normalized.armsHorizontal, "双臂没有水平伸展"],
-    [normalized.limbsUnoccluded, "肢体存在遮挡或裁切"],
-    [normalized.handsEmpty, heldPropEvidence ? "Visual QA 文本证据显示角色仍持有道具或武器" : "角色手中仍持有道具或武器"],
-    [normalized.whiteBackground, nonWhiteBackgroundEvidence ? "Visual QA 文本证据显示背景不是纯白无渐变背景" : "背景不是纯白无渐变背景"],
-  ].filter(([passed]) => passed !== true).map(([, issue]) => issue);
-  if (deterministicQa.status === "failed") failures.push("SDPose 与背景像素硬门禁未通过");
-  if (normalized.decision === "pass" && Number(normalized.confidence || 0) < 0.8) failures.push("Visual QA 置信度不足 0.8");
-  if (!failures.length) return normalized;
-  return {
-    ...normalized,
-    decision: normalized.decision === "reject"
-      ? "reject"
-      : failures.some((item) => item.includes("置信度")) && failures.length === 1
-        ? "manual_review"
-        : "repairable",
-    issues: [...new Set([...(normalized.issues || []), ...failures])].slice(0, 20),
-    summary: `${normalized.summary} 硬门禁未通过：${failures.join("；")}。`.slice(0, 500),
-  };
-}
-
-function normalizeAssetInspection(report, inspection) {
-  if (inspection.meshCount > 0 || report.decision !== "pass") return report;
-  return {
-    ...report,
-    geometryUsable: false,
-    decision: "reject",
-    issues: [...new Set([...(report.issues || []), "GLB 硬门禁未检测到 mesh"])].slice(0, 20),
-    summary: `${report.summary} GLB 结构硬门禁未通过。`.slice(0, 500),
-  };
-}
-
-function normalizeRiggingQa(report, inspection) {
-  if ((inspection.skinCount > 0 && inspection.jointCount > 0) || report.decision !== "pass") return report;
-  return {
-    ...report,
-    skinPresent: inspection.skinCount > 0,
-    jointsPresent: inspection.jointCount > 0,
-    decision: "reject",
-    issues: [...new Set([...(report.issues || []), "GLB 硬门禁未检测到 skin/joints"])].slice(0, 20),
-    summary: `${report.summary} 绑骨结构硬门禁未通过。`.slice(0, 500),
-  };
-}
-
-function validateImage(image) {
-  if (!image) return null;
-  const mimeType = typeof image.mimeType === "string" ? image.mimeType.toLowerCase() : "";
-  if (!["image/png", "image/jpeg", "image/webp"].includes(mimeType)) {
-    throw new Error("Agent 图片只支持 PNG、JPEG 或 WebP");
-  }
-  const rawData = typeof image.data === "string" ? image.data.replace(/^data:[^;]+;base64,/, "") : "";
-  if (!rawData || !/^[a-zA-Z0-9+/=\r\n]+$/.test(rawData)) throw new Error("图片数据无效");
-  const data = Buffer.from(rawData, "base64");
-  if (!data.length || data.length > MAX_IMAGE_BYTES) throw new Error("Agent 图片不能超过 4 MB");
-
-  const isPng = data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  const isJpeg = data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
-  const isWebp = data.subarray(0, 4).toString("ascii") === "RIFF" && data.subarray(8, 12).toString("ascii") === "WEBP";
-  if ((mimeType === "image/png" && !isPng) || (mimeType === "image/jpeg" && !isJpeg) || (mimeType === "image/webp" && !isWebp)) {
-    throw new Error("图片内容与文件类型不匹配");
-  }
-  return {
-    name: typeof image.name === "string" ? image.name.slice(0, 160) : "reference-image",
-    mimeType,
-    data: data.toString("base64"),
-  };
-}
-
-function compactRunContext(detail) {
-  const run = detail.run;
-  return {
-    id: run.id,
-    name: run.name,
-    currentStage: run.currentStage,
-    currentStageName: STAGE_NAMES[run.currentStage],
-    topologySkipped: Boolean(run.topologySkipped),
-    positivePrompt: run.positivePrompt,
-    negativePrompt: run.negativePrompt,
-    job: {
-      type: run.jobType,
-      status: run.jobStatus,
-      progress: run.jobProgress,
-      message: run.jobMessage,
-    },
-    qa: {
-      status: run.qaStatus,
-      score: run.qaScore,
-      summary: run.qaSummary,
-      metrics: run.qaMetrics || {},
-    },
-    assets: run.assets,
-  };
-}
-
-function buildSystemPrompt(detail, history, permissionMode) {
-  const transcript = history.length
-    ? history.map((item) => `${item.role === "user" ? "用户" : "Asset Agent"}：${item.content}`).join("\n")
-    : "无历史消息";
-  return `你是 Super Idol Master 的 Asset Agent，负责把用户意图转换成受控的角色资产生产操作。
-
-工作原则：
-1. 你只能通过已注册工具改变项目状态，绝不能声称未执行的操作已经完成。
-2. 用户提供角色描述或参考图片，并要求创建、完善或重生成时，主动整理正向和负向提示词，再调用 update_character_prompts。
-3. 用户给出明确终点（例如“一路生成到模型”“自动做到绑骨完成”）时，优先调用 execute_pipeline_goal 一次登记持续执行目标。系统会在每个异步 Job 完成后自动恢复编排，不要把它拆成多轮人工确认。
-4. 用户只要求推进一步时，调用 advance_workflow；如果进入的新阶段需要执行任务，再调用 run_stage_job。例外：当 T-Pose 质检已经失败，用户要求“重新生成/再试一次/修复 T-Pose”时，必须调用 execute_pipeline_goal，目标至少为 validated_tpose；禁止只调用 run_stage_job 生成一张未复检图片。若此前计划目标晚于 validated_tpose，应保留原计划终点。
-5. 用户要求回退时调用 revert_workflow。修改已经产生下游资产的提示词前，先回退到“概念图生成”。
-6. 一次对话最多直接启动一个 GPU Job。execute_pipeline_goal 的后续 Job 由完成事件依次触发，仍遵守单 GPU 串行规则。
-7. 不要在没有明确终点时替用户确认生成结果；明确的流水线终点属于对中间合格产物的持续授权。SDPose、Visual QA 或 Character Consistency 未通过时绝对不能越过质量门禁，但应自动依据失败证据修复提示词、重新生成并复检，而不是立即暂停；连续三轮修复仍未通过时才结束自动计划并明确报告。3D 结构、绑骨或导出硬门禁失败时不得自动伪造修复结果。
-8. 如果用户只是询问状态或建议，不要调用写工具。信息不足时先提出一个简短问题。
-9. 图片是参考信息，不等于流水线已经生成的正式资产。分析图片时把可见的角色、服装、风格、配色和构图转成提示词。
-10. 工具报错时解释真实原因，不要绕过阶段、审批或运行中任务限制。
-11. 最终回复使用简洁中文，明确说明实际执行的操作、流水线目标和当前阶段。
-
-当前权限模式：${permissionMode === "auto" ? "Auto（变更工具自动批准）" : "请求批准（变更工具只创建审批，批准前不得声称已执行）"}
-
-当前任务状态：
-${JSON.stringify(compactRunContext(detail), null, 2)}
-
-最近会话：
-${transcript.slice(-12000)}`;
-}
-
+export { buildQaRepairPrompts, imageContent, normalizeVisualQaReport };
 export function createAssetAgentRuntime({
   db,
   getRunDetail,
   updatePrompts,
   advanceWorkflow,
   revertWorkflow,
+  repairTposeImage = async () => ({ applied: false, strategy: "image_edit_model", reason: "没有确定性修复适配器" }),
   runStageJob,
   getAgentConfig,
   getRunImagePath,
@@ -798,12 +457,13 @@ export function createAssetAgentRuntime({
     });
   }
 
-  async function prepareCharacterPrompts(runId, candidate, reason = "Art Director 检查角色提示词", image = null) {
+  async function prepareCharacterPrompts(runId, candidate, reason = "Art Director 检查角色提示词", image = null, updateOptions = {}) {
     const promptPlan = await reviewPrompts(runId, candidate, reason, image);
     const detail = updatePrompts(runId, {
       positivePrompt: promptPlan.positivePrompt,
       negativePrompt: promptPlan.negativePrompt,
       reason,
+      ...updateOptions,
     });
     addRunEvent(runId, "art_director_completed", detail.run.currentStage, `Art Director：${promptPlan.summary}`);
     return { promptPlan, detail };
@@ -982,22 +642,51 @@ export function createAssetAgentRuntime({
     const attempt = previousAttempts + 1;
     const reason = String(failureReason || "T-Pose 质量门禁未通过").trim().slice(0, 900);
     addRunEvent(runId, "agent_qa_repair_started", 2, `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮 QA 自动修复：${reason.slice(0, 420)}`);
-    addMessage(runId, "assistant", `QA 未通过，正在执行第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮自动修复：先修正提示词，再重新生成并复检。失败依据：${reason}`);
+    addMessage(runId, "assistant", `QA 未通过，正在执行第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮自动修复：先按失败类型尝试确定性处理，不适用时切换图片编辑模型。失败依据：${reason}`);
 
-    const reverted = revertWorkflow(runId, 1, `QA 未通过，自动回退并执行第 ${attempt} 轮提示词修复`);
-    const candidate = buildQaRepairPrompts(reverted.run, reason, attempt);
+    let deterministicRepair;
     try {
-      await prepareCharacterPrompts(runId, candidate, `根据 QA 失败证据执行第 ${attempt} 轮自动提示词修复`);
+      deterministicRepair = await repairTposeImage(runId, { reason, attempt });
+    } catch (error) {
+      deterministicRepair = {
+        applied: false,
+        strategy: "image_edit_model",
+        reason: error instanceof Error ? error.message : "确定性修复执行失败",
+      };
+      addRunEvent(runId, "qa_deterministic_repair_failed", 2, `确定性修复未执行：${deterministicRepair.reason}`);
+    }
+    if (deterministicRepair?.applied) {
+      const actions = Array.isArray(deterministicRepair.actions) ? deterministicRepair.actions.join("、") : deterministicRepair.strategy;
+      addRunEvent(runId, "qa_repair_strategy_selected", 2, `失败类型已路由到确定性修复：${actions || "图像处理"}`);
+      addMessage(runId, "assistant", `已完成确定性修复（${actions || "图像处理"}），现在直接重新执行 SDPose，不消耗一次模型重绘。`);
+      const detail = runStageJob(runId, "check_tpose", `第 ${attempt} 轮确定性修复后重新执行 SDPose`);
+      updateWorkflowPlan(runId, "running", `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮确定性修复已完成，${detail.run.jobMessage}；随后自动复核专业 QA`);
+      return getWorkflowPlan(runId);
+    }
+
+    addRunEvent(runId, "qa_repair_strategy_selected", 2, `确定性修复不适用，切换图片编辑模型：${deterministicRepair?.reason || reason}`);
+    addMessage(runId, "assistant", `该失败不适合安全的像素变换，自动修复已切换到图片编辑模型，并以当前失败的 T-Pose 为输入重绘。`);
+    const current = getRunDetail(runId);
+    const candidate = buildQaRepairPrompts(current.run, reason, attempt);
+    try {
+      await prepareCharacterPrompts(
+        runId,
+        candidate,
+        `根据 QA 失败证据执行第 ${attempt} 轮图片编辑修复`,
+        null,
+        { preserveFailedTpose: true },
+      );
     } catch (error) {
       updatePrompts(runId, {
         ...candidate,
         reason: `Art Director 不可用，应用第 ${attempt} 轮确定性 QA 修复约束`,
+        preserveFailedTpose: true,
       });
       addRunEvent(runId, "qa_repair_prompt_fallback", 1, `第 ${attempt} 轮使用确定性修复提示词：${error instanceof Error ? error.message : "Art Director 调用失败"}`);
     }
 
-    const detail = runStageJob(runId, "generate_2d", `第 ${attempt} 轮 QA 修复后自动重新生成 T-Pose`);
-    updateWorkflowPlan(runId, "running", `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮提示词已修复，${detail.run.jobMessage}；完成后自动重新执行 SDPose 与专业 QA`);
+    const detail = runStageJob(runId, "repair_2d", `第 ${attempt} 轮 QA 修复切换图片编辑模型`);
+    updateWorkflowPlan(runId, "running", `第 ${attempt}/${MAX_QA_REPAIR_ATTEMPTS} 轮已切换图片编辑模型，${detail.run.jobMessage}；完成后自动重新执行 SDPose 与专业 QA`);
     return getWorkflowPlan(runId);
   }
 

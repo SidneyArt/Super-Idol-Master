@@ -121,18 +121,21 @@ test("QA repair prompts stay concise and replace prior repair text", () => {
   assert.match(prompts.positivePrompt, /RGB\(255,255,255\)/);
   assert.match(prompts.positivePrompt, /标准 T-Pose/);
   assert.match(prompts.positivePrompt, /双手完全空置且不拿任何道具/);
+  assert.match(prompts.positivePrompt, /手腕与肩同高/);
+  assert.match(prompts.positivePrompt, /主体外区域/);
   assert.equal((prompts.positivePrompt.match(/T-Pose/g) || []).length, 1);
   assert.match(prompts.negativePrompt, /手持物/);
+  assert.match(prompts.negativePrompt, /灰色渐变/);
   assert.equal((prompts.negativePrompt.match(/武器/g) || []).length, 1);
   assert.ok(prompts.positivePrompt.length <= 600);
   assert.ok(prompts.negativePrompt.length <= 250);
 
-  const secondRepair = buildQaRepairPrompts(prompts, "仍未通过", 3);
-  assert.equal(secondRepair.positivePrompt, prompts.positivePrompt);
-  assert.equal(secondRepair.negativePrompt, prompts.negativePrompt);
+  const framingRepair = buildQaRepairPrompts(prompts, "未识别到完整全身；bodyCoverage 49.08%", 3);
+  assert.match(framingRepair.positivePrompt, /角色占画布高度/);
+  assert.notEqual(framingRepair.positivePrompt, prompts.positivePrompt);
 });
 
-test("failed T-Pose QA repairs prompts and regenerates instead of blocking", async () => {
+test("unsafe T-Pose repair switches to the image-edit model instead of regenerating from scratch", async () => {
   const db = new DatabaseSync(":memory:");
   db.exec(`
     CREATE TABLE runs (id TEXT PRIMARY KEY);
@@ -173,17 +176,13 @@ test("failed T-Pose QA repairs prompts and regenerates instead of blocking", asy
       return detail();
     },
     advanceWorkflow: () => detail(),
-    revertWorkflow: () => {
-      run.currentStage = 1;
-      run.qaStatus = "pending";
-      run.assets.imageReady = false;
-      return detail();
-    },
+    revertWorkflow: () => assert.fail("model repair must preserve the failed T-Pose as its source image"),
+    repairTposeImage: async () => ({ applied: false, strategy: "image_edit_model", reason: "姿态需要重绘" }),
     runStageJob: (_runId, action) => {
-      assert.equal(action, "generate_2d");
+      assert.equal(action, "repair_2d");
       run.jobStatus = "running";
       run.jobType = "2d";
-      run.jobMessage = "正在重新生成 T-Pose";
+      run.jobMessage = "正在用图片编辑模型修复 T-Pose";
       return detail();
     },
     getAgentConfig: () => ({ apiKey: "", model: "step-3.7-flash" }),
@@ -208,6 +207,81 @@ test("failed T-Pose QA repairs prompts and regenerates instead of blocking", asy
   assert.match(run.negativePrompt, /非纯白背景/);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM run_events WHERE event_type = 'agent_qa_repair_started'").get().count, 1);
   assert.match(runtime.getConversation("run-repair").messages.at(-1).content, /自动修复/);
+  db.close();
+});
+
+test("safe T-Pose failure applies deterministic repair and immediately reruns QA", async () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE runs (id TEXT PRIMARY KEY);
+    INSERT INTO runs (id) VALUES ('run-deterministic');
+    CREATE TABLE run_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      stage INTEGER NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  const run = {
+    id: "run-deterministic",
+    name: "米白背景角色",
+    currentStage: 2,
+    positivePrompt: "奶牛角色，标准 T-Pose",
+    negativePrompt: "低画质",
+    jobStatus: "idle",
+    jobType: "qa",
+    jobMessage: "",
+    jobProgress: 100,
+    jobPromptId: "qa-failed-bg",
+    qaStatus: "failed",
+    qaScore: 79,
+    qaSummary: "背景不是纯白",
+    qaMetrics: { backgroundPassed: false, borderMeanRgb: [248, 242, 226] },
+    assets: { imageReady: true, modelReady: false, topologyReady: false, riggedReady: false },
+  };
+  const detail = () => ({ run });
+  let promptUpdates = 0;
+  const runtime = createAssetAgentRuntime({
+    db,
+    getRunDetail: detail,
+    updatePrompts: () => {
+      promptUpdates += 1;
+      return detail();
+    },
+    advanceWorkflow: () => detail(),
+    revertWorkflow: () => assert.fail("deterministic repair must not revert the workflow"),
+    repairTposeImage: async () => {
+      run.qaStatus = "pending";
+      return { applied: true, strategy: "deterministic_background", actions: ["background_matting"] };
+    },
+    runStageJob: (_runId, action) => {
+      assert.equal(action, "check_tpose");
+      run.jobStatus = "running";
+      run.jobType = "qa";
+      run.jobMessage = "正在重新执行 SDPose";
+      return detail();
+    },
+    getAgentConfig: () => ({ apiKey: "", model: "step-3.7-flash" }),
+    getRunImagePath: () => null,
+    getRunReferenceImagePath: () => null,
+    getAssetInspection: () => ({}),
+    addRunEvent: (runId, eventType, stage, message, createdAt = new Date().toISOString()) => {
+      db.prepare("INSERT INTO run_events (run_id, event_type, stage, message, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(runId, eventType, stage, message, createdAt);
+    },
+    getPermissionMode: () => "auto",
+    requestApproval: () => {},
+  });
+
+  const plan = await runtime.scheduleWorkflowPlan("run-deterministic", "model");
+
+  assert.equal(plan.status, "running");
+  assert.equal(run.jobType, "qa");
+  assert.equal(promptUpdates, 0);
+  assert.match(plan.message, /确定性修复/);
+  assert.match(runtime.getConversation("run-deterministic").messages.at(-1).content, /确定性/);
   db.close();
 });
 

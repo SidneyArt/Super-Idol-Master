@@ -26,16 +26,25 @@ MAX_PROMPT_CHARS = 512
 MAX_EDIT_IMAGE_DIMENSION = 4096
 MIN_EDIT_ASPECT_RATIO = 0.34
 MAX_EDIT_ASPECT_RATIO = 2.94
-TPOSE_CANVAS_SIZE = 1024
+TPOSE_CANVAS_SIZE = 1536
 TPOSE_SAFE_MARGIN_RATIO = 0.12
 TPOSE_POSITIVE_CONSTRAINTS = (
-    "最高优先级：只保留参考图的角色身份和服装。重新生成单人完整全身、严格正视的标准T-Pose，"
+    "最高优先级：只保留参考图的角色身份、五官、发型和服装设计。重新生成单人完整全身、严格正视的标准T-Pose，"
     "双臂水平伸直，手腕与肩同高；双手张开且完全空置，不拿任何道具、武器或装备；"
-    "纯白背景RGB(255,255,255)，无阴影，四周留白。"
+    "均匀柔光，服装图案和材质边界清晰，左右细节对称；"
+    "纯白背景RGB(255,255,255)，无阴影、无景深，四周留白。"
+)
+TPOSE_TEXTURE_NEGATIVE_CONSTRAINTS = (
+    "低清晰度，模糊，涂抹纹理，过度磨皮，过度锐化，强高光，强阴影，景深，运动模糊，JPEG噪点"
+)
+TPOSE_POSE_NEGATIVE_CONSTRAINTS = (
+    "非T-Pose，A-Pose，V-Pose，手臂下垂，手臂倾斜，弯肘，手持物，道具"
+)
+TPOSE_RENDERING_NEGATIVE_CONSTRAINTS = (
+    f"非纯白背景，阴影，裁切，{TPOSE_TEXTURE_NEGATIVE_CONSTRAINTS}"
 )
 TPOSE_NEGATIVE_CONSTRAINTS = (
-    "非T-Pose，A-Pose，V-Pose，手臂下垂，手臂倾斜，弯肘，手持物，道具，武器，"
-    "非纯白背景，阴影，裁切"
+    f"{TPOSE_POSE_NEGATIVE_CONSTRAINTS}，武器，{TPOSE_RENDERING_NEGATIVE_CONSTRAINTS}"
 )
 STEPFUN_GENERATION_MODELS = {"step-image-edit-2", "step-2x-large", "step-1x-medium"}
 STEPFUN_EDIT_MODELS = {"step-image-edit-2"}
@@ -51,8 +60,7 @@ CONTENT_BLOCK_MARKERS = (
 )
 SAFE_NEGATIVE_PROMPT = "低画质，重复角色，角色重叠，裁切，文字，水印，风格不一致"
 SAFE_TPOSE_NEGATIVE_PROMPT = (
-    "非T-Pose，A-Pose，V-Pose，手臂下垂，手臂倾斜，弯肘，手持物，道具，"
-    "非纯白背景，阴影，裁切"
+    f"{TPOSE_POSE_NEGATIVE_CONSTRAINTS}，{TPOSE_RENDERING_NEGATIVE_CONSTRAINTS}"
 )
 
 

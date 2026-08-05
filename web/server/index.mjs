@@ -27,7 +27,17 @@ import { buildCoordinatorImagePrompts, buildSingleCharacterTaskPrompts } from ".
 import { createGpuResourceScheduler } from "./gpu-resource-scheduler.mjs";
 import { jobStartMessage } from "./job-messages.mjs";
 import { createSettingsStore, PROCESS_KINDS } from "./settings.mjs";
-import { rigInputPath } from "./workflow-assets.mjs";
+import { createAgentRoutes } from "./features/agents/routes.mjs";
+import { createApprovalRoutes } from "./features/approvals/routes.mjs";
+import { createAssetRoutes } from "./features/assets/routes.mjs";
+import { createJobRoutes } from "./features/jobs/routes.mjs";
+import { select2dExecution } from "./features/jobs/2d-execution-policy.mjs";
+import { createQualityGateRoutes } from "./features/quality-gates/routes.mjs";
+import { createRunRoutes } from "./features/runs/routes.mjs";
+import { createSettingsRoutes } from "./features/settings/routes.mjs";
+import { createSystemRoutes } from "./features/system/routes.mjs";
+import { createWorkspaceRoutes } from "./features/workspaces/routes.mjs";
+import { dispatchRoutes } from "./http/dispatch-routes.mjs";
 
 const serverEntry = fileURLToPath(import.meta.url);
 const serverSourceMtimeMs = Math.trunc(statSync(serverEntry).mtimeMs);
@@ -64,6 +74,7 @@ const scripts = {
   topology: join(pipelineDir, "run_3d_retopology.py"),
   rig: join(pipelineDir, "run_3d_skinning.py"),
   crop: join(pipelineDir, "crop_character_sheet.py"),
+  "tpose-repair": join(pipelineDir, "repair_tpose_image.py"),
 };
 const workflowFiles = {
   "2d": join(pipelineDir, "2D_Gen_QwenImage2512.json"),
@@ -576,11 +587,21 @@ function advanceRun(runId, reason = "用户确认当前阶段产物") {
   return runDetail(runId);
 }
 
-function updateRunPrompts(runId, { positivePrompt, negativePrompt, reason = "Agent 更新角色提示词" }) {
+function updateRunPrompts(runId, {
+  positivePrompt,
+  negativePrompt,
+  reason = "Agent 更新角色提示词",
+  preserveFailedTpose = false,
+}) {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
   if (activeJobs.has(runId) || run.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能修改提示词");
-  if (run.currentStage > 1) throw new Error("已有下游资产，请先回退到概念图生成阶段再修改提示词");
+  const preservesRepairSource = preserveFailedTpose
+    && run.currentStage === 2
+    && run.qaStatus === "failed"
+    && run.imagePathInternal
+    && existsSync(run.imagePathInternal);
+  if (run.currentStage > 1 && !preservesRepairSource) throw new Error("已有下游资产，请先回退到概念图生成阶段再修改提示词");
   if (positivePrompt === undefined && negativePrompt === undefined) throw new Error("至少需要更新一项提示词");
 
   const nextPositive = cleanText(positivePrompt ?? run.positivePrompt, 4000, "正向提示词", true);
@@ -668,10 +689,10 @@ function skipTopologyAndStartRig(runId) {
 }
 
 function runStageJob(runId, action) {
-  const jobTypes = { generate_2d: "2d", check_tpose: "qa", generate_3d: "3d", retopologize: "topology", rig: "rig" };
+  const jobTypes = { generate_2d: "2d", repair_2d: "2d", check_tpose: "qa", generate_3d: "3d", retopologize: "topology", rig: "rig" };
   const jobType = jobTypes[action];
   if (!jobType) throw new Error("未知阶段任务");
-  return startJob(runId, jobType);
+  return startJob(runId, jobType, { repairMode: action === "repair_2d" });
 }
 
 function json(res, status, body) {
@@ -1037,6 +1058,61 @@ function safeOutputPath(value, expected = "any") {
   return candidate;
 }
 
+function repairTposeImage(runId, context = {}) {
+  const run = getRunRow(runId);
+  if (!run) throw new Error("任务不存在");
+  if (run.currentStage !== 2 || run.qaStatus !== "failed") throw new Error("只有失败的 T-Pose 质检可以执行确定性修复");
+  if (!run.imagePathInternal || !existsSync(run.imagePathInternal)) throw new Error("失败的 T-Pose 图片不存在");
+  const metrics = serializeRun(run).qaMetrics;
+  const child = spawnSync(PYTHON_COMMAND, [
+    scripts["tpose-repair"],
+    run.imagePathInternal,
+    "--metrics-json", JSON.stringify(metrics),
+    "--output-root", outputRoot,
+  ], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 30_000,
+    env: { ...process.env, PYTHONUTF8: "1" },
+  });
+  if (child.error) throw child.error;
+  if (child.status !== 0) throw new Error((child.stderr || "确定性 T-Pose 修复失败").trim().slice(-1200));
+  const line = child.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean).at(-1);
+  const result = JSON.parse(line || "{}");
+  if (result.applied !== true) return result;
+
+  const source = safeOutputPath(result.outputPath, "file");
+  const suffix = extname(source).toLowerCase() || ".png";
+  const filename = `${runId}${suffix}`;
+  copyFileSync(source, join(generatedDir, filename));
+  const previewPath = `/generated/${filename}?v=${Date.now()}`;
+  const now = new Date().toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(`
+      UPDATE runs SET current_stage = 2, status = 'active', qa_status = 'pending',
+        job_type = 'none', generation_status = 'idle', generation_message = '确定性 T-Pose 修复完成，等待重新质检',
+        generation_progress = 100, generation_prompt_id = NULL, generation_current_node = NULL,
+        preview_path = ?, image_path = ?, model_path = NULL, topology_path = NULL, rigged_model_path = NULL,
+        qa_score = NULL, qa_summary = '', qa_metrics = '{}', qa_overlay_path = NULL, updated_at = ?
+      WHERE id = ?
+    `).run(previewPath, source, now, runId);
+    addEvent(
+      runId,
+      "qa_deterministic_repair_applied",
+      2,
+      `第 ${Number(context.attempt) || 1} 轮确定性修复：${Array.isArray(result.actions) ? result.actions.join("、") : result.strategy}`,
+      now,
+    );
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+  return { ...result, outputPath: source, previewPath };
+}
+
 function findLatestGlb(value) {
   const rootPath = safeOutputPath(value);
   if (statSync(rootPath).isFile()) {
@@ -1273,12 +1349,12 @@ function failJob(runId, jobType, errorMessage) {
   addEvent(runId, `${jobType}_failed`, { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType], `${jobType.toUpperCase()} 任务失败：${message}`, now);
 }
 
-function launchJob(run, jobType, processConfig, lease) {
+function launchJob(run, jobType, processConfig, lease, execution2d = null) {
   const usesImageApi = jobType === "2d" && processConfig.mode === "api";
   const usesTopologyApi = jobType === "topology";
   const workflowPath = usesImageApi || usesTopologyApi ? null : join(runtimeWorkflowDir, `${run.id}-${jobType}-${randomUUID()}.json`);
   if (workflowPath) writeFileSync(workflowPath, JSON.stringify(processConfig.workflow), "utf8");
-  const sourceImage = run.pipelineType === "image_to_model" ? run.sourceImagePathInternal : run.imagePathInternal;
+  const sourceImage = execution2d?.sourceImage ?? run.imagePathInternal;
   const args = usesImageApi
     ? [
         scripts["2d-api"],
@@ -1287,7 +1363,7 @@ function launchJob(run, jobType, processConfig, lease) {
         "--base-url", processConfig.api.baseUrl,
         "--model", processConfig.api.model,
         ...(sourceImage && existsSync(sourceImage) ? ["--source-image", sourceImage] : []),
-        ...(run.pipelineType === "image_to_model" ? ["--tpose-output"] : []),
+        ...(execution2d?.tposeOutput ? ["--tpose-output"] : []),
       ]
     : usesTopologyApi
       ? [
@@ -1368,21 +1444,30 @@ function launchJob(run, jobType, processConfig, lease) {
         const completion = completeJob(run.id, jobType, stdout, {
           imageProvider: usesImageApi ? `图片 API ${processConfig.api.model}` : "DGX Qwen Image",
         });
-        void assetAgent.handleJobCompleted(completion).catch((error) => {
-          console.error(`[Agent] ${jobType} completion hook failed:`, error);
+        // The scheduler ID is released in finally. Deferring the Agent hook by
+        // one microtask prevents an automatic next stage from reusing the same
+        // run ID while the completed lease is still registered.
+        queueMicrotask(() => {
+          void assetAgent.handleJobCompleted(completion).catch((error) => {
+            console.error(`[Agent] ${jobType} completion hook failed:`, error);
+          });
         });
       } else {
         const message = errorMessage || stderr || `Python 退出代码非零`;
         failJob(run.id, jobType, message);
-        void assetAgent.handleJobFailed({ runId: run.id, jobType, message: message.trim().slice(-1200) }).catch((error) => {
-          console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, error);
+        queueMicrotask(() => {
+          void assetAgent.handleJobFailed({ runId: run.id, jobType, message: message.trim().slice(-1200) }).catch((error) => {
+            console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, error);
+          });
         });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "任务结果处理失败";
       failJob(run.id, jobType, message);
-      void assetAgent.handleJobFailed({ runId: run.id, jobType, message }).catch((diagnosisError) => {
-        console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, diagnosisError);
+      queueMicrotask(() => {
+        void assetAgent.handleJobFailed({ runId: run.id, jobType, message }).catch((diagnosisError) => {
+          console.error(`[Agent] ${jobType} failure diagnosis hook failed:`, diagnosisError);
+        });
       });
     } finally {
       lease.release();
@@ -1399,7 +1484,7 @@ function launchJob(run, jobType, processConfig, lease) {
   };
 }
 
-function startJob(runId, jobType) {
+function startJob(runId, jobType, options = {}) {
   const run = getRunRow(runId);
   if (!run) throw new Error("任务不存在");
   if (run.jobStatus === "running") throw new Error("当前任务仍在执行");
@@ -1422,9 +1507,20 @@ function startJob(runId, jobType) {
     : settingsStore.processConfig(jobType);
   if (jobType === "topology" && !processConfig.url) throw new Error("拓扑 API 未配置，请在“请求设置 → 拓扑 API”中填写服务地址");
   if (jobType === "topology" && (!Number.isInteger(processConfig.targetQuads) || processConfig.targetQuads < 1_000 || processConfig.targetQuads > 1_000_000)) throw new Error("TOPOLOGY_TARGET_QUADS 必须在 1,000 到 1,000,000 之间");
-  if (jobType === "2d" && run.pipelineType === "image_to_model") {
-    processConfig = { ...processConfig, mode: "api", api: settingsStore.imageConfig("image_to_model") };
-    if (!run.sourceImagePathInternal || !existsSync(run.sourceImagePathInternal)) {
+  const execution2d = jobType === "2d"
+    ? select2dExecution({
+        run,
+        repairMode: options.repairMode === true,
+        defaultProcessConfig: processConfig,
+        imageEditConfig: settingsStore.imageConfig("image_to_model"),
+      })
+    : null;
+  if (execution2d) {
+    processConfig = execution2d.processConfig;
+    if (options.repairMode && (!execution2d.sourceImage || !existsSync(execution2d.sourceImage))) {
+      throw new Error("图片编辑修复缺少失败的 T-Pose 输入图");
+    }
+    if (!options.repairMode && run.pipelineType === "image_to_model" && (!execution2d.sourceImage || !existsSync(execution2d.sourceImage))) {
       throw new Error("图生模型工作流缺少角色原画");
     }
   }
@@ -1479,7 +1575,7 @@ function startJob(runId, jobType) {
           WHERE id = ? AND generation_status = 'running' AND job_type = ?
         `).run(message, startedAt, runId, jobType);
         addEvent(runId, `${jobType}_started`, stage, `获得全局 GPU 资源，启动${message.replace("正在调用 ", "")}`, startedAt);
-        return launchJob(getRunRow(runId), jobType, processConfig, lease);
+        return launchJob(getRunRow(runId), jobType, processConfig, lease, execution2d);
       },
       onStartError: (error) => {
         failJob(runId, jobType, error instanceof Error ? error.message : "任务进程启动失败");
@@ -1499,6 +1595,11 @@ function startJob(runId, jobType) {
 
 let systemCache = null;
 let systemCacheAt = 0;
+
+function invalidateSystemCache() {
+  systemCache = null;
+  systemCacheAt = 0;
+}
 
 async function fetchComfy(baseUrl, path, timeout = 5000) {
   const controller = new AbortController();
@@ -1873,6 +1974,7 @@ const assetAgent = createAssetAgentRuntime({
   updatePrompts: updateRunPrompts,
   advanceWorkflow,
   revertWorkflow: revertRun,
+  repairTposeImage,
   runStageJob,
   getAgentConfig: settingsStore.agentConfig,
   getRunImagePath: (runId) => getRunRow(runId)?.imagePathInternal || null,
@@ -2460,6 +2562,92 @@ for (const pending of approvalRuntime.listApprovals("pending")) {
   }
 }
 
+const featureRoutes = [
+  createSystemRoutes({
+    assetAgent,
+    checkComfyUi,
+    databasePath: dbPath,
+    gpuScheduler,
+    json,
+    sourceMtimeMs: serverSourceMtimeMs,
+  }),
+  createSettingsRoutes({
+    invalidateSystemCache,
+    json,
+    readBody,
+    settingsStore,
+  }),
+  createApprovalRoutes({
+    approvalRuntime,
+    cleanText,
+    getRunRow,
+    json,
+    readBody,
+  }),
+  createWorkspaceRoutes({
+    cleanText,
+    createWorkspaceRecord,
+    deleteWorkspaceRecord,
+    getWorkspacesSummary,
+    json,
+    readBody,
+  }),
+  createAssetRoutes({
+    createAnimationAsset,
+    deleteAnimationAsset,
+    deleteWorkspaceAsset,
+    getAnimationAsset,
+    getRunRow,
+    json,
+    listAnimationAssets,
+    listWorkspaceAssets,
+    readBody,
+    streamAssetPreview,
+    streamDownload,
+  }),
+  createAgentRoutes({
+    assetAgent,
+    cleanText,
+    coordinatorAgent,
+    getRunRow,
+    getWorkspace,
+    json,
+    listDispatcherGenerations,
+    listDispatcherTaskBatches,
+    readBody,
+  }),
+  createJobRoutes({
+    getRunRow,
+    json,
+    startJob,
+  }),
+  createQualityGateRoutes({
+    advanceRun,
+    assetAgent,
+    confirmCharacterIdea,
+    existsSync,
+    getRunRow,
+    imageContent,
+    json,
+    readBody,
+    revertRun,
+  }),
+  createRunRoutes({
+    activeJobs,
+    addEvent,
+    assetAgent,
+    createRunBodyMaxBytes: CREATE_RUN_BODY_MAX_BYTES,
+    createRunRecord,
+    db,
+    getRunRow,
+    json,
+    readBody,
+    runDetail,
+    runSelect,
+    serializeRun,
+  }),
+];
+
 const server = createServer(async (req, res) => {
   setCors(req, res);
   if (req.method === "OPTIONS") {
@@ -2471,399 +2659,7 @@ const server = createServer(async (req, res) => {
   const parts = url.pathname.split("/").filter(Boolean);
 
   try {
-    if (req.method === "GET" && url.pathname === "/api/health") {
-      json(res, 200, {
-        ok: true,
-        database: "sqlite",
-        gpuScheduler: gpuScheduler.status(),
-        databasePath: dbPath,
-        sourceMtimeMs: serverSourceMtimeMs,
-        capabilities: ["workspace-assets-v1", "workspace-delete-v1", "mixamo-animation-library-v1", "global-gpu-scheduler-v1"],
-        agent: assetAgent.status(),
-      });
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/system") {
-      json(res, 200, {
-        api: true,
-        database: true,
-        agent: assetAgent.status(),
-        comfyui: await checkComfyUi(url.searchParams.get("force") === "1"),
-      });
-      return;
-    }
-    if (parts[0] === "api" && parts[1] === "settings" && parts[2] === "workflows" && parts[3]) {
-      const kind = parts[3];
-      if (req.method === "GET" && parts[4]) {
-        json(res, 200, settingsStore.getWorkflow(kind, parts[4]));
-        return;
-      }
-      if (req.method === "POST" && parts.length === 4) {
-        const body = await readBody(req, 750_000);
-        const result = settingsStore.uploadWorkflow(kind, body);
-        systemCache = null;
-        systemCacheAt = 0;
-        json(res, 201, result);
-        return;
-      }
-      if (req.method === "DELETE" && parts[4]) {
-        const result = settingsStore.removeWorkflow(kind, parts[4]);
-        systemCache = null;
-        systemCacheAt = 0;
-        json(res, 200, result);
-        return;
-      }
-    }
-    if (req.method === "POST" && url.pathname === "/api/settings/agent/models") {
-      const body = await readBody(req, 50_000);
-      json(res, 200, await settingsStore.fetchAgentModels(body));
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/settings") {
-      json(res, 200, settingsStore.publicSettings());
-      return;
-    }
-    if (req.method === "PUT" && url.pathname === "/api/settings") {
-      const body = await readBody(req, 2_500_000);
-      const result = settingsStore.update(body);
-      systemCache = null;
-      systemCacheAt = 0;
-      json(res, 200, result);
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/ui-preferences") {
-      json(res, 200, approvalRuntime.preferences());
-      return;
-    }
-    if (req.method === "PUT" && url.pathname === "/api/ui-preferences") {
-      const body = await readBody(req, 50_000);
-      json(res, 200, approvalRuntime.updatePreferences(body));
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/agent-controls") {
-      const runId = url.searchParams.get("runId");
-      const workspaceId = url.searchParams.get("workspaceId");
-      const sessionId = url.searchParams.get("sessionId");
-      const approvals = approvalRuntime.listApprovals("pending").filter((item) => (
-        item.scopeType === "coordinator"
-          ? Boolean(workspaceId) && Boolean(sessionId) && item.workspaceId === workspaceId && item.sessionId === sessionId
-          : Boolean(runId) && item.runId === runId
-      ));
-      json(res, 200, {
-        coordinatorMode: approvalRuntime.permission("coordinator", "global"),
-        taskMode: runId ? approvalRuntime.permission("task", runId) : null,
-        approvals,
-      });
-      return;
-    }
-    if (req.method === "PUT" && url.pathname === "/api/agent-controls") {
-      const body = await readBody(req, 50_000);
-      const scopeType = body.scopeType === "coordinator" ? "coordinator" : body.scopeType === "task" ? "task" : null;
-      if (!scopeType) throw new Error("未知 Agent 权限范围");
-      const scopeId = scopeType === "coordinator" ? "global" : cleanText(body.runId, 80, "任务 ID", true);
-      if (scopeType === "task" && !getRunRow(scopeId)) throw new Error("任务不存在");
-      json(res, 200, approvalRuntime.setPermission(scopeType, scopeId, body.mode));
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/notifications") {
-      json(res, 200, { notifications: approvalRuntime.listNotifications(url.searchParams.get("limit")) });
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/notifications/read-all") {
-      json(res, 200, approvalRuntime.markAllNotificationsRead());
-      return;
-    }
-    if (req.method === "DELETE" && url.pathname === "/api/notifications") {
-      json(res, 200, approvalRuntime.clearNotifications());
-      return;
-    }
-    if (parts[0] === "api" && parts[1] === "notifications" && parts[2] && parts.length === 3 && req.method === "DELETE") {
-      const notificationId = Number(parts[2]);
-      if (!Number.isInteger(notificationId) || notificationId <= 0) throw new Error("通知不存在");
-      json(res, 200, approvalRuntime.deleteNotification(notificationId));
-      return;
-    }
-    if (parts[0] === "api" && parts[1] === "notifications" && parts[2] && req.method === "POST" && parts[3] === "read") {
-      json(res, 200, approvalRuntime.markNotificationRead(Number(parts[2])));
-      return;
-    }
-    if (parts[0] === "api" && parts[1] === "approvals" && parts[2] && req.method === "POST") {
-      if (parts[3] === "approve") {
-        const approval = await approvalRuntime.approve(Number(parts[2]));
-        json(res, 200, { ...approval, payload: undefined });
-        return;
-      }
-      if (parts[3] === "reject") {
-        const approval = approvalRuntime.reject(Number(parts[2]));
-        json(res, 200, { ...approval, payload: undefined });
-        return;
-      }
-    }
-    if (req.method === "GET" && url.pathname === "/api/workspaces") {
-      json(res, 200, { workspaces: getWorkspacesSummary() });
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/dispatcher/messages") {
-      const workspaceId = url.searchParams.get("workspaceId");
-      json(res, 200, coordinatorAgent.getConversation(workspaceId));
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/dispatcher/sessions") {
-      const body = await readBody(req);
-      json(res, 201, coordinatorAgent.startSession(cleanText(body.workspaceId, 80, "工作空间 ID", true)));
-      return;
-    }
-    if (req.method === "PUT" && url.pathname === "/api/dispatcher/sessions/current") {
-      const body = await readBody(req);
-      json(res, 200, coordinatorAgent.activateSession(
-        cleanText(body.workspaceId, 80, "工作空间 ID", true),
-        cleanText(body.sessionId, 80, "会话 ID", true),
-      ));
-      return;
-    }
-    if (req.method === "DELETE" && parts[0] === "api" && parts[1] === "dispatcher" && parts[2] === "sessions" && parts[3]) {
-      json(res, 200, coordinatorAgent.deleteSession(
-        cleanText(url.searchParams.get("workspaceId"), 80, "工作空间 ID", true),
-        cleanText(decodeURIComponent(parts[3]), 80, "会话 ID", true),
-      ));
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/dispatcher/generations") {
-      const workspaceId = url.searchParams.get("workspaceId") || "default";
-      const sessionId = url.searchParams.get("sessionId") || "";
-      if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
-      json(res, 200, { generations: listDispatcherGenerations(workspaceId, sessionId) });
-      return;
-    }
-    if (req.method === "POST" && parts[0] === "api" && parts[1] === "dispatcher" && parts[2] === "generations" && parts[3] && parts[4] === "regenerate") {
-      const body = await readBody(req);
-      json(res, 200, coordinatorAgent.regenerateCharacterSheet({
-        workspaceId: cleanText(body.workspaceId, 80, "工作空间 ID", true),
-        sessionId: cleanText(body.sessionId, 80, "会话 ID", true),
-        generationId: cleanText(decodeURIComponent(parts[3]), 80, "生成任务 ID", true),
-      }));
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/dispatcher/task-batches") {
-      const workspaceId = url.searchParams.get("workspaceId") || "default";
-      const sessionId = url.searchParams.get("sessionId") || "";
-      if (!getWorkspace(workspaceId)) throw new Error("工作空间不存在");
-      json(res, 200, { batches: listDispatcherTaskBatches(workspaceId, sessionId) });
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/dispatcher/messages") {
-      const body = await readBody(req, 18_000_000);
-      json(res, 200, await coordinatorAgent.run({
-        workspaceId: typeof body.workspaceId === "string" && body.workspaceId ? body.workspaceId : null,
-        message: body.message,
-        image: body.image,
-      }));
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/dispatcher/cancel") {
-      json(res, 200, { cancelled: coordinatorAgent.cancel() });
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/workspaces") {
-      const body = await readBody(req);
-      json(res, 201, createWorkspaceRecord(body));
-      return;
-    }
-    if (req.method === "DELETE" && parts[0] === "api" && parts[1] === "workspaces" && parts[2] && parts.length === 3) {
-      json(res, 200, deleteWorkspaceRecord(cleanText(decodeURIComponent(parts[2]), 80, "工作空间 ID", true)));
-      return;
-    }
-    if (parts[0] === "api" && parts[1] === "animations") {
-      if (req.method === "GET" && parts.length === 2) {
-        json(res, 200, { animations: listAnimationAssets() });
-        return;
-      }
-      if (req.method === "POST" && parts.length === 2) {
-        const body = await readBody(req, 22_000_000);
-        json(res, 201, { animation: await createAnimationAsset(body), animations: listAnimationAssets() });
-        return;
-      }
-      if (parts[2]) {
-        const animationId = decodeURIComponent(parts[2]);
-        const animation = getAnimationAsset(animationId);
-        if (!animation) {
-          json(res, 404, { error: "动画不存在" });
-          return;
-        }
-        if (req.method === "GET" && parts[3] === "file" && parts.length === 4) {
-          streamAssetPreview(res, animation.filePath);
-          return;
-        }
-        if (req.method === "DELETE" && parts.length === 3) {
-          json(res, 200, deleteAnimationAsset(animationId));
-          return;
-        }
-      }
-    }
-    if (parts[0] === "api" && parts[1] === "workspaces" && parts[2] && parts[3] === "assets") {
-      const workspaceId = decodeURIComponent(parts[2]);
-      if (req.method === "GET" && parts.length === 4) {
-        json(res, 200, { assets: listWorkspaceAssets(workspaceId) });
-        return;
-      }
-      if (req.method === "DELETE" && parts[4] && parts[5] && parts.length === 6) {
-        json(res, 200, deleteWorkspaceAsset(workspaceId, decodeURIComponent(parts[4]), decodeURIComponent(parts[5])));
-        return;
-      }
-    }
-    if (req.method === "GET" && url.pathname === "/api/runs") {
-      const workspaceId = url.searchParams.get("workspaceId");
-      const rows = workspaceId
-        ? db.prepare(`${runSelect} WHERE workspace_id = ? ORDER BY updated_at DESC`).all(workspaceId)
-        : db.prepare(`${runSelect} ORDER BY updated_at DESC`).all();
-      json(res, 200, { runs: rows.map(serializeRun) });
-      return;
-    }
-    if (req.method === "POST" && url.pathname === "/api/runs") {
-      // The image-to-model workflow uploads a base64-encoded source art that
-      // can inflate to ~16 MB; bump the body cap to CREATE_RUN_BODY_MAX_BYTES
-      // so the legacy 1 MB default does not reject legitimate uploads.
-      const body = await readBody(req, CREATE_RUN_BODY_MAX_BYTES);
-      json(res, 201, createRunRecord(body));
-      return;
-    }
-
-    if (parts[0] === "api" && parts[1] === "runs" && parts[2]) {
-      const id = parts[2];
-      const existing = getRunRow(id);
-      if (!existing) {
-        json(res, 404, { error: "任务不存在" });
-        return;
-      }
-      if (req.method === "GET" && parts.length === 3) {
-        json(res, 200, {
-          ...runDetail(id),
-          agentRoleRuns: assetAgent.getRoleRuns(id),
-          agentWorkflowPlan: assetAgent.getWorkflowPlan(id),
-        });
-        return;
-      }
-      if (req.method === "GET" && parts[3] === "agent" && parts[4] === "messages") {
-        json(res, 200, assetAgent.getConversation(id));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "agent" && parts[4] === "messages") {
-        const body = await readBody(req, 6_000_000);
-        json(res, 200, await assetAgent.run({ runId: id, message: body.message, image: body.image }));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "agent" && parts[4] === "cancel") {
-        json(res, 200, { cancelled: assetAgent.cancel(id) });
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "agent" && parts[4] === "sessions" && parts.length === 5) {
-        json(res, 201, assetAgent.startSession(id));
-        return;
-      }
-      if (req.method === "PUT" && parts[3] === "agent" && parts[4] === "sessions" && parts[5] === "current") {
-        const body = await readBody(req);
-        json(res, 200, assetAgent.activateSession(id, cleanText(body.sessionId, 80, "会话 ID", true)));
-        return;
-      }
-      if (req.method === "DELETE" && parts[3] === "agent" && parts[4] === "sessions" && parts[5]) {
-        json(res, 200, assetAgent.deleteSession(id, cleanText(decodeURIComponent(parts[5]), 80, "会话 ID", true)));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "start") {
-        const body = await readBody(req);
-        // Art Director 只生成检查报告（保存到 agent_role_runs），不再自动用修订后的提示词覆盖用户输入。
-        // 用户原始的正向/负向提示词直接进入 confirmCharacterIdea，由用户自己决定是否采纳 Art Director 的建议。
-        if (assetAgent.status().configured) {
-          const referenceImage = existing.pipelineType === "image_to_model" && existing.sourceImagePathInternal && existsSync(existing.sourceImagePathInternal)
-            ? imageContent(existing.sourceImagePathInternal)
-            : null;
-          try {
-            await assetAgent.reviewPromptsOnly(id, body, "确认角色设定前检查提示词", referenceImage);
-          } catch (reviewError) {
-            console.warn("[art-director] 检查提示词失败，已忽略：", reviewError?.message || reviewError);
-          }
-        }
-        json(res, 200, { ...confirmCharacterIdea(id, body), agentRoleRuns: assetAgent.getRoleRuns(id) });
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "generate-2d") {
-        json(res, 202, startJob(id, "2d"));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "check-tpose") {
-        json(res, 202, startJob(id, "qa"));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "generate-3d") {
-        json(res, 202, startJob(id, "3d"));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "retopologize") {
-        json(res, 202, startJob(id, "topology"));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "skip-topology") {
-        json(res, 202, skipTopologyAndStartRig(id));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "rig") {
-        json(res, 202, startJob(id, "rig"));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "advance") {
-        json(res, 200, advanceRun(id));
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "revert") {
-        const body = await readBody(req);
-        json(res, 200, revertRun(id, Number(body.stage)));
-        return;
-      }
-      if (req.method === "GET" && parts[3] === "preview" && parts[4]) {
-        const paths = {
-          source: existing.sourceImagePathInternal,
-          image: existing.imagePathInternal,
-          model: existing.modelPathInternal,
-          topology: existing.topologyPathInternal,
-          rigged: existing.riggedModelPathInternal,
-        };
-        if (!(parts[4] in paths)) throw new Error("未知资产类型");
-        streamAssetPreview(res, paths[parts[4]]);
-        return;
-      }
-      if (req.method === "GET" && parts[3] === "download" && parts[4]) {
-        const paths = {
-          source: existing.sourceImagePathInternal,
-          image: existing.imagePathInternal,
-          model: existing.modelPathInternal,
-          topology: existing.topologyPathInternal,
-          rigged: existing.riggedModelPathInternal,
-        };
-        if (!(parts[4] in paths)) throw new Error("未知产物类型");
-        streamDownload(res, paths[parts[4]], `${existing.name}-${parts[4]}`);
-        return;
-      }
-      if (req.method === "POST" && parts[3] === "reset") {
-        if (activeJobs.has(id) || existing.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能重置");
-        const now = new Date().toISOString();
-        db.prepare(`
-          UPDATE runs SET current_stage = 0, status = 'active', qa_status = 'pending',
-            job_type = 'none', generation_status = 'idle', generation_message = '', generation_progress = 0,
-            generation_prompt_id = NULL, generation_current_node = NULL, preview_path = NULL,
-            image_path = NULL, model_path = NULL, topology_path = NULL, topology_skipped = 0, rigged_model_path = NULL,
-            qa_score = NULL, qa_summary = '', qa_metrics = '{}', qa_overlay_path = NULL, updated_at = ? WHERE id = ?
-        `).run(now, id);
-        addEvent(id, "reset", 0, "流程和产物引用已重置", now);
-        json(res, 200, runDetail(id));
-        return;
-      }
-      if (req.method === "DELETE" && parts.length === 3) {
-        if (activeJobs.has(id) || existing.jobStatus === "running") throw new Error("DGX 任务正在执行，暂时不能删除");
-        db.prepare("DELETE FROM runs WHERE id = ?").run(id);
-        json(res, 200, { ok: true });
-        return;
-      }
-    }
+    if (await dispatchRoutes(featureRoutes, { req, res, url, parts })) return;
     json(res, 404, { error: "接口不存在" });
   } catch (error) {
     const message = error instanceof Error ? error.message : "服务器错误";

@@ -17,6 +17,7 @@
     "agent:verify": "node scripts/verify-stepfun-pi.mjs",
     "test": "npm run test:node && npm run test:python && npm run build",
     "test:node": "node --test server/*.test.mjs",
+    "test:e2e": "playwright test",
     "test:python": "uv run --locked --project server/pipeline python -m unittest discover -s server/pipeline -p \"test_*.py\"",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.46.0",
+    "@playwright/test": "^1.51.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",

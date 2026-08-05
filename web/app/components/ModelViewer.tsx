@@ -8,6 +8,14 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 
+import {
+  createAnimation,
+  fetchAnimationFile,
+  fetchAnimations,
+  removeAnimation,
+  type AnimationAsset,
+} from "../studio/features/assets/animation-api";
+
 type ModelViewerProps = {
   src: string;
   label: string;
@@ -33,21 +41,6 @@ type BonePickerRuntime = {
   bone: THREE.Bone;
   parentBone: THREE.Bone | null;
   kind: "joint" | "segment";
-};
-type AnimationAsset = {
-  id: string;
-  name: string;
-  filename: string;
-  size: number;
-  duration: number;
-  trackCount: number;
-  boneCount: number;
-  mappedBoneCount: number;
-  compatible: boolean;
-  boneNames: string[];
-  fileUrl: string;
-  createdAt: string;
-  bundled?: boolean;
 };
 type RetargetedClip = { clip: THREE.AnimationClip; mappedBoneCount: number };
 
@@ -312,11 +305,8 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
   useEffect(() => {
     if (!rigged || !animationApiBase) return;
     const controller = new AbortController();
-    fetch(`${animationApiBase}/api/animations`, { signal: controller.signal })
-      .then(async (response) => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "动画库读取失败");
-        const items = Array.isArray(data.animations) ? data.animations as AnimationAsset[] : [];
+    fetchAnimations(animationApiBase, controller.signal)
+      .then((items) => {
         setAnimations(items);
         setSelectedAnimationId((current) => current && items.some((item) => item.id === current) ? current : items[0]?.id || "");
       })
@@ -489,14 +479,8 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
     setAnimationBusy(true);
     setAnimationError("");
     try {
-      const fileUrl = asset.fileUrl.startsWith("http") ? asset.fileUrl : `${animationApiBase}${asset.fileUrl}`;
-      const response = await fetch(fileUrl);
-      if (!response.ok) {
-        let message = "动画文件读取失败";
-        try { message = (await response.json()).error || message; } catch { /* binary response */ }
-        throw new Error(message);
-      }
-      const source = new FBXLoader().parse(await response.arrayBuffer(), fileUrl.slice(0, fileUrl.lastIndexOf("/") + 1));
+      const file = await fetchAnimationFile(animationApiBase, asset.fileUrl);
+      const source = new FBXLoader().parse(file.data, file.url.slice(0, file.url.lastIndexOf("/") + 1));
       const sourceClip = source.animations?.[0];
       if (!sourceClip) throw new Error("FBX 中没有动画片段");
       resetEntirePose();
@@ -606,14 +590,12 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
     setAnimationBusy(true);
     setAnimationError("");
     try {
-      const response = await fetch(`${animationApiBase}/api/animations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filename: file.name, name: file.name.replace(/\.fbx$/i, ""), data: arrayBufferToBase64(await file.arrayBuffer()) }),
+      const data = await createAnimation(animationApiBase, {
+        filename: file.name,
+        name: file.name.replace(/\.fbx$/i, ""),
+        data: arrayBufferToBase64(await file.arrayBuffer()),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "动画上传失败");
-      const items = Array.isArray(data.animations) ? data.animations as AnimationAsset[] : [];
+      const items = data.animations;
       clearAnimationPreview();
       setAnimations(items);
       setSelectedAnimationId(data.animation?.id || items[0]?.id || "");
@@ -635,10 +617,7 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
     setAnimationBusy(true);
     setAnimationError("");
     try {
-      const response = await fetch(`${animationApiBase}/api/animations/${encodeURIComponent(asset.id)}`, { method: "DELETE" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "动画删除失败");
-      const items = Array.isArray(data.animations) ? data.animations as AnimationAsset[] : [];
+      const items = await removeAnimation(animationApiBase, asset.id);
       clearAnimationPreview();
       setAnimations(items);
       setSelectedAnimationId(items[0]?.id || "");
