@@ -2837,7 +2837,18 @@ body {
   inset: 0;
   pointer-events: none;
   background-color: transparent;
-  background-image: url("/super-idol-master-background.png");
+  background-image:
+    radial-gradient(
+      ellipse at 62% 8%,
+      rgba(93, 134, 203, 0.045),
+      transparent 40%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.015),
+      rgba(0, 0, 0, 0.12)
+    ),
+    url("/super-idol-master-background.png");
   background-repeat: no-repeat;
   background-position: 6% clamp(56px, 8vh, 116px);
   background-size: auto 100%;
@@ -3017,3 +3028,326 @@ body {
 :root[data-theme="light"] .conversation-menu {
   background: rgba(242, 246, 251, 0.96);
 }
+
+/* Light theme overrides for the reference-led home composition ----------- */
+
+:root[data-theme="light"] .screen-home .topbar {
+  background: rgba(238, 243, 250, 0.94);
+  box-shadow: inset 0 -1px 0 rgba(72, 91, 122, 0.18);
+}
+
+:root[data-theme="light"] .screen-home .topbar-center {
+  border-color: rgba(72, 91, 122, 0.26);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.6));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 10px 28px rgba(48, 64, 92, 0.12);
+}
+
+:root[data-theme="light"] .screen-home .topbar-center button {
+  color: var(--text);
+}
+
+:root[data-theme="light"] .screen-home .topbar-center button.active {
+  color: var(--accent);
+}
+
+:root[data-theme="light"] .screen-home .topbar-workspace-button {
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.6));
+}
+
+:root[data-theme="light"] .screen-home .topbar-right > .icon-button:hover {
+  background: rgba(72, 91, 122, 0.08);
+}
+
+:root[data-theme="light"] .screen-home .home-conversation-manager .conversation-manager-trigger,
+:root[data-theme="light"] .screen-home .home-conversation-manager .conversation-create-button {
+  border-color: rgba(72, 91, 122, 0.26);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 243, 250, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 10px 24px rgba(48, 64, 92, 0.12);
+  color: var(--text);
+}
+
+:root[data-theme="light"] .screen-home .home-conversation-manager .conversation-manager-trigger > svg:first-child {
+  color: var(--text);
+}
+
+:root[data-theme="light"] .screen-home .workspace-sidebar {
+  border-right-color: rgba(72, 91, 122, 0.18);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.42), rgba(238, 243, 250, 0.28));
+}
+
+:root[data-theme="light"] .screen-home .workspace-group.selected {
+  border-color: rgba(72, 91, 122, 0.26);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.5) 58%, rgba(255, 255, 255, 0.66));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 20px 48px rgba(48, 64, 92, 0.1);
+}
+
+:root[data-theme="light"] .screen-home .workspace-group.selected .workspace-item {
+  border-bottom-color: rgba(72, 91, 122, 0.13);
+}
+
+:root[data-theme="light"] .screen-home .workspace-task-list > button:not(.workspace-new-task):hover {
+  background: rgba(72, 91, 122, 0.06);
+}
+
+:root[data-theme="light"] .screen-home .workspace-task-progress {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(50, 111, 205, 0.88) 0,
+      rgba(50, 111, 205, 0.88) var(--workspace-task-progress),
+      rgba(72, 91, 122, 0.12) var(--workspace-task-progress),
+      rgba(72, 91, 122, 0.12) 100%
+    );
+  box-shadow: 0 0 8px rgba(50, 111, 205, 0.18);
+}
+
+:root[data-theme="light"] .screen-home .dispatcher-composer {
+  border-color: rgba(72, 91, 122, 0.3);
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92), 0 22px 54px rgba(48, 64, 92, 0.12);
+}
+
+:root[data-theme="light"] .screen-home .dispatcher-composer textarea {
+  color: var(--text);
+}
+
+:root[data-theme="light"] .screen-home .dispatcher-composer textarea::placeholder {
+  color: rgba(111, 123, 143, 0.62);
+}
+
+:root[data-theme="light"] .screen-home .dispatcher-composer-footer {
+  border-top-color: rgba(72, 91, 122, 0.2);
+}
+
+:root[data-theme="light"] .screen-home .agent-permission-trigger {
+  border-color: rgba(72, 91, 122, 0.3);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(238, 243, 250, 0.96));
+  color: var(--text);
+}
+
+:root[data-theme="light"] .screen-home .dispatcher-send-button {
+  border-color: rgba(72, 91, 122, 0.42);
+  background:
+    radial-gradient(circle at 50% 52%, rgba(238, 243, 250, 0.96) 0 26%, transparent 57%),
+    radial-gradient(circle at 17% 15%, rgba(242, 238, 226, 0.58), transparent 32%),
+    radial-gradient(circle at 83% 16%, rgba(169, 145, 111, 0.58), transparent 34%),
+    radial-gradient(circle at 82% 84%, rgba(157, 132, 96, 0.48), transparent 32%),
+    radial-gradient(circle at 16% 84%, rgba(105, 137, 165, 0.5), transparent 31%),
+    linear-gradient(145deg, #d7d3cb, #e8edf4 34%, #f4f6fb 61%, #c8c1b5);
+  color: var(--text);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    inset 0 -1px 0 rgba(48, 64, 92, 0.22),
+    0 0 0 1px rgba(255, 255, 255, 0.5),
+    0 10px 22px rgba(48, 64, 92, 0.16);
+}
+
+:root[data-theme="light"] .screen-home .dispatcher-send-glyph {
+  filter: drop-shadow(0 0 4px rgba(72, 91, 122, 0.28));
+}
+
+:root[data-theme="light"] .screen-home .dispatcher-welcome button {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.6));
+  color: var(--text);
+}
+
+:root[data-theme="light"] .screen-home button svg {
+  color: var(--text);
+}
+
+:root[data-theme="light"] .screen-home .workspace-toggle-button,
+:root[data-theme="light"] .screen-home .workspace-group.expanded .workspace-chevron {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="light"] .workspace-sidebar-footer {
+  border-top-color: rgba(72, 91, 122, 0.18);
+  background: rgba(238, 243, 250, 0.42);
+  color: var(--text);
+}
+
+:root[data-theme="light"] .workspace-sidebar-settings {
+  color: var(--text);
+}
+
+:root[data-theme="light"] .workspace-sidebar-settings:hover {
+  background: rgba(72, 91, 122, 0.08);
+}
+
+:root[data-theme="light"] .screen-home .home-frame::before {
+  background-color: transparent;
+  background-image: url("/super-idol-master-background.png");
+  opacity: 0.18;
+}
+
+:root[data-theme="light"] .screen-home > .liquid-wave-background[data-animated="true"] {
+  mix-blend-mode: multiply;
+  opacity: 0.28;
+}
+
+/* Light theme overrides for task screen and shared modules ----------------- */
+
+/* Generation overlay & progress (dark hardcoded) */
+:root[data-theme="light"] .generation-overlay {
+  background: rgba(238, 243, 250, 0.82);
+  color: var(--text);
+  backdrop-filter: blur(7px);
+}
+
+:root[data-theme="light"] .generation-progress {
+  border-color: rgba(72, 91, 122, 0.2);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 48px rgba(48, 64, 92, 0.16);
+}
+
+:root[data-theme="light"] .generation-progress-heading b {
+  color: var(--text);
+}
+
+:root[data-theme="light"] .generation-progress > span:not(.generation-progress-track) {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="light"] .generation-progress-track {
+  background: rgba(72, 91, 122, 0.14);
+}
+
+:root[data-theme="light"] .generation-progress small {
+  color: var(--muted);
+}
+
+/* Preview empty state (dark hardcoded) */
+:root[data-theme="light"] .preview-empty {
+  color: var(--muted);
+}
+
+:root[data-theme="light"] .preview-empty strong {
+  color: var(--text-secondary);
+}
+
+/* Preview placeholder grid (uses #fff mix which is fine for light, but ensure tone) */
+:root[data-theme="light"] .preview-frame.placeholder {
+  background-image: linear-gradient(color-mix(in srgb, #000 4%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, #000 4%, transparent) 1px, transparent 1px);
+}
+
+/* Dispatcher generation regenerate button (dark hardcoded) */
+:root[data-theme="light"] .dispatcher-generation-regenerate {
+  border-color: rgba(72, 91, 122, 0.5);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text);
+  box-shadow: 0 4px 14px rgba(48, 64, 92, 0.16);
+}
+
+:root[data-theme="light"] .dispatcher-generation-regenerate:hover:not(:disabled) {
+  border-color: rgba(72, 91, 122, 0.82);
+  background: color-mix(in srgb, var(--accent) 82%, rgba(255, 255, 255, 0.82));
+}
+
+/* Asset library thumb badge (dark hardcoded) */
+:root[data-theme="light"] .asset-library-thumb small {
+  background: rgba(24, 31, 45, 0.76);
+  color: #fff;
+}
+
+/* Workflow JSON preview (dark hardcoded) */
+:root[data-theme="light"] .workflow-json-preview {
+  background: #f6f8fb;
+  color: #3a4a63;
+  border-color: var(--border);
+}
+
+/* Settings switch thumb shadow (dark hardcoded) */
+:root[data-theme="light"] .settings-switch::after {
+  box-shadow: 0 1px 3px rgba(48, 64, 92, 0.2);
+}
+
+/* Process mode control active shadow (dark hardcoded) */
+:root[data-theme="light"] .process-mode-control button.active {
+  box-shadow: 0 2px 8px rgba(48, 64, 92, 0.1);
+}
+
+/* Modal backdrops (dark hardcoded) */
+:root[data-theme="light"] .modal-backdrop {
+  background: rgba(238, 243, 250, 0.64);
+}
+
+:root[data-theme="light"] .settings-backdrop {
+  background: rgba(238, 243, 250, 0.6);
+}
+
+/* Asset library modal shadow (dark hardcoded) */
+:root[data-theme="light"] .asset-library-modal {
+  box-shadow: 0 28px 90px rgba(48, 64, 92, 0.22);
+}
+
+:root[data-theme="light"] .revert-confirm-modal {
+  box-shadow: 0 28px 80px rgba(48, 64, 92, 0.18);
+}
+
+:root[data-theme="light"] .create-modal {
+  box-shadow: 0 28px 80px rgba(48, 64, 92, 0.16);
+}
+
+:root[data-theme="light"] .settings-panel,
+:root[data-theme="light"] .global-settings-panel {
+  box-shadow: -24px 0 70px rgba(48, 64, 92, 0.16), inset 0 1px 0 var(--glass-highlight);
+}
+
+/* Agent attachment thumb remove button (dark hardcoded) */
+:root[data-theme="light"] .agent-attachment-thumb-remove {
+  border-color: rgba(72, 91, 122, 0.28);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+}
+
+:root[data-theme="light"] .agent-attachment-thumb-remove:hover {
+  background: rgba(200, 60, 60, 0.82);
+  color: #fff;
+}
+
+/* Agent attachment thumb hover shadow (dark hardcoded) */
+:root[data-theme="light"] .agent-attachment-thumb:hover {
+  box-shadow: 0 2px 10px rgba(48, 64, 92, 0.14);
+}
+
+/* Glass shadow adjustments for light theme */
+:root[data-theme="light"] .topbar {
+  box-shadow: 0 12px 38px rgba(50, 69, 101, 0.09), inset 0 -1px 0 rgba(255, 255, 255, 0.74);
+}
+
+:root[data-theme="light"] .dispatcher-composer,
+:root[data-theme="light"] .chat-composer {
+  box-shadow: 0 22px 58px rgba(54, 73, 106, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+:root[data-theme="light"] .stage-rail,
+:root[data-theme="light"] .preview-panel {
+  box-shadow: 0 22px 58px rgba(54, 73, 106, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+:root[data-theme="light"] .notification-menu,
+:root[data-theme="light"] .notification-toast,
+:root[data-theme="light"] .styled-select-options,
+:root[data-theme="light"] .context-usage-tooltip {
+  box-shadow: 0 22px 58px rgba(54, 73, 106, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+:root[data-theme="light"] .dispatcher-message > div,
+:root[data-theme="light"] .dispatcher-generation,
+:root[data-theme="light"] .dispatcher-task-batch,
+:root[data-theme="light"] .approval-card,
+:root[data-theme="light"] .event-panel,
+:root[data-theme="light"] .stage-workflow-panel,
+:root[data-theme="light"] .global-settings-section,
+:root[data-theme="light"] .connection-summary-card,
+:root[data-theme="light"] .connection-service-list {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62), 0 12px 32px rgba(48, 64, 92, 0.08);
+}
+
+/* Accent buttons keep white text in both themes (intentional) */
+/* No override needed for .primary-button, .icon-button.accent, .composer-actions button */
+
+/* Stage node done/active keep white text (intentional on colored bg) */
+/* No override needed */
+
+/* Brand logo already handled by existing :root[data-theme="light"] .brand-logo */
