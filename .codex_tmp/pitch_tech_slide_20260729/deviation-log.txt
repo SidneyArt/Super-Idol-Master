@@ -1,0 +1,12 @@
+INTENTIONAL DEVIATIONS FROM SOURCE SLIDE 3
+
+- Replaced template instruction copy in the inherited title, subtitle, and body
+  placeholders with audience-facing technical content.
+- Preserved the white NVIDIA template, inherited master/layout hierarchy, logo,
+  placeholder positions, title/subtitle/body type scale, and NVIDIA green accent.
+- Converted the body copy into a compact vertical three-stage flow using only the
+  inherited body placeholder; no overlay panels, cards, charts, or decorative
+  primitives were added.
+- Added speaker notes containing the 2-3 minute talk track, accuracy caveats, and
+  a [Sources] block. No externally sourced raster assets were added.
+

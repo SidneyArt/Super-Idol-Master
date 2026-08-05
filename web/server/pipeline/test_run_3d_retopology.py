@@ -3,9 +3,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
-from run_3d_retopology import response_error_detail, run_retopology, service_endpoint
+from run_3d_retopology import response_error_detail, run_retopology, service_endpoint, topology_session
 
 
 MINIMAL_GLB = b"glTF" + b"\x02\x00\x00\x00" + b"\x14\x00\x00\x00" + b"\x00" * 8
@@ -29,6 +29,18 @@ class FakeErrorResponse:
         return {"error": "automatic retopology failed"}
 
 
+class FakeGatewayResponse:
+    ok = False
+    status_code = 502
+    text = ""
+
+    def json(self):
+        raise ValueError("not JSON")
+
+    def close(self):
+        pass
+
+
 class RetopologyClientTests(unittest.TestCase):
     def test_service_endpoint_appends_route_once(self):
         self.assertEqual(service_endpoint("http://dgx:8190"), "http://dgx:8190/v1/remesh")
@@ -39,11 +51,46 @@ class RetopologyClientTests(unittest.TestCase):
             root = Path(temporary)
             source = root / "source.glb"
             source.write_bytes(MINIMAL_GLB)
-            with patch("run_3d_retopology.requests.post", return_value=FakeResponse()) as request:
+            with patch("run_3d_retopology.requests.Session.post", return_value=FakeResponse()) as request:
                 output = run_retopology(source, "http://dgx:8190", root / "output", 50_000, 60, "secret")
             self.assertEqual(output.read_bytes(), MINIMAL_GLB)
             self.assertEqual(request.call_args.kwargs["params"], {"target_quads": 50_000})
             self.assertEqual(request.call_args.kwargs["headers"]["Authorization"], "Bearer secret")
+
+    def test_run_retopology_retries_a_transient_gateway_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.glb"
+            source.write_bytes(MINIMAL_GLB)
+            with patch(
+                "run_3d_retopology.requests.Session.post",
+                side_effect=[FakeGatewayResponse(), FakeResponse()],
+            ) as request, patch("run_3d_retopology.time.sleep") as sleep:
+                output = run_retopology(source, "http://dgx:8190", root / "output", 50_000, 60)
+            self.assertEqual(output.read_bytes(), MINIMAL_GLB)
+            self.assertEqual(request.call_count, 2)
+            sleep.assert_called_once_with(1)
+
+    def test_topology_session_ignores_environment_proxies(self):
+        session = topology_session()
+        try:
+            self.assertFalse(session.trust_env)
+        finally:
+            session.close()
+
+    def test_repeated_gateway_errors_fail_after_three_attempts_with_guidance(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.glb"
+            source.write_bytes(MINIMAL_GLB)
+            with patch(
+                "run_3d_retopology.requests.Session.post",
+                side_effect=[FakeGatewayResponse(), FakeGatewayResponse(), FakeGatewayResponse()],
+            ) as request, patch("run_3d_retopology.time.sleep") as sleep:
+                with self.assertRaisesRegex(RuntimeError, r"HTTP 502: empty response; verify.*healthz"):
+                    run_retopology(source, "http://dgx:8190", root / "output", 50_000, 60)
+            self.assertEqual(request.call_count, 3)
+            self.assertEqual([call.args for call in sleep.call_args_list], [(1,), (2,)])
 
     def test_rejects_out_of_range_target(self):
         with tempfile.TemporaryDirectory() as temporary:

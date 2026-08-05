@@ -1,0 +1,539 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/y90nupkv",
+    "id": "y90nupkv",
+    "slide": 1,
+    "layoutId": "/ppt/slideLayouts/slideLayout6.xml",
+    "layoutName": "Closing Slide",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 3840,
+      "height": 2160
+    }
+  },
+  "theme": {
+    "colorSchemeName": "NVIDIA26_v2",
+    "colors": {
+      "accent1": "#76B900",
+      "accent2": "#1DBBA4",
+      "accent3": "#0074DF",
+      "accent4": "#952FC6",
+      "accent5": "#EF9100",
+      "accent6": "#757575",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#313131",
+      "lt2": "#F7F7F7",
+      "hlink": "#757575",
+      "folHlink": "#757575"
+    },
+    "fontScheme": {
+      "name": "NVIDIA Template 26",
+      "majorFont": {
+        "latinTypeface": "NVIDIA Sans Medium"
+      },
+      "minorFont": {
+        "latinTypeface": "NVIDIA Sans"
+      }
+    },
+    "typefaces": [
+      "NVIDIA Sans",
+      "NVIDIA Sans Medium",
+      "Noto Sans SC"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout6.xml",
+      "name": "Closing Slide",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+      "backgroundColor": "accent4",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "image",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout6.xml/6",
+          "id": "6",
+          "name": "KV Closing",
+          "bbox": [
+            0,
+            0,
+            3840,
+            2160
+          ],
+          "contentType": "image/jpeg",
+          "asset": {
+            "assetId": "/ppt/media/image1.jpeg",
+            "contentType": "image/jpeg",
+            "byteLength": 881314
+          },
+          "fillImage": {
+            "assetId": "/ppt/media/image1.jpeg",
+            "contentType": "image/jpeg",
+            "byteLength": 881314
+          }
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout6.xml/5",
+          "id": "5",
+          "name": "Gradient",
+          "bbox": [
+            0,
+            0,
+            2064,
+            2160
+          ],
+          "geometry": "rect",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "verticalAlignment": "middle"
+          },
+          "lineWidth": 0
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout6.xml/3",
+          "id": "3",
+          "name": "Logo Text",
+          "bbox": [
+            384.07,
+            1879.79,
+            382.79,
+            71.75
+          ],
+          "geometry": "custom",
+          "fillColor": "tx1",
+          "lineWidth": 0.24
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout6.xml/2",
+          "id": "2",
+          "name": "Logo Eye",
+          "bbox": [
+            192.01,
+            1859.26,
+            164.97,
+            109.16
+          ],
+          "geometry": "custom",
+          "fillColor": "accent1",
+          "lineWidth": 0.24
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster1.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/3",
+          "id": "3",
+          "name": "Logo Text",
+          "bbox": [
+            3626.56,
+            2041.82,
+            117.56,
+            22.04
+          ],
+          "geometry": "custom",
+          "fillColor": "tx1",
+          "lineWidth": 0.07
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/2",
+          "id": "2",
+          "name": "Logo Eye",
+          "bbox": [
+            3567.58,
+            2035.51,
+            50.66,
+            33.53
+          ],
+          "geometry": "custom",
+          "fillColor": "accent1",
+          "lineWidth": 0.07
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/8",
+          "id": "8",
+          "name": "Footer (Source) Placeholder",
+          "bbox": [
+            792,
+            2040,
+            2256,
+            38.78
+          ],
+          "geometry": "rect",
+          "text": "Source information in NVIDIA Sans, medium gray; 20 pt",
+          "textPreview": "Source information in NVIDIA Sans, medium gray; 20 pt",
+          "resolvedTextStyle": {
+            "anchor": 3,
+            "vertical": 1,
+            "verticalAlignment": "bottom",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Source information in NVIDIA Sans, medium gray; 20 pt",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Source information in NVIDIA Sans, medium gray; 20 pt"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/4",
+          "id": "4",
+          "name": "Slide Number Placeholder",
+          "bbox": [
+            96,
+            2040,
+            67.2,
+            38.78
+          ],
+          "geometry": "rect",
+          "text": "‹#›",
+          "textPreview": "‹#›",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "‹#›",
+              "lineSpacingPercent": 90000,
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "‹#›"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/17",
+          "id": "17",
+          "name": "Text Placeholder",
+          "bbox": [
+            192,
+            624,
+            3456,
+            1344
+          ],
+          "geometry": "rect",
+          "text": "Click to edit paragraph text\nSecond level\nThird level\nFourth level\nFifth level",
+          "textPreview": "Click to edit paragraph text | Second level | Third level | Fourth level | Fifth level",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to edit paragraph text",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to edit paragraph text"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "Second level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Second level"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "Third level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Third level"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "Fourth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fourth level"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "Fifth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fifth level"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 6,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/6",
+          "id": "6",
+          "name": "Title Placeholder",
+          "bbox": [
+            192,
+            96,
+            3456,
+            259.2
+          ],
+          "geometry": "rect",
+          "text": "Click to Edit Title Here\n2-lines Maximum Length",
+          "textPreview": "Click to Edit Title Here | 2-lines Maximum Length",
+          "resolvedTextStyle": {
+            "anchor": 3,
+            "vertical": 1,
+            "verticalAlignment": "bottom",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to Edit Title Here\n2-lines Maximum Length",
+              "lineSpacingPercent": 90000,
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to Edit Title Here",
+                  "fontSize": 117.33
+                },
+                {
+                  "index": 2,
+                  "text": "\n"
+                },
+                {
+                  "index": 3,
+                  "text": "2-lines Maximum Length",
+                  "fontSize": 117.33
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 7,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/5",
+          "id": "5",
+          "name": "Date (Confidential) Placeholder",
+          "bbox": [
+            192,
+            2040,
+            595.2,
+            38.78
+          ],
+          "geometry": "rect",
+          "text": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE.",
+          "textPreview": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE.",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE.",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/547294r6",
+      "id": "2",
+      "name": "Title",
+      "bbox": [
+        237.36,
+        267.73,
+        1959.85,
+        882.13
+      ],
+      "geometry": "rect",
+      "text": "第二届 \nNVIDIA DGX Spark \n黑客松决赛路演",
+      "textPreview": "第二届  | NVIDIA DGX Spark  | 黑客松决赛路演",
+      "resolvedFontSize": 160,
+      "resolvedTextStyle": {
+        "anchor": 3,
+        "vertical": 1,
+        "fontSize": 160,
+        "typeface": "NVIDIA Sans Medium",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "bottom",
+        "autoFit": "none",
+        "insets": {
+          "top": 4.8,
+          "right": 0,
+          "bottom": 4.8,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "第二届"
+          },
+          {
+            "index": 2,
+            "text": "NVIDIA DGX Spark"
+          },
+          {
+            "index": 3,
+            "text": "黑客松决赛路演"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "第二届 ",
+          "runs": [
+            {
+              "index": 1,
+              "text": "第二届 ",
+              "typeface": "Noto Sans SC",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 2,
+          "text": "NVIDIA DGX Spark ",
+          "runs": [
+            {
+              "index": 1,
+              "text": "NVIDIA DGX Spark ",
+              "typeface": "NVIDIA Sans",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 3,
+          "text": "黑客松决赛路演",
+          "runs": [
+            {
+              "index": 1,
+              "text": "黑客松决赛路演",
+              "typeface": "Noto Sans SC",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "lineSpacingPercent": 90000
+        }
+      ]
+    }
+  ],
+  "composeRuns": []
+}

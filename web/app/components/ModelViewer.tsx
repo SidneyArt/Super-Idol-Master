@@ -1,6 +1,6 @@
 "use client";
 
-import { Bone, Check, CloudSun, Film, Focus, Grid3X3, Lightbulb, LoaderCircle, Orbit, Palette, Pause, Play, RotateCcw, SunMedium, Trash2, Triangle, Upload } from "lucide-react";
+import { Bone, Check, CloudSun, Film, Focus, Grid3X3, Lightbulb, LoaderCircle, Orbit, Palette, Pause, PersonStanding, Play, RotateCcw, SunMedium, Trash2, Triangle, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
@@ -30,7 +30,7 @@ type ModelStats = {
   triangles: number;
 };
 
-type ViewerPanel = "render" | "rotation" | "skeleton" | "animation" | "grid" | "view" | "lighting";
+type ViewerPanel = "render" | "rotation" | "skeleton" | "grid" | "view" | "lighting";
 type CameraView = "default" | "front" | "back" | "left" | "right";
 type PoseAxis = "x" | "y" | "z";
 type PoseRotation = Record<PoseAxis, number>;
@@ -250,7 +250,7 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
   const environmentColorRef = useRef("#ffffff");
   const environmentIntensityRef = useRef(1);
   const directionalColorRef = useRef("#ffffff");
-  const directionalIntensityRef = useRef(0.5);
+  const directionalIntensityRef = useRef(1);
   const backgroundColorRef = useRef("#464646");
   const wireframeOverlaysRef = useRef<Set<THREE.Mesh>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -262,7 +262,7 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
   const [environmentColor, setEnvironmentColor] = useState("#ffffff");
   const [environmentIntensity, setEnvironmentIntensity] = useState(1);
   const [directionalColor, setDirectionalColor] = useState("#ffffff");
-  const [directionalIntensity, setDirectionalIntensity] = useState(0.5);
+  const [directionalIntensity, setDirectionalIntensity] = useState(1);
   const [backgroundColor, setBackgroundColor] = useState("#464646");
   const [stats, setStats] = useState<ModelStats | null>(null);
   const [poseBones, setPoseBones] = useState<PoseBoneOption[]>([]);
@@ -281,6 +281,7 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
   const [animationTime, setAnimationTime] = useState(0);
   const [animationDuration, setAnimationDuration] = useState(0);
   const [pendingAnimationDeleteId, setPendingAnimationDeleteId] = useState("");
+  const [animationSidebarCollapsed, setAnimationSidebarCollapsed] = useState(true);
   const [openPanel, setOpenPanel] = useState<ViewerPanel | null>(null);
 
   useEffect(() => {
@@ -469,8 +470,8 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
     }
   }
 
-  async function loadSelectedAnimation() {
-    const asset = animations.find((item) => item.id === selectedAnimationId);
+  async function loadSelectedAnimation(animationId = selectedAnimationId) {
+    const asset = animations.find((item) => item.id === animationId);
     const model = modelRef.current;
     if (!asset || !model) throw new Error(asset ? "绑定模型尚未加载完成" : "请先选择动画");
     if (loadedAnimationId === asset.id && animationActionRef.current) return animationActionRef.current;
@@ -542,6 +543,22 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
     if (animationBusy) return;
     try {
       const action = await loadSelectedAnimation();
+      action.reset().play();
+      action.paused = false;
+      setAnimationTime(0);
+      setAnimationPlaying(true);
+    } catch {
+      // loadSelectedAnimation 已显示错误。
+    }
+  }
+
+  async function previewAnimation(animationId: string) {
+    if (animationBusy) return;
+    setSelectedAnimationId(animationId);
+    setPendingAnimationDeleteId("");
+    setAnimationError("");
+    try {
+      const action = await loadSelectedAnimation(animationId);
       action.reset().play();
       action.paused = false;
       setAnimationTime(0);
@@ -991,17 +1008,17 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
     setOpenPanel((current) => current === panel ? null : panel);
   }
 
-  function chooseOption(action: () => void) {
+  function applyOption(action: () => void) {
     action();
-    setOpenPanel(null);
   }
 
   const selectedAnimation = animations.find((item) => item.id === selectedAnimationId) || null;
   const poseLockedByAnimation = Boolean(loadedAnimationId);
   const timelineDuration = animationDuration || selectedAnimation?.duration || 0;
+  const showAnimationSidebar = Boolean(rigged && stats && stats.bones > 0);
 
   return (
-    <div className="model-viewer-shell">
+    <div className={`model-viewer-shell ${showAnimationSidebar ? "has-animation-sidebar" : ""} ${showAnimationSidebar && animationSidebarCollapsed ? "animation-sidebar-collapsed" : ""}`}>
       <div ref={hostRef} className="model-viewer-canvas" aria-label={`${label} 交互式三维预览`} />
 
       <div className="model-viewer-toolbar" aria-label="三维预览控制">
@@ -1010,8 +1027,8 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
             <Triangle size={16} />
           </button>
           {openPanel === "render" && <div className="viewer-options" role="menu" aria-label="显示模式选项">
-            <button className={!wireframe ? "active" : ""} onClick={() => chooseOption(() => setWireframe(false))} type="button" role="menuitem"><Check size={14} />实体材质</button>
-            <button className={wireframe ? "active" : ""} onClick={() => chooseOption(() => setWireframe(true))} type="button" role="menuitem"><Check size={14} />拓扑线框</button>
+            <button className={!wireframe ? "active" : ""} onClick={() => applyOption(() => setWireframe(false))} type="button" role="menuitem"><Check size={14} />实体材质</button>
+            <button className={wireframe ? "active" : ""} onClick={() => applyOption(() => setWireframe(true))} type="button" role="menuitem"><Check size={14} />拓扑线框</button>
           </div>}
         </div>
         <div className="model-viewer-menu">
@@ -1019,8 +1036,8 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
             <Orbit size={16} />
           </button>
           {openPanel === "rotation" && <div className="viewer-options" role="menu" aria-label="旋转选项">
-            <button className={!autoRotate ? "active" : ""} onClick={() => chooseOption(() => setAutoRotate(false))} type="button" role="menuitem"><Check size={14} />停止旋转</button>
-            <button className={autoRotate ? "active" : ""} onClick={() => chooseOption(() => setAutoRotate(true))} type="button" role="menuitem"><Check size={14} />自动旋转</button>
+            <button className={!autoRotate ? "active" : ""} onClick={() => applyOption(() => setAutoRotate(false))} type="button" role="menuitem"><Check size={14} />停止旋转</button>
+            <button className={autoRotate ? "active" : ""} onClick={() => applyOption(() => setAutoRotate(true))} type="button" role="menuitem"><Check size={14} />自动旋转</button>
           </div>}
         </div>
         {rigged && stats && stats.bones > 0 && (
@@ -1053,61 +1070,13 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
             </div>}
           </div>
         )}
-        {rigged && stats && stats.bones > 0 && (
-          <div className="model-viewer-menu">
-            <button className={`viewer-tool-button ${animationPlaying || openPanel === "animation" ? "active" : ""}`} onClick={() => togglePanel("animation")} type="button" title="Mixamo 动画预览" aria-label="Mixamo 动画预览" aria-expanded={openPanel === "animation"} aria-haspopup="dialog">
-              <Film size={16} />
-            </button>
-            {openPanel === "animation" && <div className="viewer-options viewer-animation-panel" role="dialog" aria-label="Mixamo 动画预览器">
-              <div className="viewer-pose-heading"><span><Film size={15} />Mixamo 动画预览</span><small>动画库可供所有绑定角色复用，播放结果不会写入 GLB</small></div>
-              <input ref={animationFileRef} hidden type="file" accept=".fbx,application/octet-stream" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadAnimation(file); event.currentTarget.value = ""; }} />
-              {animationsLoading ? (
-                <div className="viewer-animation-empty"><LoaderCircle className="spinning" size={18} />正在读取动画库…</div>
-              ) : animations.length ? (
-                <>
-                  <label className="viewer-pose-bone-select">
-                    <span>动画片段</span>
-                    <select value={selectedAnimationId} disabled={animationBusy} onChange={(event) => { clearAnimationPreview(); setSelectedAnimationId(event.target.value); setPendingAnimationDeleteId(""); setAnimationError(""); }}>
-                      {animations.map((animation) => <option value={animation.id} key={animation.id}>{animation.name}</option>)}
-                    </select>
-                  </label>
-                  {selectedAnimation && <div className="viewer-animation-meta">
-                    <span className={selectedAnimation.compatible ? "compatible" : "incompatible"}>{selectedAnimation.compatible ? "Mixamo 骨骼已匹配" : "骨骼不完整"}</span>
-                    <small>{selectedAnimation.duration.toFixed(2)} 秒 · {selectedAnimation.trackCount} 条轨道 · {selectedAnimation.mappedBoneCount} 根目标骨骼</small>
-                  </div>}
-                  <div className="viewer-animation-controls">
-                    <button className="primary" type="button" disabled={animationBusy || !selectedAnimation?.compatible} onClick={() => void toggleAnimationPlayback()}>{animationBusy ? <LoaderCircle className="spinning" size={14} /> : animationPlaying ? <Pause size={14} /> : <Play size={14} />}{animationBusy ? "处理中" : animationPlaying ? "暂停" : "播放"}</button>
-                    <button type="button" disabled={animationBusy || !selectedAnimation?.compatible} onClick={() => void restartAnimation()}><RotateCcw size={14} />重播</button>
-                    <button type="button" disabled={!poseLockedByAnimation} onClick={clearAnimationPreview}><Bone size={14} />恢复静态姿态</button>
-                  </div>
-                  <label className="viewer-animation-timeline">
-                    <span><output>{formatClipTime(animationTime)}</output><output>{formatClipTime(timelineDuration)}</output></span>
-                    <input aria-label="动画播放进度" type="range" min="0" max={Math.max(timelineDuration, 0.01)} step="0.01" disabled={!poseLockedByAnimation} value={Math.min(animationTime, Math.max(timelineDuration, 0.01))} onChange={(event) => scrubAnimation(Number(event.target.value))} />
-                  </label>
-                  <div className="viewer-animation-options">
-                    <label><input type="checkbox" checked={animationLoop} onChange={(event) => setAnimationLoop(event.target.checked)} />循环播放</label>
-                    <label><input type="checkbox" checked={animationInPlace} onChange={(event) => { clearAnimationPreview(); setAnimationInPlace(event.target.checked); }} />原地移动</label>
-                    <label><span>速度</span><select value={animationSpeed} onChange={(event) => setAnimationSpeed(Number(event.target.value))}><option value="0.5">0.5x</option><option value="0.75">0.75x</option><option value="1">1.0x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2">2.0x</option></select></label>
-                  </div>
-                  <div className="viewer-animation-library-actions">
-                    <button type="button" disabled={animationBusy} onClick={() => animationFileRef.current?.click()}><Upload size={14} />导入 FBX</button>
-                    <button className={pendingAnimationDeleteId === selectedAnimationId ? "confirm-delete" : ""} type="button" disabled={animationBusy || !selectedAnimation} onClick={() => void deleteSelectedAnimation()}><Trash2 size={14} />{pendingAnimationDeleteId === selectedAnimationId ? "确认删除" : "删除动画"}</button>
-                  </div>
-                </>
-              ) : (
-                <div className="viewer-animation-empty"><Film size={20} /><strong>动画库为空</strong><span>导入 Mixamo 的 FBX Binary／Without Skin 文件。</span><button type="button" onClick={() => animationFileRef.current?.click()}><Upload size={14} />导入第一个动画</button></div>
-              )}
-              {animationError && <div className="viewer-animation-error">{animationError}</div>}
-            </div>}
-          </div>
-        )}
         <div className="model-viewer-menu">
           <button className={`viewer-tool-button ${showGrid ? "active" : ""}`} onClick={() => togglePanel("grid")} type="button" title="网格设置" aria-label="网格设置" aria-expanded={openPanel === "grid"} aria-haspopup="menu">
             <Grid3X3 size={16} />
           </button>
           {openPanel === "grid" && <div className="viewer-options" role="menu" aria-label="网格显示选项">
-            <button className={!showGrid ? "active" : ""} onClick={() => chooseOption(() => setShowGrid(false))} type="button" role="menuitem"><Check size={14} />隐藏网格</button>
-            <button className={showGrid ? "active" : ""} onClick={() => chooseOption(() => setShowGrid(true))} type="button" role="menuitem"><Check size={14} />显示网格</button>
+            <button className={!showGrid ? "active" : ""} onClick={() => applyOption(() => setShowGrid(false))} type="button" role="menuitem"><Check size={14} />隐藏网格</button>
+            <button className={showGrid ? "active" : ""} onClick={() => applyOption(() => setShowGrid(true))} type="button" role="menuitem"><Check size={14} />显示网格</button>
           </div>}
         </div>
         <div className="model-viewer-menu">
@@ -1115,14 +1084,79 @@ export default function ModelViewer({ src, label, rigged = false, animationApiBa
             <Focus size={16} />
           </button>
           {openPanel === "view" && <div className="viewer-options" role="menu" aria-label="视角选项">
-            <button onClick={() => chooseOption(() => resetViewRef.current())} type="button" role="menuitem">默认视角</button>
-            <button onClick={() => chooseOption(() => setCameraViewRef.current("front"))} type="button" role="menuitem">正面视角</button>
-            <button onClick={() => chooseOption(() => setCameraViewRef.current("back"))} type="button" role="menuitem">背面视角</button>
-            <button onClick={() => chooseOption(() => setCameraViewRef.current("left"))} type="button" role="menuitem">左侧视角</button>
-            <button onClick={() => chooseOption(() => setCameraViewRef.current("right"))} type="button" role="menuitem">右侧视角</button>
+            <button onClick={() => applyOption(() => resetViewRef.current())} type="button" role="menuitem">默认视角</button>
+            <button onClick={() => applyOption(() => setCameraViewRef.current("front"))} type="button" role="menuitem">正面视角</button>
+            <button onClick={() => applyOption(() => setCameraViewRef.current("back"))} type="button" role="menuitem">背面视角</button>
+            <button onClick={() => applyOption(() => setCameraViewRef.current("left"))} type="button" role="menuitem">左侧视角</button>
+            <button onClick={() => applyOption(() => setCameraViewRef.current("right"))} type="button" role="menuitem">右侧视角</button>
           </div>}
         </div>
       </div>
+
+      {showAnimationSidebar && (
+        <aside className={`viewer-animation-sidebar ${animationSidebarCollapsed ? "collapsed" : ""}`} aria-label="动画预览">
+          <input ref={animationFileRef} hidden type="file" accept=".fbx,application/octet-stream" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadAnimation(file); event.currentTarget.value = ""; }} />
+          <header>
+            <span><Film size={16} /></span>
+            <div><strong>动画预览</strong><small>点击片段立即播放</small></div>
+            <button className="viewer-animation-import" type="button" disabled={animationBusy} onClick={() => animationFileRef.current?.click()} title="导入 FBX" aria-label="导入 FBX"><Upload size={14} /></button>
+            <button className="viewer-animation-sidebar-toggle" type="button" onClick={() => setAnimationSidebarCollapsed((value) => !value)} title={animationSidebarCollapsed ? "展开动画侧栏" : "收起动画侧栏"} aria-label={animationSidebarCollapsed ? "展开动画侧栏" : "收起动画侧栏"} aria-expanded={!animationSidebarCollapsed}><PersonStanding size={17} /></button>
+          </header>
+          {!animationSidebarCollapsed && (animationsLoading ? (
+            <div className="viewer-animation-empty"><LoaderCircle className="spinning" size={18} />正在读取动画库…</div>
+          ) : animations.length ? (
+            <>
+              <div className="viewer-animation-list" role="list" aria-label="动画片段">
+                {animations.map((animation) => {
+                  const selected = animation.id === selectedAnimationId;
+                  const loadingAnimation = animationBusy && selected;
+                  return (
+                    <button
+                      className={selected ? "active" : ""}
+                      type="button"
+                      aria-pressed={selected}
+                      disabled={animationBusy || !animation.compatible}
+                      onClick={() => void previewAnimation(animation.id)}
+                      key={animation.id}
+                    >
+                      <span>{loadingAnimation ? <LoaderCircle className="spinning" size={14} /> : selected && animationPlaying ? <Pause size={14} /> : <Play size={14} />}</span>
+                      <span><strong>{animation.name}</strong><small>{animation.duration.toFixed(2)} 秒 · {animation.mappedBoneCount} 骨骼</small></span>
+                      {animation.bundled && <em>内置</em>}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="viewer-animation-details">
+                {selectedAnimation && <div className="viewer-animation-meta">
+                  <span className={selectedAnimation.compatible ? "compatible" : "incompatible"}>{selectedAnimation.compatible ? "Mixamo 骨骼已匹配" : "骨骼不完整"}</span>
+                  <small>{selectedAnimation.trackCount} 条轨道 · {selectedAnimation.mappedBoneCount} 根目标骨骼</small>
+                </div>}
+                <div className="viewer-animation-controls">
+                  <button className="primary" type="button" disabled={animationBusy || !selectedAnimation?.compatible} onClick={() => void toggleAnimationPlayback()}>{animationBusy ? <LoaderCircle className="spinning" size={14} /> : animationPlaying ? <Pause size={14} /> : <Play size={14} />}{animationBusy ? "处理中" : animationPlaying ? "暂停" : "继续"}</button>
+                  <button type="button" disabled={animationBusy || !selectedAnimation?.compatible} onClick={() => void restartAnimation()}><RotateCcw size={14} />重播</button>
+                  <button type="button" disabled={!poseLockedByAnimation} onClick={clearAnimationPreview}><Bone size={14} />静态</button>
+                </div>
+                <label className="viewer-animation-timeline">
+                  <span><output>{formatClipTime(animationTime)}</output><output>{formatClipTime(timelineDuration)}</output></span>
+                  <input aria-label="动画播放进度" type="range" min="0" max={Math.max(timelineDuration, 0.01)} step="0.01" disabled={!poseLockedByAnimation} value={Math.min(animationTime, Math.max(timelineDuration, 0.01))} onChange={(event) => scrubAnimation(Number(event.target.value))} />
+                </label>
+                <div className="viewer-animation-options">
+                  <label><input type="checkbox" checked={animationLoop} onChange={(event) => setAnimationLoop(event.target.checked)} />循环</label>
+                  <label><input type="checkbox" checked={animationInPlace} onChange={(event) => { clearAnimationPreview(); setAnimationInPlace(event.target.checked); }} />原地</label>
+                  <label><span>速度</span><select value={animationSpeed} onChange={(event) => setAnimationSpeed(Number(event.target.value))}><option value="0.5">0.5x</option><option value="0.75">0.75x</option><option value="1">1.0x</option><option value="1.25">1.25x</option><option value="1.5">1.5x</option><option value="2">2.0x</option></select></label>
+                </div>
+                <div className="viewer-animation-library-actions">
+                  <button type="button" disabled={animationBusy} onClick={() => animationFileRef.current?.click()}><Upload size={14} />导入</button>
+                  <button className={pendingAnimationDeleteId === selectedAnimationId ? "confirm-delete" : ""} type="button" disabled={animationBusy || !selectedAnimation || selectedAnimation.bundled} onClick={() => void deleteSelectedAnimation()} title={selectedAnimation?.bundled ? "内置动画由仓库版本管理" : "删除动画"}><Trash2 size={14} />{selectedAnimation?.bundled ? "内置动画" : pendingAnimationDeleteId === selectedAnimationId ? "确认删除" : "删除"}</button>
+                </div>
+                {animationError && <div className="viewer-animation-error">{animationError}</div>}
+              </div>
+            </>
+          ) : (
+            <div className="viewer-animation-empty"><Film size={20} /><strong>动画库为空</strong><span>导入 Mixamo 的 FBX Binary／Without Skin 文件。</span><button type="button" onClick={() => animationFileRef.current?.click()}><Upload size={14} />导入第一个动画</button></div>
+          ))}
+        </aside>
+      )}
 
       <div className="model-viewer-lighting">
         <button className={`viewer-tool-button ${openPanel === "lighting" ? "active" : ""}`} onClick={() => togglePanel("lighting")} type="button" title="灯光设置" aria-label="灯光设置" aria-expanded={openPanel === "lighting"} aria-haspopup="dialog">

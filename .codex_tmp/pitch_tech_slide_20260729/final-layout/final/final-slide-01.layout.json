@@ -1,0 +1,1527 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/y90nupkv",
+    "id": "y90nupkv",
+    "slide": 1,
+    "layoutId": "/ppt/slideLayouts/slideLayout10.xml",
+    "layoutName": "Title, Subtitle, Bullets",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 3840,
+      "height": 2160
+    }
+  },
+  "theme": {
+    "colorSchemeName": "NVIDIA26_v2",
+    "colors": {
+      "accent1": "#76B900",
+      "accent2": "#1DBBA4",
+      "accent3": "#0074DF",
+      "accent4": "#952FC6",
+      "accent5": "#EF9100",
+      "accent6": "#757575",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#313131",
+      "lt2": "#F7F7F7",
+      "hlink": "#757575",
+      "folHlink": "#757575"
+    },
+    "fontScheme": {
+      "name": "NVIDIA Template 26",
+      "majorFont": {
+        "latinTypeface": "NVIDIA Sans Medium"
+      },
+      "minorFont": {
+        "latinTypeface": "NVIDIA Sans"
+      }
+    },
+    "typefaces": [
+      "NVIDIA Sans",
+      "NVIDIA Sans Medium",
+      "Noto Sans SC"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout10.xml",
+      "name": "Title, Subtitle, Bullets",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout10.xml/9",
+          "id": "9",
+          "name": "Slide Number Placeholder",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "text": "‹#›",
+          "textPreview": "‹#›",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "‹#›",
+              "lineSpacingPercent": 90000,
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "‹#›"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout10.xml/3",
+          "id": "3",
+          "name": "Text Placeholder",
+          "bbox": [
+            192,
+            624,
+            3456,
+            1344
+          ],
+          "text": "Click to edit paragraph text\nSecond level\nThird level\nFourth level\nFifth level",
+          "textPreview": "Click to edit paragraph text | Second level | Third level | Fourth level | Fifth level",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to edit paragraph text",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to edit paragraph text"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "Second level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Second level"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "Third level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Third level"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "Fourth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fourth level"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "Fifth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fifth level"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout10.xml/4",
+          "id": "4",
+          "name": "Subtitle",
+          "bbox": [
+            192,
+            355.2,
+            3456,
+            96
+          ],
+          "text": "Click to edit subtitle here",
+          "textPreview": "Click to edit subtitle here",
+          "resolvedTextStyle": {
+            "autoFit": "none",
+            "insets": {
+              "top": 9.6
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to edit subtitle here",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to edit subtitle here"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "layout",
+          "aid": "template/layout//ppt/slideLayouts/slideLayout10.xml/16",
+          "id": "16",
+          "name": "Title",
+          "bbox": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "text": "Click to Edit Title Here",
+          "textPreview": "Click to Edit Title Here",
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to Edit Title Here",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to Edit Title Here"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster1.xml",
+      "type": "master",
+      "elements": [
+        {
+          "order": 1,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/3",
+          "id": "3",
+          "name": "Logo Text",
+          "bbox": [
+            3626.56,
+            2041.82,
+            117.56,
+            22.04
+          ],
+          "geometry": "custom",
+          "fillColor": "tx1",
+          "lineWidth": 0.07
+        },
+        {
+          "order": 2,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/2",
+          "id": "2",
+          "name": "Logo Eye",
+          "bbox": [
+            3567.58,
+            2035.51,
+            50.66,
+            33.53
+          ],
+          "geometry": "custom",
+          "fillColor": "accent1",
+          "lineWidth": 0.07
+        },
+        {
+          "order": 3,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/8",
+          "id": "8",
+          "name": "Footer (Source) Placeholder",
+          "bbox": [
+            792,
+            2040,
+            2256,
+            38.78
+          ],
+          "geometry": "rect",
+          "text": "Source information in NVIDIA Sans, medium gray; 20 pt",
+          "textPreview": "Source information in NVIDIA Sans, medium gray; 20 pt",
+          "resolvedTextStyle": {
+            "anchor": 3,
+            "vertical": 1,
+            "verticalAlignment": "bottom",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Source information in NVIDIA Sans, medium gray; 20 pt",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Source information in NVIDIA Sans, medium gray; 20 pt"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 4,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/4",
+          "id": "4",
+          "name": "Slide Number Placeholder",
+          "bbox": [
+            96,
+            2040,
+            67.2,
+            38.78
+          ],
+          "geometry": "rect",
+          "text": "‹#›",
+          "textPreview": "‹#›",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "‹#›",
+              "lineSpacingPercent": 90000,
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "‹#›"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 5,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/17",
+          "id": "17",
+          "name": "Text Placeholder",
+          "bbox": [
+            192,
+            624,
+            3456,
+            1344
+          ],
+          "geometry": "rect",
+          "text": "Click to edit paragraph text\nSecond level\nThird level\nFourth level\nFifth level",
+          "textPreview": "Click to edit paragraph text | Second level | Third level | Fourth level | Fifth level",
+          "resolvedTextStyle": {
+            "vertical": 1,
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to edit paragraph text",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to edit paragraph text"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "text": "Second level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Second level"
+                }
+              ]
+            },
+            {
+              "index": 3,
+              "text": "Third level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Third level"
+                }
+              ]
+            },
+            {
+              "index": 4,
+              "text": "Fourth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fourth level"
+                }
+              ]
+            },
+            {
+              "index": 5,
+              "text": "Fifth level",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Fifth level"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 6,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/6",
+          "id": "6",
+          "name": "Title Placeholder",
+          "bbox": [
+            192,
+            96,
+            3456,
+            259.2
+          ],
+          "geometry": "rect",
+          "text": "Click to Edit Title Here\n2-lines Maximum Length",
+          "textPreview": "Click to Edit Title Here | 2-lines Maximum Length",
+          "resolvedTextStyle": {
+            "anchor": 3,
+            "vertical": 1,
+            "verticalAlignment": "bottom",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "Click to Edit Title Here\n2-lines Maximum Length",
+              "lineSpacingPercent": 90000,
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "Click to Edit Title Here",
+                  "fontSize": 117.33
+                },
+                {
+                  "index": 2,
+                  "text": "\n"
+                },
+                {
+                  "index": 3,
+                  "text": "2-lines Maximum Length",
+                  "fontSize": 117.33
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "order": 7,
+          "kind": "shape",
+          "scope": "master",
+          "aid": "template/master//ppt/slideMasters/slideMaster1.xml/5",
+          "id": "5",
+          "name": "Date (Confidential) Placeholder",
+          "bbox": [
+            192,
+            2040,
+            595.2,
+            38.78
+          ],
+          "geometry": "rect",
+          "text": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE.",
+          "textPreview": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE.",
+          "resolvedTextStyle": {
+            "anchor": 2,
+            "vertical": 1,
+            "verticalAlignment": "middle",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "paragraphs": [
+            {
+              "index": 1,
+              "text": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE.",
+              "runs": [
+                {
+                  "index": 1,
+                  "text": "NVIDIA CONFIDENTIAL. DO NOT DISTRIBUTE."
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/k3yl0zql",
+      "id": "3",
+      "name": "Text Placeholder",
+      "bbox": [
+        192,
+        624,
+        3456,
+        1344
+      ],
+      "text": "01   StepFun：云端理解、规划与编排\nstep-3.7-flash 多模态理解 / 工具调用；step-image-edit-2 角色图与 T-Pose 编辑\n↓\n02   DGX Spark：多模型本地生产\nGB10 + 128GB 统一内存，减少 CPU / GPU 间重复数据搬运\nGPU：Qwen Image → SDPose → Pixal3D → SkinTokens  ｜  CPU：AutoRemesher + Blender\n↓\n03   自研控制层：生成可控、可恢复\nCoordinator + Supervisor + 7 个专业 Agent；硬门禁优先于模型判断\n自动推进、失败回退、断点恢复  →  带骨骼 GLB\n已验证闭环  T-Pose 94/100   ·   69.7 万面 → 4.06 万四边面   ·   1 skin / 49 joints\n关键原则  Agent 负责语义判断，程序负责最终放行",
+      "textPreview": "01   StepFun：云端理解、规划与编排 | step-3.7-flash 多模态理解 / 工具调用；step-image-edit-2 角色图与 T-Pose 编辑 | ↓ | 02   DGX Spark：多模型本地生产 | GB10 + 128GB 统一内存，减...",
+      "resolvedFontSize": 58.67,
+      "resolvedTextStyle": {
+        "anchor": 1,
+        "vertical": 1,
+        "fontSize": 58.67,
+        "typeface": "Noto Sans SC",
+        "color": "#000000",
+        "alignment": "left",
+        "verticalAlignment": "top",
+        "wrap": "square",
+        "autoFit": "none",
+        "insets": {
+          "top": 4.8,
+          "right": 0,
+          "bottom": 4.8,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 12,
+        "lines": [
+          {
+            "index": 1,
+            "text": "01   StepFun：云端理解、规划与编排"
+          },
+          {
+            "index": 2,
+            "text": "step-3.7-flash 多模态理解 / 工具调用；step-image-edit-2 角色图与 T-Pose 编辑"
+          },
+          {
+            "index": 3,
+            "text": "↓"
+          },
+          {
+            "index": 4,
+            "text": "02   DGX Spark：多模型本地生产"
+          },
+          {
+            "index": 5,
+            "text": "GB10 + 128GB 统一内存，减少 CPU / GPU 间重复数据搬运"
+          },
+          {
+            "index": 6,
+            "text": "GPU：Qwen Image → SDPose → Pixal3D → SkinTokens  ｜  CPU：AutoRemesher + Blender"
+          },
+          {
+            "index": 7,
+            "text": "↓"
+          },
+          {
+            "index": 8,
+            "text": "03   自研控制层：生成可控、可恢复"
+          },
+          {
+            "index": 9,
+            "text": "Coordinator + Supervisor + 7 个专业 Agent；硬门禁优先于模型判断"
+          },
+          {
+            "index": 10,
+            "text": "自动推进、失败回退、断点恢复  →  带骨骼 GLB"
+          },
+          {
+            "index": 11,
+            "text": "已验证闭环  T-Pose 94/100   ·   69.7 万面 → 4.06 万四边面   ·   1 skin / 49 joints"
+          },
+          {
+            "index": 12,
+            "text": "关键原则  Agent 负责语义判断，程序负责最终放行"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "01   StepFun：云端理解、规划与编排",
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 10,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "01",
+              "fontSize": 58.67,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#76B900",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "   ",
+              "fontSize": 58.67,
+              "typeface": "NVIDIA Sans",
+              "color": "#000000"
+            },
+            {
+              "index": 3,
+              "text": "StepFun",
+              "fontSize": 58.67,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "：云端理解、规划与编排",
+              "fontSize": 58.67,
+              "typeface": "Noto Sans SC",
+              "color": "#000000",
+              "bold": true
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 2,
+          "text": "step-3.7-flash 多模态理解 / 工具调用；step-image-edit-2 角色图与 T-Pose 编辑",
+          "bulletCharacter": "",
+          "marginLeft": 118,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 12,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "step-3.7-flash",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#313131",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": " 多模态理解 / 工具调用；",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            },
+            {
+              "index": 3,
+              "text": "step-image-edit-2",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#313131",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": " 角色图与 ",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            },
+            {
+              "index": 5,
+              "text": "T-Pose",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans",
+              "color": "#313131"
+            },
+            {
+              "index": 6,
+              "text": " 编辑",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 3,
+          "text": "↓",
+          "bulletCharacter": "",
+          "marginLeft": 37,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 10,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "↓",
+              "fontSize": 42.67,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#76B900",
+              "bold": true
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 4,
+          "text": "02   DGX Spark：多模型本地生产",
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 10,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "02",
+              "fontSize": 58.67,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#76B900",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "   ",
+              "fontSize": 58.67,
+              "typeface": "NVIDIA Sans",
+              "color": "#000000"
+            },
+            {
+              "index": 3,
+              "text": "DGX Spark",
+              "fontSize": 58.67,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "：多模型本地生产",
+              "fontSize": 58.67,
+              "typeface": "Noto Sans SC",
+              "color": "#000000",
+              "bold": true
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 5,
+          "text": "GB10 + 128GB 统一内存，减少 CPU / GPU 间重复数据搬运",
+          "bulletCharacter": "",
+          "marginLeft": 118,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 8,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "GB10 + 128GB",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#313131",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": " 统一内存，减少 ",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            },
+            {
+              "index": 3,
+              "text": "CPU / GPU",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans",
+              "color": "#313131"
+            },
+            {
+              "index": 4,
+              "text": " 间重复数据搬运",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 6,
+          "text": "GPU：Qwen Image → SDPose → Pixal3D → SkinTokens  ｜  CPU：AutoRemesher + Blender",
+          "bulletCharacter": "",
+          "marginLeft": 118,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 12,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "GPU",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#313131",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "：",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            },
+            {
+              "index": 3,
+              "text": "Qwen Image → SDPose → Pixal3D → SkinTokens",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans",
+              "color": "#313131"
+            },
+            {
+              "index": 4,
+              "text": "  ｜  ",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#757575"
+            },
+            {
+              "index": 5,
+              "text": "CPU",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#313131",
+              "bold": true
+            },
+            {
+              "index": 6,
+              "text": "：",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            },
+            {
+              "index": 7,
+              "text": "AutoRemesher + Blender",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans",
+              "color": "#313131"
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 7,
+          "text": "↓",
+          "bulletCharacter": "",
+          "marginLeft": 37,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 10,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "↓",
+              "fontSize": 42.67,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#76B900",
+              "bold": true
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 8,
+          "text": "03   自研控制层：生成可控、可恢复",
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 10,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "03",
+              "fontSize": 58.67,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#76B900",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "   ",
+              "fontSize": 58.67,
+              "typeface": "NVIDIA Sans",
+              "color": "#000000"
+            },
+            {
+              "index": 3,
+              "text": "自研控制层：生成可控、可恢复",
+              "fontSize": 58.67,
+              "typeface": "Noto Sans SC",
+              "color": "#000000",
+              "bold": true
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 9,
+          "text": "Coordinator + Supervisor + 7 个专业 Agent；硬门禁优先于模型判断",
+          "bulletCharacter": "",
+          "marginLeft": 118,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 8,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Coordinator + Supervisor + 7",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#313131",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": " 个专业 ",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            },
+            {
+              "index": 3,
+              "text": "Agent",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#313131",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "；硬门禁优先于模型判断",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 10,
+          "text": "自动推进、失败回退、断点恢复  →  带骨骼 GLB",
+          "bulletCharacter": "",
+          "marginLeft": 118,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 22,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "自动推进、失败回退、断点恢复  →  带骨骼 ",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#313131"
+            },
+            {
+              "index": 2,
+              "text": "GLB",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#313131",
+              "bold": true
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 11,
+          "text": "已验证闭环  T-Pose 94/100   ·   69.7 万面 → 4.06 万四边面   ·   1 skin / 49 joints",
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 34,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "已验证闭环  ",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#76B900",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "T-Pose 94/100",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": "   ·   ",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans",
+              "color": "#757575"
+            },
+            {
+              "index": 4,
+              "text": "69.7",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 5,
+              "text": " 万面 → ",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#000000"
+            },
+            {
+              "index": 6,
+              "text": "4.06",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 7,
+              "text": " 万四边面",
+              "fontSize": 48,
+              "typeface": "Noto Sans SC",
+              "color": "#000000"
+            },
+            {
+              "index": 8,
+              "text": "   ·   ",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans",
+              "color": "#757575"
+            },
+            {
+              "index": 9,
+              "text": "1 skin / 49 joints",
+              "fontSize": 48,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            }
+          ],
+          "lineSpacingPercent": 90000
+        },
+        {
+          "index": 12,
+          "text": "关键原则  Agent 负责语义判断，程序负责最终放行",
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 0,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 58.67,
+            "typeface": "Noto Sans SC",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "square",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "关键原则  ",
+              "fontSize": 53.33,
+              "typeface": "Noto Sans SC",
+              "color": "#76B900",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "Agent",
+              "fontSize": 53.33,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": " 负责语义判断，程序负责最终放行",
+              "fontSize": 53.33,
+              "typeface": "Noto Sans SC",
+              "color": "#000000",
+              "bold": true
+            }
+          ],
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/7qp4be9c",
+      "id": "4",
+      "name": "Subtitle",
+      "bbox": [
+        192,
+        355.2,
+        3456,
+        96
+      ],
+      "text": "语义控制面  ×  本地资产工厂  ×  确定性质量门禁",
+      "textPreview": "语义控制面  ×  本地资产工厂  ×  确定性质量门禁",
+      "resolvedFontSize": 64,
+      "resolvedTextStyle": {
+        "anchor": 1,
+        "vertical": 1,
+        "fontSize": 64,
+        "typeface": "Noto Sans SC",
+        "color": "#757575",
+        "alignment": "left",
+        "verticalAlignment": "top",
+        "wrap": "none",
+        "autoFit": "none",
+        "insets": {
+          "top": 9.6,
+          "right": 0,
+          "bottom": 4.8,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "语义控制面  ×  本地资产工厂  ×  确定性质量门禁"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "语义控制面  ×  本地资产工厂  ×  确定性质量门禁",
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 0,
+          "resolvedTextStyle": {
+            "anchor": 1,
+            "fontSize": 64,
+            "typeface": "Noto Sans SC",
+            "color": "#757575",
+            "alignment": "left",
+            "verticalAlignment": "top",
+            "wrap": "none",
+            "autoFit": "none",
+            "insets": {
+              "top": 9.6,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "语义控制面",
+              "fontSize": 64,
+              "typeface": "Noto Sans SC",
+              "color": "#757575"
+            },
+            {
+              "index": 2,
+              "text": "  ×  ",
+              "fontSize": 64,
+              "typeface": "NVIDIA Sans",
+              "color": "#76B900",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": "本地资产工厂",
+              "fontSize": 64,
+              "typeface": "Noto Sans SC",
+              "color": "#757575"
+            },
+            {
+              "index": 4,
+              "text": "  ×  ",
+              "fontSize": 64,
+              "typeface": "NVIDIA Sans",
+              "color": "#76B900",
+              "bold": true
+            },
+            {
+              "index": 5,
+              "text": "确定性质量门禁",
+              "fontSize": 64,
+              "typeface": "Noto Sans SC",
+              "color": "#757575"
+            }
+          ],
+          "lineSpacingPercent": 90000
+        }
+      ]
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/547294r6",
+      "id": "2",
+      "name": "Title",
+      "bbox": [
+        192,
+        96,
+        3456,
+        259.2
+      ],
+      "text": "StepFun 决策，DGX Spark 生产：把角色创意变成可交付 GLB",
+      "textPreview": "StepFun 决策，DGX Spark 生产：把角色创意变成可交付 GLB",
+      "resolvedFontSize": 96,
+      "resolvedTextStyle": {
+        "anchor": 3,
+        "vertical": 1,
+        "fontSize": 96,
+        "typeface": "NVIDIA Sans Medium",
+        "color": "#000000",
+        "alignment": "left",
+        "verticalAlignment": "bottom",
+        "wrap": "none",
+        "autoFit": "none",
+        "insets": {
+          "top": 4.8,
+          "right": 0,
+          "bottom": 4.8,
+          "left": 0
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "StepFun 决策，DGX Spark 生产：把角色创意变成可交付 GLB"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "StepFun 决策，DGX Spark 生产：把角色创意变成可交付 GLB",
+          "bulletCharacter": "",
+          "marginLeft": 0,
+          "indent": 0,
+          "spaceBefore": 0,
+          "spaceAfter": 0,
+          "resolvedTextStyle": {
+            "anchor": 3,
+            "fontSize": 96,
+            "typeface": "NVIDIA Sans Medium",
+            "color": "#000000",
+            "alignment": "left",
+            "verticalAlignment": "bottom",
+            "wrap": "none",
+            "autoFit": "none",
+            "insets": {
+              "top": 4.8,
+              "right": 0,
+              "bottom": 4.8,
+              "left": 0
+            }
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "StepFun",
+              "fontSize": 96,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": " 决策，",
+              "fontSize": 96,
+              "typeface": "Noto Sans SC",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": "DGX Spark",
+              "fontSize": 96,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": " 生产：把角色创意变成可交付 ",
+              "fontSize": 96,
+              "typeface": "Noto Sans SC",
+              "color": "#000000",
+              "bold": true
+            },
+            {
+              "index": 5,
+              "text": "GLB",
+              "fontSize": 96,
+              "typeface": "NVIDIA Sans Medium",
+              "color": "#000000",
+              "bold": true
+            }
+          ],
+          "lineSpacingPercent": 90000
+        }
+      ]
+    }
+  ],
+  "composeRuns": []
+}

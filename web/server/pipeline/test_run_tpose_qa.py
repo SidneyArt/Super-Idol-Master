@@ -7,13 +7,13 @@ from PIL import Image, ImageDraw
 from run_tpose_qa import evaluate_background, evaluate_pose
 
 
-def pose_payload(*, wrist_drop=0):
+def pose_payload(*, wrist_drop=0, confidence=0.99):
     points = [
-        (500, 100, 0.99), (500, 200, 0.99),
-        (450, 220, 0.99), (320, 220, 0.99), (180, 220 + wrist_drop, 0.99),
-        (550, 220, 0.99), (680, 220, 0.99), (820, 220 + wrist_drop, 0.99),
-        (460, 500, 0.99), (460, 680, 0.99), (460, 850, 0.99),
-        (540, 500, 0.99), (540, 680, 0.99), (540, 850, 0.99),
+        (500, 100, confidence), (500, 200, confidence),
+        (450, 220, confidence), (320, 220, confidence), (180, 220 + wrist_drop, confidence),
+        (550, 220, confidence), (680, 220, confidence), (820, 220 + wrist_drop, confidence),
+        (460, 500, confidence), (460, 680, confidence), (460, 850, confidence),
+        (540, 500, confidence), (540, 680, confidence), (540, 850, confidence),
     ]
     return [{
         "canvas_width": 1000,
@@ -156,8 +156,8 @@ class TposePoseQaTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertEqual(result["metrics"]["armHorizontalError"], 0.0)
 
-    def test_visibly_downward_sloping_arms_fail(self):
-        result = evaluate_pose(pose_payload(wrist_drop=20))
+    def test_score_of_exactly_75_passes_even_when_an_old_hard_gate_fails(self):
+        result = evaluate_pose(pose_payload(wrist_drop=20, confidence=0.1875))
 
         self.assertFalse(result["passed"])
         self.assertIn("双臂不够水平", result["summary"])
@@ -182,6 +182,12 @@ class TposePoseQaTests(unittest.TestCase):
         self.assertTrue(result["passed"])
         self.assertLess(result["metrics"]["bodyCoverage"], 0.55)
         self.assertTrue(result["metrics"]["fullBody"])
+
+    def test_score_below_75_fails(self):
+        result = evaluate_pose(pose_payload(wrist_drop=20, confidence=0.175))
+
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["score"], 74)
 
 
 if __name__ == "__main__":

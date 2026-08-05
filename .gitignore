@@ -1,6 +1,10 @@
 # Generated ComfyUI workflow outputs
 /output/
 
+# Local presentation work products
+/.codex_tmp/
+/Super-Idol-Master_项目技术核心介绍_单页.pptx
+
 # Python caches and virtual environments
 __pycache__/
 *.py[cod]

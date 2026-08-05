@@ -48,7 +48,11 @@ next-env.d.ts
 /outputs/
 /work/
 /public/generated/
-data/
+data/*
+!data/mixamo-animations/
+data/mixamo-animations/*
+!data/mixamo-animations/*.fbx
+!data/mixamo-animations/manifest.json
 /.dev-server.log
 /.dev-server.err.log
 /.backend-test.log

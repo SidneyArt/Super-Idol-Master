@@ -475,7 +475,7 @@ def evaluate_pose(payload: list[dict[str, Any]]) -> dict[str, Any]:
     )
     passed = critical_pass and score >= 80
     if passed:
-        summary = "SDPose 自动检查通过：单人全身、双臂水平、肘部伸直"
+        summary = f"SDPose 自动检查通过：综合得分 {score}（通过线 {TPOSE_PASS_SCORE}）"
     else:
         reasons = []
         if not visible:
@@ -575,7 +575,7 @@ def run_qa(client: ComfyUIClient, image_path: Path, workflow_file=WORKFLOW_FILE)
     })
     if not background["passed"]:
         evaluation["passed"] = False
-        evaluation["score"] = min(int(evaluation.get("score") or 0), 79)
+        evaluation["score"] = min(int(evaluation.get("score") or 0), TPOSE_PASS_SCORE - 1)
         background_reason = (
             f"背景不是纯白（边缘纯白占比 {background['whiteBorderRatio']:.1%}，"
             f"连通背景纯白占比 {background['connectedBackgroundWhiteRatio']:.1%}）"
