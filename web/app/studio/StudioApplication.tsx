@@ -2222,7 +2222,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             >
               <div className="dispatcher-thread-content">
                 {!dispatcherTimeline.length && (
-                  <div className="dispatcher-welcome"><h2>从一个目标开始</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => dispatcherFileRef.current?.click()}>上传并拆分</button></div></div>
+                  <div className="dispatcher-welcome"><h2>从一个目标开始</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => { setDispatcherInput(""); dispatcherFileRef.current?.click(); }}>上传并拆分</button></div></div>
                 )}
                 {dispatcherTimeline.map((entry) => {
                   if (entry.kind === "generation") {
@@ -2301,23 +2301,20 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </div>
             </div>
 
-            <div className="dispatcher-session-bar">
-              <ConversationSessionManager
-                sessions={dispatcherSessions}
-                sessionId={dispatcherSessionId}
-                label="总调度 Agent 会话"
-                disabled={dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId}
-                variant="home"
-                onActivate={(value) => void activateDispatcherSession(value)}
-                onCreate={() => void startDispatcherSession()}
-                onDelete={requestDeleteDispatcherSession}
-              />
-            </div>
-
             <form className="dispatcher-composer" onSubmit={sendDispatcherMessage}>
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
               <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
               <div className="dispatcher-composer-footer">
+                <ConversationSessionManager
+                  sessions={dispatcherSessions}
+                  sessionId={dispatcherSessionId}
+                  label="总调度 Agent 会话"
+                  disabled={dispatcherBusy || dispatcherSessionBusy || !selectedWorkspaceId}
+                  variant="home"
+                  onActivate={(value) => void activateDispatcherSession(value)}
+                  onCreate={() => void startDispatcherSession()}
+                  onDelete={requestDeleteDispatcherSession}
+                />
                 <AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" />
                 <input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} />
                 <ContextUsage context={dispatcherContext} />
