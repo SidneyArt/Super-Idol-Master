@@ -63,13 +63,16 @@ export function createApprovalRuntime({ db }) {
   function preferences() {
     const rows = db.prepare(`
       SELECT key, value FROM app_preferences
-      WHERE key IN ('background_animation_enabled', 'notifications_enabled', 'default_approval_mode')
+      WHERE key IN ('default_theme', 'background_animation_enabled', 'notifications_enabled', 'default_approval_mode')
     `).all();
     const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
     const coordinatorMode = db.prepare(
       "SELECT mode FROM agent_permission_modes WHERE scope_type = 'coordinator' AND scope_id = 'global'",
     ).get()?.mode;
     return {
+      defaultTheme: values.default_theme === "light" || values.default_theme === "dark"
+        ? values.default_theme
+        : "dark",
       backgroundAnimationEnabled: values.background_animation_enabled === "true",
       notificationsEnabled: values.notifications_enabled !== "false",
       defaultApprovalMode: values.default_approval_mode === "auto" || values.default_approval_mode === "request"
@@ -79,6 +82,9 @@ export function createApprovalRuntime({ db }) {
   }
 
   function updatePreferences(input = {}) {
+    if (input.defaultTheme !== undefined && input.defaultTheme !== "light" && input.defaultTheme !== "dark") {
+      throw new Error("默认主题必须为 light 或 dark");
+    }
     if (input.backgroundAnimationEnabled !== undefined && typeof input.backgroundAnimationEnabled !== "boolean") {
       throw new Error("背景动画设置必须为布尔值");
     }
@@ -87,6 +93,9 @@ export function createApprovalRuntime({ db }) {
     }
     const current = preferences();
     const next = {
+      defaultTheme: input.defaultTheme === "light" || input.defaultTheme === "dark"
+        ? input.defaultTheme
+        : current.defaultTheme,
       backgroundAnimationEnabled: typeof input.backgroundAnimationEnabled === "boolean"
         ? input.backgroundAnimationEnabled
         : current.backgroundAnimationEnabled,
@@ -102,6 +111,7 @@ export function createApprovalRuntime({ db }) {
       INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
     `);
+    upsert.run("default_theme", next.defaultTheme, now);
     upsert.run("background_animation_enabled", String(next.backgroundAnimationEnabled), now);
     upsert.run("notifications_enabled", String(next.notificationsEnabled), now);
     upsert.run("default_approval_mode", next.defaultApprovalMode, now);

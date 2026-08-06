@@ -42,12 +42,13 @@ test("route dispatcher stops after the owning feature handles a request", async 
 test("workspace routes own workspace CRUD without claiming settings routes", async () => {
   const responses = [];
   const routes = createWorkspaceRoutes({
-    cleanText: (value) => value,
-    createWorkspaceRecord: (body) => ({ id: "workspace-new", ...body }),
-    deleteWorkspaceRecord: (id) => ({ deleted: id }),
-    getWorkspacesSummary: () => [{ id: "workspace-a" }],
     json: (_res, status, body) => responses.push({ status, body }),
     readBody: async () => ({ name: "新项目" }),
+    workspaces: {
+      create: (body) => ({ id: "workspace-new", ...body }),
+      list: () => [{ id: "workspace-a" }],
+      remove: (id) => ({ deleted: id }),
+    },
   });
 
   assert.equal(await routes(requestContext("GET", "/api/workspaces")), true);
@@ -69,12 +70,14 @@ test("job routes preserve the public action-to-job mapping", async () => {
   const started = [];
   const responses = [];
   const routes = createJobRoutes({
-    getRunRow: () => ({ id: "run-a" }),
-    json: (_res, status, body) => responses.push({ status, body }),
-    startJob: (runId, kind) => {
-      started.push({ runId, kind });
-      return { accepted: true };
+    jobs: {
+      accepts: (action) => action === "retopologize",
+      start: (runId, action) => {
+        started.push({ runId, kind: action === "retopologize" ? "topology" : action });
+        return { accepted: true };
+      },
     },
+    json: (_res, status, body) => responses.push({ status, body }),
   });
 
   assert.equal(await routes(requestContext("POST", "/api/runs/run-a/retopologize")), true);
@@ -84,17 +87,14 @@ test("job routes preserve the public action-to-job mapping", async () => {
 
 test("asset routes keep preview and download validation errors distinct", async () => {
   const routes = createAssetRoutes({
-    createAnimationAsset: () => undefined,
-    deleteAnimationAsset: () => undefined,
-    deleteWorkspaceAsset: () => undefined,
-    getAnimationAsset: () => undefined,
-    getRunRow: () => ({ name: "角色" }),
+    assets: {
+      animations: {},
+      runAsset: () => undefined,
+      streamDownload: () => undefined,
+      streamPreview: () => undefined,
+    },
     json: () => undefined,
-    listAnimationAssets: () => [],
-    listWorkspaceAssets: () => [],
     readBody: async () => ({}),
-    streamAssetPreview: () => undefined,
-    streamDownload: () => undefined,
   });
 
   await assert.rejects(

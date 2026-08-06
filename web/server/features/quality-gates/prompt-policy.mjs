@@ -33,11 +33,29 @@ function identityPromptOnly(value) {
     .join("，");
 }
 
+function fitPromptToLength(value, maxLength) {
+  const text = String(value || "").trim();
+  if (text.length <= maxLength) return text;
+  if (maxLength <= 0) return "";
+  const clipped = text.slice(0, maxLength);
+  const boundary = Math.max(
+    clipped.lastIndexOf("，"),
+    clipped.lastIndexOf("；"),
+    clipped.lastIndexOf("。"),
+  );
+  return (boundary >= Math.floor(maxLength * 0.6) ? clipped.slice(0, boundary) : clipped)
+    .replace(/[，,。；;\s]+$/g, "")
+    .trim();
+}
+
 function withRequiredSuffix(value, suffix, maxLength) {
   const base = stripGeneratedTposePolicy(value);
-  const available = Math.max(0, maxLength - suffix.length - (base ? 1 : 0));
+  const reservedBaseLength = base ? Math.min(base.length, Math.floor(maxLength * 0.25)) : 0;
+  const suffixBudget = Math.max(0, maxLength - reservedBaseLength - (base ? 1 : 0));
+  const fittedSuffix = fitPromptToLength(suffix, suffixBudget);
+  const available = Math.max(0, maxLength - fittedSuffix.length - (base && fittedSuffix ? 1 : 0));
   const trimmed = base.slice(0, available).replace(/[，,。；;\s]+$/g, "");
-  return `${trimmed}${trimmed ? "，" : ""}${suffix}`;
+  return `${trimmed}${trimmed && fittedSuffix ? "，" : ""}${fittedSuffix}`;
 }
 
 export function normalizePromptPlan(report, candidate) {
@@ -87,6 +105,38 @@ export function buildQaRepairPrompts(run, failureReason, attempt) {
   if (/(?:双臂不够水平|armHorizontalError|手臂倾斜|手腕)/i.test(reason)) {
     positiveRepairs.push("双侧手腕与肩同高，肩、肘、腕位于同一水平线，左右手臂完全对称");
     negativeRepairs.push("手腕高于肩膀，手腕低于肩膀，不对称手臂");
+  }
+  if (/(?:肘部未充分伸直|肘部|弯肘|rightElbowAngle|leftElbowAngle)/i.test(reason)) {
+    positiveRepairs.push("左右肘部完全伸直并接近 180 度，肩、肘、腕形成连续直线");
+    negativeRepairs.push("弯肘，屈肘，手臂折线");
+  }
+  if (/(?:肩线倾斜|shoulderTilt|高低肩|肩膀倾斜)/i.test(reason)) {
+    positiveRepairs.push("双肩严格同高且肩线水平，躯干保持竖直不侧倾");
+    negativeRepairs.push("高低肩，肩线倾斜，躯干侧倾");
+  }
+  if (/(?:不是严格正视|非正视|frontFacing|侧身|侧面|三分之[一二三四]|背面)/i.test(reason)) {
+    positiveRepairs.push("角色保持严格正面视图，脸部、胸腔和骨盆同时正对镜头且左右对称");
+    negativeRepairs.push("侧视图，背面视图，三分之四视图，身体扭转");
+  }
+  if (/(?:肢体存在遮挡|limbsUnoccluded|肢体遮挡|互相遮挡|轮廓重叠)/i.test(reason)) {
+    positiveRepairs.push("双臂、双手、躯干和双腿轮廓清晰分离，所有肢体完整可见且不得互相遮挡");
+    negativeRepairs.push("肢体遮挡，手臂贴住躯干，双腿重叠，轮廓粘连");
+  }
+  if (/(?:仍持有道具|持有道具|持有武器|手持|拿着|握着|handsEmpty|道具或武器)/i.test(reason)) {
+    positiveRepairs.push("双手完全空置，左右手掌和手指清晰可见且不接触任何道具");
+    negativeRepairs.push("手持道具，手持武器，手握物体，物体遮挡手掌");
+  }
+  if (/(?:Character Consistency|角色身份不一致|身份不一致|identityConsistent|身份漂移|发型不一致|服装不一致|配色不一致)/i.test(reason)) {
+    positiveRepairs.push("保持输入角色的身份特征、发型、脸部、服装、配色和穿戴式配饰不变，只修复姿态与背景");
+    negativeRepairs.push("身份漂移，发型变化，服装变化，配色变化，角色重设计");
+  }
+  if (/(?:画面不是严格单主体|personCount|多个角色|多主体)/i.test(reason)) {
+    positiveRepairs.push("画面中只能保留一个居中的完整角色，不得出现其他人物或重复肢体");
+    negativeRepairs.push("多人物，重复角色，额外头部，额外肢体");
+  }
+  if (/(?:关键点置信度不足|minConfidence|人体关键点数量不足)/i.test(reason)) {
+    positiveRepairs.push("人体轮廓和各关节必须清晰可辨，四肢与躯干保持足够间距以便稳定识别关键点");
+    negativeRepairs.push("模糊肢体，粘连轮廓，隐藏关节，低对比度人体轮廓");
   }
   if (/(?:未识别到完整全身|bodyCoverage|裁切|头顶|脚底)/i.test(reason)) {
     const coverage = Number(attempt) >= 2 ? "70% 至 82%" : "65% 至 80%";

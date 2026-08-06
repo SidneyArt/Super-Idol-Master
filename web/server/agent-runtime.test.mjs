@@ -4,6 +4,7 @@ import test from "node:test";
 import { ASSET_AGENT_ROLES, buildQaRepairPrompts, createAssetAgentRuntime, normalizeVisualQaReport } from "./agent-runtime.mjs";
 import { buildCoordinatorImagePrompts, buildSingleCharacterTaskPrompts } from "./coordinator-image-prompts.mjs";
 import { classifyCoordinatorIntent, createCoordinatorRuntime, validateSingleCharacterTaskRequest } from "./coordinator-runtime.mjs";
+import { canStartTposeModelRepair, hasRepairableTposeSource } from "./features/quality-gates/tpose-repair-policy.mjs";
 
 function createAssetRuntime(db) {
   return createAssetAgentRuntime({
@@ -135,6 +136,50 @@ test("QA repair prompts stay concise and replace prior repair text", () => {
   assert.notEqual(framingRepair.positivePrompt, prompts.positivePrompt);
 });
 
+test("QA repair prompts add constraints for semantic and detailed pose failure types", () => {
+  const run = {
+    positivePrompt: "奶牛角色，标准 T-Pose",
+    negativePrompt: "低画质",
+  };
+  const cases = [
+    ["肘部未充分伸直", /肘部.*伸直|接近 180/],
+    ["肩线倾斜", /双肩.*同高|肩线.*水平/],
+    ["角色不是严格正视", /脸部.*躯干.*骨盆.*正对|严格正面/],
+    ["肢体存在遮挡", /轮廓.*分离|不得互相遮挡/],
+    ["Visual QA 文本证据显示角色仍持有道具或武器", /双手空置|手指.*可见/],
+    ["Character Consistency 未放行：角色身份不一致", /保持.*发型.*服装.*配色|身份特征/],
+  ];
+
+  for (const [reason, expected] of cases) {
+    const prompts = buildQaRepairPrompts(run, reason, 1);
+    assert.match(prompts.positivePrompt, expected, reason);
+  }
+});
+
+test("QA repair prompts stay within model limits when many failure types occur together", () => {
+  const prompts = buildQaRepairPrompts({
+    positivePrompt: "奶牛角色",
+    negativePrompt: "低画质",
+  }, [
+    "背景不是纯白",
+    "双臂不够水平",
+    "肘部未充分伸直",
+    "肩线倾斜",
+    "角色不是严格正视",
+    "肢体存在遮挡",
+    "仍持有道具或武器",
+    "Character Consistency 未放行：角色身份不一致",
+    "画面不是严格单主体",
+    "关键点置信度不足",
+    "未识别到完整全身",
+  ].join("；"), 1);
+
+  assert.ok(prompts.positivePrompt.length <= 600, `positive prompt length: ${prompts.positivePrompt.length}`);
+  assert.ok(prompts.negativePrompt.length <= 250, `negative prompt length: ${prompts.negativePrompt.length}`);
+  assert.match(prompts.positivePrompt, /身份特征/);
+  assert.match(prompts.negativePrompt, /非纯白背景/);
+});
+
 test("unsafe T-Pose repair switches to the image-edit model instead of regenerating from scratch", async () => {
   const db = new DatabaseSync(":memory:");
   db.exec(`
@@ -207,6 +252,213 @@ test("unsafe T-Pose repair switches to the image-edit model instead of regenerat
   assert.match(run.negativePrompt, /非纯白背景/);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM run_events WHERE event_type = 'agent_qa_repair_started'").get().count, 1);
   assert.match(runtime.getConversation("run-repair").messages.at(-1).content, /自动修复/);
+  db.close();
+});
+
+test("semantic QA rejection after an SDPose pass repairs the current T-Pose with the image-edit model", async () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE runs (id TEXT PRIMARY KEY);
+    INSERT INTO runs (id) VALUES ('run-semantic-repair');
+    CREATE TABLE run_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      stage INTEGER NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  const run = {
+    id: "run-semantic-repair",
+    name: "正视语义修复角色",
+    currentStage: 2,
+    positivePrompt: "奶牛角色，标准 T-Pose",
+    negativePrompt: "低画质",
+    imagePathInternal: "/tmp/current-tpose.png",
+    jobStatus: "idle",
+    jobType: "qa",
+    jobMessage: "",
+    jobProgress: 100,
+    jobPromptId: "qa-semantic-pass",
+    qaStatus: "passed",
+    qaScore: 86,
+    qaSummary: "SDPose 自动检查通过",
+    qaMetrics: { backgroundPassed: true, armHorizontalError: 0.1 },
+    assets: { imageReady: true, modelReady: false, topologyReady: false, riggedReady: false },
+  };
+  const detail = () => ({ run });
+  let repairStarted = false;
+  const runtime = createAssetAgentRuntime({
+    db,
+    getRunDetail: detail,
+    updatePrompts: (_runId, prompts) => {
+      assert.equal(prompts.preserveTposeRepairSource, true);
+      assert.equal(hasRepairableTposeSource(run), true);
+      run.positivePrompt = prompts.positivePrompt;
+      run.negativePrompt = prompts.negativePrompt;
+      return detail();
+    },
+    advanceWorkflow: () => detail(),
+    revertWorkflow: () => assert.fail("semantic repair must preserve the current T-Pose"),
+    repairTposeImage: async () => ({ applied: false, strategy: "image_edit_model", reason: "非正视需要模型重绘" }),
+    runStageJob: (_runId, action) => {
+      assert.equal(action, "repair_2d");
+      assert.equal(canStartTposeModelRepair(run, true), true);
+      repairStarted = true;
+      run.jobStatus = "running";
+      run.jobType = "2d";
+      run.jobMessage = "正在用图片编辑模型修复非正视问题";
+      return detail();
+    },
+    getAgentConfig: () => ({ apiKey: "", model: "step-3.7-flash" }),
+    getRunImagePath: () => null,
+    getRunReferenceImagePath: () => null,
+    getAssetInspection: () => ({}),
+    addRunEvent: (runId, eventType, stage, message, createdAt = new Date().toISOString()) => {
+      db.prepare("INSERT INTO run_events (run_id, event_type, stage, message, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(runId, eventType, stage, message, createdAt);
+    },
+    getPermissionMode: () => "auto",
+    requestApproval: () => {},
+  });
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO agent_role_runs (
+      id, run_id, agent_role, trigger_type, source_key, status, model,
+      input_json, output_json, created_at, completed_at
+    ) VALUES (?, ?, 'visual_qa', 'qa_job_completed', ?, 'succeeded', 'fixture', '{}', ?, ?, ?)
+  `).run(
+    "visual-semantic-reject",
+    run.id,
+    `qa:${run.jobPromptId}`,
+    JSON.stringify({ decision: "repairable", summary: "角色不是严格正视" }),
+    now,
+    now,
+  );
+
+  const plan = await runtime.scheduleWorkflowPlan(run.id, "model");
+
+  assert.equal(plan.status, "running");
+  assert.equal(repairStarted, true);
+  assert.match(run.positivePrompt, /严格正面视图/);
+  db.close();
+});
+
+test("an image-edit repair launch failure blocks the plan with a recoverable message", async () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE runs (id TEXT PRIMARY KEY);
+    INSERT INTO runs (id) VALUES ('run-repair-launch-failure');
+    CREATE TABLE run_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      stage INTEGER NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  const run = {
+    id: "run-repair-launch-failure",
+    currentStage: 2,
+    positivePrompt: "奶牛角色，标准 T-Pose",
+    negativePrompt: "低画质",
+    imagePathInternal: "/tmp/current-tpose.png",
+    jobStatus: "idle",
+    jobPromptId: "qa-failed-launch",
+    qaStatus: "failed",
+    qaSummary: "肘部未充分伸直",
+    qaMetrics: { backgroundPassed: true, rightElbowAngle: 145 },
+    assets: { imageReady: true, modelReady: false, topologyReady: false, riggedReady: false },
+  };
+  const detail = () => ({ run });
+  const runtime = createAssetAgentRuntime({
+    db,
+    getRunDetail: detail,
+    updatePrompts: () => detail(),
+    advanceWorkflow: () => detail(),
+    revertWorkflow: () => detail(),
+    repairTposeImage: async () => ({ applied: false, strategy: "image_edit_model", reason: "肘部需要重绘" }),
+    runStageJob: () => {
+      throw new Error("2D API Key 未配置");
+    },
+    getAgentConfig: () => ({ apiKey: "", model: "step-3.7-flash" }),
+    getRunImagePath: () => null,
+    getRunReferenceImagePath: () => null,
+    getAssetInspection: () => ({}),
+    addRunEvent: (runId, eventType, stage, message, createdAt = new Date().toISOString()) => {
+      db.prepare("INSERT INTO run_events (run_id, event_type, stage, message, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(runId, eventType, stage, message, createdAt);
+    },
+    getPermissionMode: () => "auto",
+    requestApproval: () => {},
+  });
+
+  const plan = await runtime.scheduleWorkflowPlan(run.id, "model");
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.message, /图片编辑模型修复未能启动.*API Key/);
+  assert.match(runtime.getConversation(run.id).messages.at(-1).content, /已暂停.*API Key/);
+  db.close();
+});
+
+test("a stale deterministic repair result blocks without editing the replacement image", async () => {
+  const db = new DatabaseSync(":memory:");
+  db.exec(`
+    CREATE TABLE runs (id TEXT PRIMARY KEY);
+    INSERT INTO runs (id) VALUES ('run-stale-repair');
+    CREATE TABLE run_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      stage INTEGER NOT NULL,
+      message TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  const run = {
+    id: "run-stale-repair",
+    currentStage: 2,
+    positivePrompt: "奶牛角色，标准 T-Pose",
+    negativePrompt: "低画质",
+    imagePathInternal: "/tmp/replaced-tpose.png",
+    jobStatus: "idle",
+    jobPromptId: "qa-stale",
+    qaStatus: "failed",
+    qaSummary: "背景不是纯白",
+    qaMetrics: { backgroundPassed: false },
+    assets: { imageReady: true, modelReady: false, topologyReady: false, riggedReady: false },
+  };
+  const detail = () => ({ run });
+  const runtime = createAssetAgentRuntime({
+    db,
+    getRunDetail: detail,
+    updatePrompts: () => assert.fail("a stale repair must not update prompts"),
+    advanceWorkflow: () => detail(),
+    revertWorkflow: () => detail(),
+    repairTposeImage: async () => ({
+      applied: false,
+      strategy: "stale_source",
+      reason: "T-Pose 修复期间源图片或任务状态已变化，旧结果已丢弃",
+    }),
+    runStageJob: () => assert.fail("a stale repair must not launch another job"),
+    getAgentConfig: () => ({ apiKey: "", model: "step-3.7-flash" }),
+    getRunImagePath: () => null,
+    getRunReferenceImagePath: () => null,
+    getAssetInspection: () => ({}),
+    addRunEvent: (runId, eventType, stage, message, createdAt = new Date().toISOString()) => {
+      db.prepare("INSERT INTO run_events (run_id, event_type, stage, message, created_at) VALUES (?, ?, ?, ?, ?)")
+        .run(runId, eventType, stage, message, createdAt);
+    },
+    getPermissionMode: () => "auto",
+    requestApproval: () => {},
+  });
+
+  const plan = await runtime.scheduleWorkflowPlan(run.id, "model");
+
+  assert.equal(plan.status, "blocked");
+  assert.match(plan.message, /源图片或任务状态已变化/);
   db.close();
 });
 

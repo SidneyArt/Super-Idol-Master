@@ -53,6 +53,14 @@ class WorkflowResult:
     downloads: tuple[DownloadedArtifact, ...]
 
 
+class ComfyUIExecutionError(RuntimeError):
+    """Workflow failed on the remote ComfyUI; the failure run is saved to disk."""
+
+    def __init__(self, message: str, detail: Any = None) -> None:
+        super().__init__(message)
+        self.detail = detail
+
+
 class ComfyUIClient:
     def __init__(self, base_url: str, timeout: int = 1800) -> None:
         self.base_url = base_url.rstrip("/") + "/"
@@ -143,11 +151,15 @@ class ComfyUIClient:
             for message in status.get("messages", []):
                 if isinstance(message, list) and message and message[0] == "execution_error":
                     detail = message[1] if len(message) > 1 else message
-                    raise RuntimeError(f"ComfyUI execution error: {detail}")
+                    raise ComfyUIExecutionError(
+                        f"ComfyUI execution error: {detail}", detail=detail
+                    ) from None
             if status.get("completed") or status.get("status_str") == "success":
                 return entry
             if status.get("status_str") in {"error", "failed"}:
-                raise RuntimeError(f"ComfyUI workflow failed: {status}")
+                raise ComfyUIExecutionError(
+                    f"ComfyUI workflow failed: {status}", detail=status
+                ) from None
 
         raise TimeoutError(
             f"ComfyUI prompt {prompt_id} did not finish within {self.timeout} seconds"
@@ -293,6 +305,27 @@ def _save_json(path: Path, payload: Any) -> None:
     )
 
 
+def _save_error_run(
+    kind: str,
+    prompt_id: str,
+    workflow: dict[str, Any],
+    error: ComfyUIExecutionError,
+) -> Path:
+    """Persist a failure run so remote execution errors are never lost."""
+    run_dir = _create_run_dir(kind, prompt_id)
+    _save_json(run_dir / "submitted_workflow.json", workflow)
+    _save_json(
+        run_dir / "error.json",
+        {
+            "error_at": datetime.now().isoformat(timespec="seconds"),
+            "prompt_id": prompt_id,
+            "message": str(error),
+            "detail": error.detail,
+        },
+    )
+    return run_dir
+
+
 def execute_workflow(
     client: ComfyUIClient,
     kind: str,
@@ -304,7 +337,12 @@ def execute_workflow(
         file=sys.stderr,
         flush=True,
     )
-    history = client.wait_for_completion(prompt_id)
+    try:
+        history = client.wait_for_completion(prompt_id)
+    except ComfyUIExecutionError as error:
+        run_dir = _save_error_run(kind, prompt_id, workflow, error)
+        print(f"[{kind}] failure run saved: {run_dir}", file=sys.stderr, flush=True)
+        raise
     run_dir = _create_run_dir(kind, prompt_id)
     _save_json(run_dir / "submitted_workflow.json", workflow)
     _save_json(run_dir / "history.json", history)

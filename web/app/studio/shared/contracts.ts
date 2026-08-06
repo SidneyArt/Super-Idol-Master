@@ -7,6 +7,7 @@ export type ReasoningEffort = "off" | "low" | "high";
 export type AgentModelOption = { id: string; name: string };
 
 export type GlobalPreferences = {
+  defaultTheme: Theme;
   backgroundAnimationEnabled: boolean;
   notificationsEnabled: boolean;
   defaultApprovalMode: ApprovalMode;

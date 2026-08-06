@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "node scripts/run-vinext.mjs dev",
-    "build": "node scripts/run-vinext.mjs build",
+    "build": "node scripts/run-vinext.mjs build && node scripts/check-bundle.mjs",
     "start": "node scripts/run-vinext.mjs start",
     "local": "node scripts/start-local.mjs",
     "python:sync": "uv sync --locked --project server/pipeline",
@@ -16,10 +16,12 @@
     "backend": "npm run python:sync && node server/index.mjs",
     "agent:verify": "node scripts/verify-stepfun-pi.mjs",
     "test": "npm run test:node && npm run test:python && npm run build",
-    "test:node": "node --test server/*.test.mjs",
+    "test:node": "node scripts/check-architecture.mjs && node --test server/*.test.mjs",
     "test:e2e": "playwright test",
     "test:python": "uv run --locked --project server/pipeline python -m unittest discover -s server/pipeline -p \"test_*.py\"",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint": "node scripts/check-architecture.mjs && eslint . --ignore-pattern dist --ignore-pattern .next",
+    "lint:architecture": "node scripts/check-architecture.mjs",
+    "lint:bundle": "node scripts/check-bundle.mjs",
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {

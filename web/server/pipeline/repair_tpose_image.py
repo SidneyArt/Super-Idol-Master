@@ -20,7 +20,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
-from run_tpose_qa import evaluate_background, is_light_neutral, pose_constrained_foreground_mask
+from tpose_image_analysis import evaluate_background, is_light_neutral, pose_constrained_foreground_mask
 
 
 MAX_DETERMINISTIC_ARM_ERROR = 0.35

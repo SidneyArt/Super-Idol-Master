@@ -2,7 +2,7 @@
 
 本文档帮助开发者和 Agent 快速理解 Super Idol Master（多智能体数字角色资产生产线）的代码结构、运行边界和关键数据流。架构或职责发生变化时，应同步更新本文档。
 
-最后更新日期：2026-07-27
+最后更新日期：2026-08-05
 
 ## 1. 项目结构
 
@@ -20,12 +20,19 @@ Super-Idol-Master/
 │   └── dgx-autoremesher/             # 可单独上传的 ARM64 AutoRemesher API 安装包
 ├── web/
 │   ├── app/
-│   │   ├── page.tsx                  # 工作空间首页、任务控制台和 Agent 面板
+│   │   ├── page.tsx                  # 服务端页面入口与初始 Runs/Workspaces 快照
+│   │   ├── Studio.tsx                # 稳定的页面组合 Interface
+│   │   ├── studio/
+│   │   │   ├── StudioApplication.tsx # 迁移中的旧页面组合实现
+│   │   │   ├── features/             # 前端业务 Feature 状态、查询、表单与展示
+│   │   │   └── shared/               # 契约、API client、轮询、selector 与通用 UI
 │   │   ├── globals.css               # 全局界面样式
 │   │   └── components/ModelViewer.tsx # Three.js GLB 预览器
 │   ├── server/
-│   │   ├── index.mjs                 # HTTP API、状态机、Job 与产物校验
-│   │   ├── agent-runtime.mjs         # Supervisor、多 Agent 与持续执行计划
+│   │   ├── index.mjs                 # 进程/依赖组合根；仍有待迁移领域逻辑
+│   │   ├── features/                 # Runs、Assets、Jobs、质量门禁、Agents 等垂直模块
+│   │   ├── http/dispatch-routes.mjs  # HTTP route dispatcher
+│   │   ├── agent-runtime.mjs         # 迁移中的任务 Agent 组合实现
 │   │   ├── approval-runtime.mjs      # 权限模式、审批队列与全局通知
 │   │   ├── coordinator-runtime.mjs   # 跨工作空间总调度与批量任务委派
 │   │   ├── gpu-resource-scheduler.mjs # 全局 FIFO 生成资源队列与唯一 GPU 槽
@@ -51,6 +58,8 @@ Super-Idol-Master/
 ```
 
 当前系统采用本地模块化单体结构。前端、API、Agent Runtime 和 Job 编排位于同一个 `web/` 应用中；计算密集型生成任务通过 `web/server/pipeline/` 中的后端私有 Python 执行器委派给 DGX / ComfyUI。
+
+代码按 `runs`、`workspaces`、`assets`、`jobs`、`quality-gates`、`agents`、`approvals` 等业务能力垂直拆分，而不是建立通用的 controller/service/utils 三层。当前仍处于渐进迁移期：前端 `Studio.tsx` 已成为薄入口，但旧页面组合仍在 `StudioApplication.tsx`；后端路由已经归属 Feature，建表迁移和多项领域实现仍留在 `index.mjs`。目录存在不代表状态所有权已经迁移完成，具体约束和例外见 [`web/ARCHITECTURE.md`](./web/ARCHITECTURE.md)。
 
 ## 2. 高层系统图
 
@@ -96,6 +105,17 @@ Super-Idol-Master/
 8. 如果存在持续执行计划，完成事件会恢复 Supervisor 编排；质量门禁通过后才启动下一阶段。
 9. 前端轮询 Run、子 Agent 和计划状态，展示进度、报告及最终产物。
 
+### 2.1. Node / Python / DGX 运行 seam
+
+这三个运行域保持单向依赖：
+
+- 浏览器只使用 Node.js 的 HTTP 契约，不知道 SQLite、Python 命令或 ComfyUI 节点；
+- Node.js 是状态机、审批、队列、持久化和业务授权的唯一事实来源；
+- `web/server/pipeline/` 是 Node 的私有 Python Adapter，只接收已校验参数、执行固定脚本并返回产物事实；
+- DGX / ComfyUI 是 GPU 计算面，只执行工作流，不决定 Run 是否推进或质量门禁是否通过。
+
+因此未来替换 Python 脚本或 DGX 端点时，不应修改 React Feature；替换轮询为 SSE/WebSocket 时，也只替换前端 query owner 和 Node 传输 Adapter，不改变页面展示 Interface。
+
 ## 3. 核心组件
 
 ### 3.1. 本地控制台
@@ -116,6 +136,8 @@ Super-Idol-Master/
 
 **运行方式：** 由 `npm run local` 在 `127.0.0.1:3100` 启动，仅作为本机应用使用。
 
+**当前模块状态：** `app/page.tsx` 只负责路由参数和初始 Runs/Workspaces 快照；`app/Studio.tsx` 是稳定的薄组合入口。`app/studio/StudioApplication.tsx` 仍保留迁移中的 Home/Task markup 和部分业务编排，不能把入口行数减少视为状态归属重建已经完成。服务端状态应由 Feature query owner 管理，UI/表单状态归属对应 Feature，派生状态通过 selector 计算。
+
 ### 3.2. 本地 API 与工作流编排器
 
 **名称：** Local Orchestrator API
@@ -133,6 +155,8 @@ Super-Idol-Master/
 **技术栈：** Node.js 22、原生 `node:http`、`node:sqlite`、WebSocket、Python 子进程。
 
 **运行方式：** 由本地启动器在 `127.0.0.1:8787` 启动。
+
+**当前模块状态：** `server/index.mjs` 是进程和依赖组合根；`server/features/` 已按 Runs、Workspaces、Assets、Jobs、Quality Gates、Agents、Approvals、Settings 和 System 拆分 HTTP Adapter，Runs 领域 Interface 也已开始迁移。建表迁移、部分状态机、资产、Job 和外部探测实现仍在组合根，后续必须移动到相应垂直 Feature，而不是继续扩展 `index.mjs` 或建立横向 `services/utils` 集合。
 
 ### 3.3. Agent Runtime
 
@@ -328,23 +352,36 @@ Super-Idol-Master/
 cd web
 npm run local
 npm run lint
+npm run lint:architecture
+npm run lint:bundle
+npm run test:node
+npm run test:e2e
 npm run build
 npm run agent:verify
 ```
 
-**代码质量工具：** ESLint、TypeScript/Vinext 生产构建、Node.js 语法检查。
+**代码质量工具：** ESLint、可执行架构依赖检查、TypeScript/Vinext 生产构建、Node.js 与 Python 测试、Playwright 浏览器 Smoke Test。
+
+`web/scripts/check-architecture.mjs` 会扫描真实 import 图和直接 `fetch` 调用，并由 `npm run lint` 与 `npm run test:node` 自动执行。它强制 shared 不依赖 Feature、Feature 间只经过公开 index、页面组合不穿透 Feature 内部实现、展示组件不直接请求网络。迁移期的逐条例外及删除条件记录在 [`web/ARCHITECTURE.md`](./web/ARCHITECTURE.md)，不能增加目录级白名单。
+
+生产构建通过 Rolldown 将 React/Vinext、Markdown 和 Three.js 拆为稳定、可归因的 vendor chunk，并自动执行 raw/gzip Bundle Budget。Three.js 仍是唯一超过 500 kB 的客户端 chunk，但只由懒加载 ModelViewer 引用且有独立硬预算；构建没有关闭 Vite 警告或提高全局告警阈值。
 
 **当前测试边界：**
 
 - `npm test` 依次执行 Node 单元测试、Python 单元测试和生产构建；
 - `npm run lint` 执行静态检查；
+- `npm run lint:architecture` 可单独执行 Feature 依赖和网络调用规则；
+- `npm run test:e2e` 覆盖首页/Workspace、任务阶段、Agent 队列与取消、Coordinator Session、Settings、审批和通知等关键路径；
 - `npm run agent:verify` 验证模型文本、图片和工具调用兼容性；
 - Python 工作流以真实 DGX E2E 运行结果为主要集成证据；
-- 当前已有设置密钥、Agent 角色状态、StepFun 图片 API、T-Pose QA 和拓扑客户端单元测试，但仍没有完整的 API 集成测试或浏览器 E2E 套件。
+- 当前已有查询竞态、selector、Feature route、设置密钥、Agent 角色状态、StepFun 图片 API、T-Pose QA 和拓扑客户端单元测试；API 全链路集成覆盖仍需继续扩充。
 
 ## 10. 未来规划与架构债务
 
-- 为状态机、自动流水线恢复、质量门禁和 API 增加确定性自动测试。
+- 完成 `StudioApplication.tsx` 的 Home/Task/Agent/Settings 状态所有权迁移，不能只把旧 JSX 更名保存。
+- 将 `index.mjs` 的建表迁移和领域逻辑移动到垂直 Feature，使组合根只装配 Interface。
+- 将任务 Agent 会话、工作流 Supervisor 和结构化角色执行从 `agent-runtime.mjs` 移入小而深的模块。
+- 为自动流水线恢复、质量门禁和 API 增加更多确定性集成测试。
 - 增加 Job 取消、超时、重试策略和服务重启后的安全续跑协议。
 - 将前端轮询升级为 SSE 或 WebSocket 事件推送，减少重复请求。
 - 为 Asset Inspector 与 Rigging QA 增加服务端多视图和标准动作变形渲染，扩展现有结构指标。
@@ -364,7 +401,7 @@ npm run agent:verify
 
 **主要运行平台：** Windows 本地控制台 + NVIDIA DGX
 
-**最后更新日期：** 2026-07-21
+**最后更新日期：** 2026-08-05
 
 ## 12. 术语表
 

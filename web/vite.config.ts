@@ -27,6 +27,27 @@ const { d1, r2 } = loadHostingConfig();
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 
+// Keep expensive, independently cached libraries out of feature entry chunks.
+// The groups are deliberately capability-based instead of one opaque vendor
+// bucket so the bundle report can attribute growth to its owner.
+const vendorChunkGroups = [
+  {
+    name: "vendor-react",
+    test: /node_modules[\\/](?:react|react-dom|scheduler)[\\/]/,
+    priority: 40,
+  },
+  {
+    name: "vendor-three",
+    test: /node_modules[\\/]three[\\/]/,
+    priority: 30,
+  },
+  {
+    name: "vendor-markdown",
+    test: /node_modules[\\/](?:react-markdown|remark-gfm|remark-parse|remark-rehype|unified|micromark|mdast-util|hast-util|unist-util|vfile)[\\/]/,
+    priority: 20,
+  },
+];
+
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
@@ -60,6 +81,13 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    build: {
+      rolldownOptions: {
+        output: {
+          codeSplitting: { groups: vendorChunkGroups },
+        },
+      },
+    },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,
