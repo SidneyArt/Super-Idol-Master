@@ -157,7 +157,6 @@ export function ConversationSessionManager({
         <span><strong>{variant === "home" ? "历史会话" : current?.title || "新会话"}</strong><small>{current ? `${current.messageCount} 条消息` : "正在创建"}</small></span>
         <ChevronDown size={13} />
       </button>
-      <button type="button" className="conversation-create-button" disabled={disabled} onClick={() => { setOpen(false); onCreate(); }} title="新建会话" aria-label={`新建${label}`}><Plus size={15} />{variant === "home" && <span>新建会话</span>}</button>
       {open && !disabled && (
         <section className="conversation-menu" role="dialog" aria-label={`${label}列表`}>
           <header><div><strong>会话记录</strong><small>{sessions.length} 个会话</small></div><button type="button" onClick={() => { setOpen(false); onCreate(); }}><Plus size={14} />新对话</button></header>

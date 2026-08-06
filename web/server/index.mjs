@@ -1340,13 +1340,54 @@ function completeJob(runId, jobType, stdout, execution = {}) {
   return { runId, jobType, sourceKey };
 }
 
+const FAIL_MESSAGE_TRANSLATIONS = [
+  // DGX/ComfyUI API 连接池/HTTP 连接失败 — 先匹配更具体的 HTTP 错误
+  { test: (m) => m.includes("HTTPConnectionPool") || /Max retries exceeded|ConnectTimeoutError/i.test(m), type: "timeout" },
+  // HTTP connection done 错误（如 ConnectionError 含 refused/timed out）
+  { test: (m) => /ConnectionError.*(refused|timed)/i.test(m), type: "timeout" },
+  // 通用连接拒绝（排除已被上一条匹配的）
+  { test: (m) => /Connection refused|ECONNREFUSED|connection.*refused/i.test(m) && !m.includes("ConnectionError"), type: "refused" },
+  // 通用连接超时（排除已被优先匹配的）
+  { test: (m) => /(timed out|timeout|connect timeout)/i.test(m) && !m.includes("HTTPConnectionPool") && !m.includes("ConnectTimeoutError"), type: "timeout" },
+  // DNS 解析失败
+  { test: (m) => /getaddrinfo|ENOTFOUND|Name or service not known/i.test(m), type: "dns" },
+  // 认证失败
+  { test: (m) => /401|403|unauthorized|forbidden|api.key|api_key|authentication|invalid key/i.test(m), type: "auth" },
+  // Python 错误包装
+  { test: (m) => /Error:.*Traceback|ERROR:|TypeError|ValueError|KeyError/i.test(m), type: "script" },
+];
+
+function friendlyFailMessage(jobType, rawMessage) {
+  if (!rawMessage) return `${jobType} 任务失败`;
+  // 如果是用户友好的中文消息，直接返回
+  if (/[\u4e00-\u9fff]/.test(rawMessage) && rawMessage.length < 60) return rawMessage;
+  for (const entry of FAIL_MESSAGE_TRANSLATIONS) {
+    if (!entry.test(rawMessage)) continue;
+    switch (entry.type) {
+      case "refused":
+        return `${jobType.toUpperCase()} 任务失败：DGX/ComfyUI 服务拒绝连接，请确认工作流引擎地址配置正确且服务已启动。`;
+      case "timeout":
+        return `${jobType.toUpperCase()} 任务失败：DGX/ComfyUI 服务连接超时，请检查服务是否正常运行及网络连通性。`;
+      case "auth":
+        return `${jobType.toUpperCase()} 任务失败：API 鉴权失败，请检查 API Key 配置是否正确。`;
+      case "dns":
+        return `${jobType.toUpperCase()} 任务失败：无法解析服务地址，请检查工作流引擎 URL 配置。`;
+      case "script":
+        const cleaned = rawMessage.replace(/ERROR:|Traceback \(most recent call last\):[\s\S]*?\/api\//g, "").replace(/\n/g, " ").trim().slice(0, 200);
+        return `任务执行脚本异常：${cleaned}`;
+    }
+  }
+  return rawMessage.trim().slice(-1200);
+}
+
 function failJob(runId, jobType, errorMessage) {
-  const message = (errorMessage || `${jobType} 任务失败`).trim().slice(-1200);
+  const rawMessage = (errorMessage || `${jobType} 任务失败`).trim().slice(-1200);
+  const message = friendlyFailMessage(jobType, rawMessage);
   const now = new Date().toISOString();
   db.prepare(`
     UPDATE runs SET generation_status = 'failed', generation_message = ?, updated_at = ? WHERE id = ?
   `).run(message, now, runId);
-  addEvent(runId, `${jobType}_failed`, { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType], `${jobType.toUpperCase()} 任务失败：${message}`, now);
+  addEvent(runId, `${jobType}_failed`, { "2d": 1, qa: 2, "3d": 3, topology: 4, rig: 5 }[jobType], message, now);
 }
 
 function launchJob(run, jobType, processConfig, lease, execution2d = null) {

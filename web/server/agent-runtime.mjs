@@ -1,3 +1,4 @@
+import { Type } from "@earendil-works/pi-ai";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { randomUUID } from "node:crypto";
 

@@ -147,7 +147,6 @@ type StudioProps = {
 
 export default function Studio({ initialRunId, initialWorkspaceId: requestedWorkspaceId, initialNotificationId, initialRuns, initialWorkspaces }: StudioProps) {
   const router = useRouter();
-  const screen: "home" | "task" = initialRunId ? "task" : "home";
   const initialRun = initialRuns.find((item) => item.id === initialRunId);
   const startingWorkspaceId = initialRun?.workspaceId
     || requestedWorkspaceId
@@ -157,6 +156,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(() => new Set([startingWorkspaceId]));
   const [runs, setRuns] = useState<Run[]>(initialRuns);
   const [selectedId, setSelectedId] = useState<string | null>(initialRunId);
+  const screen: "home" | "task" = selectedId ? "task" : "home";
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [viewStage, setViewStage] = useState(0);
   const [system, setSystem] = useState<SystemState | null>(null);
@@ -260,7 +260,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }
 
   function openTask(runId: string) {
-    router.push(`/?task=${encodeURIComponent(runId)}`);
+    window.history.replaceState(null, "", `/?task=${encodeURIComponent(runId)}`);
+    selectRun(runId);
+    setAssetLibraryWorkspaceId(null);
   }
 
   function selectTask(run: Run) {
@@ -1068,6 +1070,48 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
 
   function workspaceAssetPreviewUrl(value: string) {
     return value.startsWith("/generated/") ? value : downloadUrl(value);
+  }
+
+  function renderErrorMessage(jobType: string | null, message: string | null): string {
+    if (!message) return "任务执行失败，未获得有效错误信息";
+    if (jobType === "qa") {
+      // 将 SDPose/DGX 底层错误消息翻译为用户可读格式
+      if (message.includes("HTTPConnectionPool") || message.includes("连接池") || message.includes("NewConnectionError") || message.includes("MaxRetryError") || message.includes("Failed to establish")) {
+        return "SDPose 服务连接失败，请检查 DGX 或 ComfyUI 服务是否正常运行。";
+      }
+      if (message.includes("Connection refused") || message.includes("连接被拒绝") || message.includes("ECONNREFUSED")) {
+        return "SDPose 服务拒绝连接，请确认 DGX/ComfyUI 服务地址配置正确且服务已启动。";
+      }
+      if (message.includes("timeout") || message.includes("超时") || message.includes("timed out") || message.includes("连接超时") || message.includes("服务端点不可达")) {
+        return "SDPose 服务连接超时，请检查 DGX/ComfyUI 服务是否正常运行及网络连通性。";
+      }
+      if (message.includes("not found") || message.includes("404") || message.includes("不存在")) {
+        return "SDPose 工作流或相关节点未找到，请检查工作流配置是否正确。";
+      }
+      if (message.includes("Internal Server Error") || message.includes("500") || message.includes("服务端异常")) {
+        return "SDPose 服务端内部错误，请检查 DGX 日志。";
+      }
+      if (message.includes("Workflow") && (message.includes("missing") || message.includes("缺失"))) {
+        return "SDPose 工作流节点缺失，请在工作流配置中选择完整的工作流版本。";
+      }
+      if (message.includes("从属服务") || message.includes("service")) {
+        return "SDPose 依赖的从属服务不可用。";
+      }
+      if (message.includes("Python") && (message.includes("退出") || message.includes("exit"))) {
+        return "SDPose 进程异常退出。";
+      }
+    }
+    // 其他任务类型的通用翻译
+    if (message.includes("HTTPConnectionPool") || message.includes("连接池") || message.includes("NewConnectionError")) {
+      return "无法连接到 DGX/ComfyUI 服务，请确认服务地址正确且服务已启动。";
+    }
+    if (message.includes("Connection refused") || message.includes("连接被拒绝")) {
+      return "DGX/ComfyUI 服务拒绝连接，请确认服务是否正在运行。";
+    }
+    if (message.includes("timeout") || message.includes("超时") || message.includes("timed out")) {
+      return "DGX/ComfyUI 请求超时，请确认网络连通性。";
+    }
+    return message;
   }
 
   function toggleTheme() {
@@ -1985,7 +2029,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   return (
     <>
       <LiquidWaveBackground
-        theme={theme}
+        theme={screen === "home" ? "dark" : theme}
         animated={showGlobalSettings
           ? globalPreferencesDraft.backgroundAnimationEnabled
           : globalPreferences.backgroundAnimationEnabled}
@@ -2079,9 +2123,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </div>
             )}
           </div>}
-          <button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
+          {screen === "task" && (<button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
             {theme === "dark" ? <Sun size={27} /> : <Moon size={27} />}
-          </button>
+          </button>)}
         </div>
       </header>
 
@@ -2589,7 +2633,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                       )}
 
                       {isCurrentView && run.jobStatus === "running" && <div className="action-note running"><RefreshCw size={17} /><div><strong>{jobName(run.jobType)} 正在执行</strong><p>{run.jobMessage}</p></div></div>}
-                      {isCurrentView && run.jobStatus === "failed" && <div className="action-note failed"><X size={17} /><div><strong>{jobName(run.jobType)} 执行失败</strong><p>{run.jobMessage}</p></div></div>}
+                      {isCurrentView && run.jobStatus === "failed" && <div className="action-note failed"><X size={17} /><div><strong>{jobName(run.jobType)} 执行失败</strong><p>{renderErrorMessage(run.jobType, run.jobMessage)}</p></div></div>}
 
                       {viewStage === 2 && run.qaScore !== null && (
                         <div className={`qa-summary ${run.qaStatus}`}>
