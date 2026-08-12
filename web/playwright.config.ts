@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+function withEnvironment(name: string, value: string, command: string) {
+  return process.platform === "win32"
+    ? `set "${name}=${value}" && ${command}`
+    : `${name}=${value} ${command}`;
+}
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
@@ -15,12 +21,12 @@ export default defineConfig({
   }],
   webServer: [
     {
-      command: "STUDIO_MOCK_API_PORT=8791 node e2e/mock-server.mjs",
+      command: withEnvironment("STUDIO_MOCK_API_PORT", "8791", "node e2e/mock-server.mjs"),
       port: 8791,
       reuseExistingServer: false,
     },
     {
-      command: "NEXT_PUBLIC_API_URL=http://127.0.0.1:8791 npm run dev -- --port 4181",
+      command: withEnvironment("NEXT_PUBLIC_API_URL", "http://127.0.0.1:8791", "npm run dev -- --port 4181"),
       port: 4181,
       reuseExistingServer: false,
       timeout: 120_000,

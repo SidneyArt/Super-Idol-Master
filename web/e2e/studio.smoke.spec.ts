@@ -24,6 +24,18 @@ test("打开任务并切换可查看的工作流阶段", async ({ page }) => {
   await expect(page.locator(".preview-header")).toContainText("SDPose");
 });
 
+test("任务页可以返回首页", async ({ page }) => {
+  await page.goto("/?task=run-1");
+  await expect(page.getByText("Nova", { exact: true }).first()).toBeVisible();
+  await waitForStudioReady(page);
+
+  await page.getByRole("button", { name: "返回首页", exact: true }).click();
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator(".dispatcher-title h1")).toHaveText("角色实验室");
+  await expect(page.locator(".sidebar-home-button")).toHaveCount(0);
+});
+
 test("Agent 消息可发送、排队和取消", async ({ page }) => {
   await page.goto("/?task=run-1");
   await expect(page.getByText("待命", { exact: true })).toBeVisible();

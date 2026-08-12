@@ -1,7 +1,6 @@
 "use client";
 
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 import {
   Bell,
   Bot,
@@ -146,7 +145,6 @@ type StudioProps = {
 };
 
 export default function Studio({ initialRunId, initialWorkspaceId: requestedWorkspaceId, initialNotificationId, initialRuns, initialWorkspaces }: StudioProps) {
-  const router = useRouter();
   const initialRun = initialRuns.find((item) => item.id === initialRunId);
   const startingWorkspaceId = initialRun?.workspaceId
     || requestedWorkspaceId
@@ -236,7 +234,10 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const toastNotification = toastQueue[0] || null;
 
   function openHome() {
-    router.push("/");
+    window.history.replaceState(null, "", "/");
+    selectRun(null);
+    setDetail(null);
+    setAssetLibraryWorkspaceId(null);
   }
 
   useEffect(() => {
@@ -553,7 +554,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         const nextWorkspaceId = requestedRun?.workspaceId
           || requestedWorkspace?.id
           || preferredHomeWorkspaceId(workspaceData.workspaces);
-        const nextRunId = requestedRun?.id || runData.runs[0]?.id || null;
+        const nextRunId = requestedRun?.id || null;
         if (selectedWorkspaceIdRef.current === workspaceSelectionAtStart) {
           selectedWorkspaceIdRef.current = nextWorkspaceId;
           setSelectedWorkspaceId(nextWorkspaceId);
