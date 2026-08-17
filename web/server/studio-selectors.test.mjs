@@ -3,8 +3,11 @@ import test from "node:test";
 
 import {
   buildDispatcherTimeline,
+  formatDispatcherSubagentDuration,
+  groupDispatcherSubagentMessages,
   preferredHomeWorkspaceId,
   selectRunPreview,
+  summarizeDispatcherSubagentStatuses,
   workspaceAssetsFromRuns,
 } from "../app/studio/shared/selectors.ts";
 
@@ -75,6 +78,31 @@ test("dispatcher timeline places generated work after the matching assistant rep
     timeline.map((entry) => `${entry.kind}:${entry.item.id}`),
     ["message:1", "message:2", "generation:generation-1"],
   );
+});
+
+test("dispatcher timeline groups only consecutive sub-agent messages", () => {
+  const messages = [
+    { id: 1, role: "assistant", content: "**子 Agent · 方案（已完成）**", createdAt: "2026-07-30T10:00:00.000Z" },
+    { id: 2, role: "assistant", content: "子 Agent • 检查（失败）", createdAt: "2026-07-30T10:01:05.000Z" },
+    { id: 3, role: "user", content: "继续", createdAt: "2026-07-30T10:01:06.000Z" },
+    { id: 4, role: "assistant", content: "子 Agent · 修订（进行中）", createdAt: "2026-07-30T10:01:07.000Z" },
+  ];
+  const grouped = groupDispatcherSubagentMessages(messages.map((item) => ({
+    kind: "message",
+    createdAt: item.createdAt,
+    item,
+  })));
+
+  assert.deepEqual(
+    grouped.map((entry) => entry.kind === "subagentGroup"
+      ? `${entry.kind}:${entry.messages.length}`
+      : `${entry.kind}:${entry.item.id}`),
+    ["subagentGroup:2", "message:3", "subagentGroup:1"],
+  );
+  const firstGroup = grouped[0];
+  assert.equal(firstGroup.kind, "subagentGroup");
+  assert.equal(formatDispatcherSubagentDuration(firstGroup.messages), "1 分 5 秒");
+  assert.equal(summarizeDispatcherSubagentStatuses(firstGroup.messages), "完成 1 · 失败 1");
 });
 
 test("run preview is derived from stage and ready assets", () => {

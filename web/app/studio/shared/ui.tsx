@@ -152,10 +152,9 @@ export function ConversationSessionManager({
   }, [open]);
   return (
     <div className={`conversation-manager ${variant === "home" ? "home-conversation-manager" : ""} ${open ? "open" : ""}`} ref={rootRef}>
-      <button type="button" className="conversation-manager-trigger" disabled={disabled} onClick={() => setOpen((value) => !value)} aria-haspopup="dialog" aria-expanded={open} title={`${label}：${current?.title || "新会话"}`}>
+      <button type="button" className="conversation-manager-trigger" disabled={disabled} onClick={() => setOpen((value) => !value)} aria-label={variant === "home" ? "历史会话" : undefined} aria-haspopup="dialog" aria-expanded={open} title={`${label}：${current?.title || "新会话"}`}>
         <MessageSquare size={14} />
-        <span><strong>{variant === "home" ? "历史会话" : current?.title || "新会话"}</strong><small>{current ? `${current.messageCount} 条消息` : "正在创建"}</small></span>
-        <ChevronDown size={13} />
+        {variant !== "home" && <><span><strong>{current?.title || "新会话"}</strong><small>{current ? `${current.messageCount} 条消息` : "正在创建"}</small></span><ChevronDown size={13} /></>}
       </button>
       {open && !disabled && (
         <section className="conversation-menu" role="dialog" aria-label={`${label}列表`}>

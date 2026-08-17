@@ -94,7 +94,10 @@ import {
 } from "./shared/formatters";
 import {
   buildDispatcherTimeline,
+  formatDispatcherSubagentDuration,
+  groupDispatcherSubagentMessages,
   preferredHomeWorkspaceId,
+  summarizeDispatcherSubagentStatuses,
   workspaceAssetsFromRuns,
 } from "./shared/selectors";
 import {
@@ -177,6 +180,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
     workflowDragging, setWorkflowDragging, workflowFileRef, workflowDirectoryRef,
   } = useSettingsState(DEFAULT_GLOBAL_PREFERENCES);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>("dark");
   const [previewFullscreen, setPreviewFullscreen] = useState(false);
   const [qaBlend, setQaBlend] = useState(0.5);
@@ -227,6 +231,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const selectedIdRef = useRef<string | null>(selectedId);
   const selectedWorkspaceIdRef = useRef(selectedWorkspaceId);
   const notificationCenterRef = useRef<HTMLDivElement | null>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const taskSourceFileRef = useRef<HTMLInputElement | null>(null);
   const latestNotificationIdRef = useRef(0);
   const notificationsInitializedRef = useRef(false);
@@ -524,6 +529,22 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   }, [setShowGlobalSettings, showGlobalSettings]);
 
   useEffect(() => {
+    if (!workspaceMenuId) return;
+    const closeWorkspaceMenu = (event: PointerEvent) => {
+      if (!workspaceMenuRef.current?.contains(event.target as Node)) setWorkspaceMenuId(null);
+    };
+    const closeWorkspaceMenuOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setWorkspaceMenuId(null);
+    };
+    window.addEventListener("pointerdown", closeWorkspaceMenu);
+    window.addEventListener("keydown", closeWorkspaceMenuOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeWorkspaceMenu);
+      window.removeEventListener("keydown", closeWorkspaceMenuOnEscape);
+    };
+  }, [workspaceMenuId]);
+
+  useEffect(() => {
     if (revertStage === null) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setRevertStage(null);
@@ -754,6 +775,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   ));
   const taskApprovals = approvals.filter((item) => item.scopeType === "task" && item.runId === run?.id);
   const dispatcherTimeline = buildDispatcherTimeline(dispatcherMessages, dispatcherGenerations, coordinatorApprovals, dispatcherTaskBatches);
+  const dispatcherTimelineDisplay = groupDispatcherSubagentMessages(dispatcherTimeline);
   const unreadNotificationCount = notifications.filter((item) => !item.readAt).length;
 
   useEffect(() => {
@@ -2028,17 +2050,16 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
   const dgxMemoryFree = formatMemory(dgxDevice?.vramFree ?? dgxDevice?.torchVramFree);
 
   return (
-    <>
+    <main
+      className={`site-shell screen-${screen} ${screen === "task" && sidebarCollapsed ? "tasks-collapsed" : ""}`}
+      data-screen={screen}
+    >
       <LiquidWaveBackground
-        theme={screen === "home" ? "dark" : theme}
+        theme={theme}
         animated={showGlobalSettings
           ? globalPreferencesDraft.backgroundAnimationEnabled
           : globalPreferences.backgroundAnimationEnabled}
       />
-      <main
-        className={`site-shell screen-${screen} ${screen === "task" && sidebarCollapsed ? "tasks-collapsed" : ""}`}
-        data-screen={screen}
-      >
       <header className="topbar">
         <div className="topbar-left">
           <button className="brand home-brand" type="button" onClick={openHome} title="返回首页">
@@ -2089,14 +2110,9 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
           </button>
         </nav>
         <div className="topbar-right">
-          {screen === "home" && (
-            <button className="topbar-workspace-button" type="button" onClick={() => setShowWorkspaceCreate(true)}>
-              <span>创建工作空间</span>
-            </button>
-          )}
-          {screen === "task" && globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
+          {globalPreferences.notificationsEnabled && <div className="notification-center" ref={notificationCenterRef}>
             <button className="icon-button notification-button" type="button" onClick={() => setShowNotifications((value) => !value)} title="通知" aria-label={`通知，${unreadNotificationCount} 条未读`}>
-              <Bell size={18} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
+              <Bell size={20} />{unreadNotificationCount > 0 && <span>{Math.min(99, unreadNotificationCount)}</span>}
             </button>
             {showNotifications && (
               <div className="notification-menu">
@@ -2124,9 +2140,14 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               </div>
             )}
           </div>}
-          {screen === "task" && (<button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
-            {theme === "dark" ? <Sun size={27} /> : <Moon size={27} />}
-          </button>)}
+          <button className="icon-button" type="button" onClick={toggleTheme} title="切换主题" aria-label="切换浅色或深色主题">
+            {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+          {screen === "home" && (
+            <button className="icon-button topbar-global-settings-button" type="button" onClick={() => void openGlobalSettings()} title="全局设置" aria-label="打开全局设置面板">
+              <Settings size={20} />
+            </button>
+          )}
         </div>
       </header>
 
@@ -2149,13 +2170,21 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
       {screen === "home" ? (
         <section className="home-frame">
           <nav className="workspace-sidebar" aria-label="工作空间列表">
+            <header className="workspace-sidebar-header">
+              <strong>工作空间</strong>
+              <span>{workspaces.length} 个工作空间</span>
+            </header>
             <div className="workspace-list">
               {[...workspaces].sort((first, second) => {
                 if (first.id === "default") return -1;
                 if (second.id === "default") return 1;
                 return 0;
               }).map((workspace) => (
-                <div className={`workspace-group ${workspace.id === selectedWorkspaceId ? "selected" : ""} ${expandedWorkspaceIds.has(workspace.id) ? "expanded" : ""}`} key={workspace.id}>
+                <div
+                  className={`workspace-group ${workspace.id === selectedWorkspaceId ? "selected" : ""} ${expandedWorkspaceIds.has(workspace.id) ? "expanded" : ""} ${workspaceMenuId === workspace.id ? "menu-open" : ""}`}
+                  key={workspace.id}
+                  ref={workspaceMenuId === workspace.id ? workspaceMenuRef : undefined}
+                >
                   <div className={`workspace-item ${workspace.id === "default" ? "workspace-item-default" : ""}`}>
                     <button type="button" className="workspace-select-button" onClick={() => {
                       selectWorkspace(workspace.id);
@@ -2181,18 +2210,42 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                     >
                       <Library size={15} />
                     </button>
-                    {workspace.id !== "default" && (
+                    <div className="workspace-item-settings">
                       <button
                         type="button"
-                        className="workspace-delete-button"
-                        disabled={busy}
-                        onClick={() => requestDeleteWorkspace(workspace)}
-                        title={`删除工作空间：${workspace.name}`}
-                        aria-label={`删除工作空间：${workspace.name}`}
+                        className="workspace-item-settings-trigger"
+                        data-testid={`workspace-settings-${workspace.id}`}
+                        title={`设置 ${workspace.name}`}
+                        aria-label={`设置 ${workspace.name}`}
+                        aria-expanded={workspaceMenuId === workspace.id}
+                        aria-haspopup="menu"
+                        onClick={() => setWorkspaceMenuId((current) => current === workspace.id ? null : workspace.id)}
                       >
-                        <Trash2 size={15} />
+                        <Settings size={17} />
                       </button>
-                    )}
+                      {workspaceMenuId === workspace.id && (
+                        <div className="workspace-item-settings-menu" role="menu">
+                          <span>工作空间设置</span>
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={busy || workspace.id === "default" || workspace.runningCount > 0}
+                            title={workspace.id === "default"
+                              ? "默认工作空间不能删除"
+                              : workspace.runningCount > 0
+                                ? "工作空间中有任务正在运行，暂时无法删除"
+                                : "删除当前工作空间"}
+                            onClick={() => {
+                              setWorkspaceMenuId(null);
+                              requestDeleteWorkspace(workspace);
+                            }}
+                          >
+                            <Trash2 size={15} />
+                            删除工作空间
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <button
                       type="button"
                       className="workspace-toggle-button"
@@ -2230,15 +2283,14 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
             </div>
             <footer className="workspace-sidebar-footer">
               <button
-                className="workspace-sidebar-settings"
+                className="workspace-sidebar-create"
                 type="button"
-                onClick={() => void openGlobalSettings()}
-                title="全局设置"
-                aria-label="打开全局设置面板"
+                onClick={() => setShowWorkspaceCreate(true)}
+                title="创建工作空间"
+                aria-label="创建工作空间"
               >
-                <Settings size={21} />
+                <Plus size={18} /><span>创建工作空间</span>
               </button>
-              <span>{workspaces.length} 个工作空间</span>
             </footer>
           </nav>
 
@@ -2269,7 +2321,35 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                 {!dispatcherTimeline.length && (
                   <div className="dispatcher-welcome"><h2>从一个目标开始</h2><p>可以先生成一张包含多个角色的合集原画，也可以创建多个独立任务，或上传已有合集原画再拆分</p><div><button type="button" onClick={() => setDispatcherInput("创建一张角色原画合集图，里面有 3 个同样风格但身份、服装和配色不同的角色")}>生成合集图</button><button type="button" onClick={() => setDispatcherInput("在当前工作空间创建 3 个不同风格的角色任务，并分别生成到 3D 模型")}>批量创建角色</button><button type="button" onClick={() => { setDispatcherInput(""); dispatcherFileRef.current?.click(); }}>上传并拆分</button></div></div>
                 )}
-                {dispatcherTimeline.map((entry) => {
+                {dispatcherTimelineDisplay.map((entry) => {
+                  if (entry.kind === "subagentGroup") {
+                    const duration = formatDispatcherSubagentDuration(entry.messages);
+                    const statuses = summarizeDispatcherSubagentStatuses(entry.messages);
+                    const metadata = [duration ? `耗时 ${duration}` : "", statuses].filter(Boolean).join(" · ");
+                    return (
+                      <details className="dispatcher-subagent-group" key={`subagent-group-${entry.id}`}>
+                        <summary>
+                          <span><Bot size={17} /></span>
+                          <span>
+                            <strong>已处理 {entry.messages.length} 条子 Agent 消息</strong>
+                            {metadata && <small>{metadata}</small>}
+                          </span>
+                          <ChevronRight className="dispatcher-subagent-chevron" size={17} />
+                        </summary>
+                        <div className="dispatcher-subagent-messages">
+                          {entry.messages.map((message) => (
+                            <div className="dispatcher-message assistant subagent" key={`message-${message.id}`}>
+                              <span><Bot size={17} /></span>
+                              <div>
+                                <strong>总调度 Agent</strong>
+                                <div className="markdown-body"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{message.content}</ReactMarkdown></div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    );
+                  }
                   if (entry.kind === "generation") {
                     const generation = entry.item;
                     return (
@@ -2350,6 +2430,7 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
               {dispatcherAttachment && <div className="dispatcher-attachment"><ImageIcon size={15} /><span>{dispatcherAttachment.name}</span><button type="button" onClick={() => setDispatcherAttachment(null)}><X size={14} /></button></div>}
               <textarea rows={4} value={dispatcherInput} onChange={(event) => setDispatcherInput(event.target.value)} onKeyDown={handleComposerKeyDown} placeholder="要求生成一张合集图，或创建多个任务，也可以拖入已有合集原画进行拆分…" />
               <div className="dispatcher-composer-footer">
+                <AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" />
                 <ConversationSessionManager
                   sessions={dispatcherSessions}
                   sessionId={dispatcherSessionId}
@@ -2360,7 +2441,6 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
                   onCreate={() => void startDispatcherSession()}
                   onDelete={requestDeleteDispatcherSession}
                 />
-                <AgentPermissionMenu mode={coordinatorMode} onChange={(mode) => void changeAgentMode("coordinator", mode)} title="选择总调度 Agent 的变更审批方式" />
                 <input ref={dispatcherFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { const file = event.target.files?.[0]; if (file) attachDispatcherImage(file); event.currentTarget.value = ""; }} />
                 <ContextUsage context={dispatcherContext} />
                 <span className="dispatcher-composer-actions">{dispatcherBusy && <button className="icon-button" type="button" onClick={() => void cancelDispatcher()} title="停止调度" aria-label="停止调度"><X size={16} /></button>}<button className="primary-button dispatcher-send-button" type="submit" disabled={dispatcherBusy || (!dispatcherInput.trim() && !dispatcherAttachment) || settings?.coordinator.agent.apiKeyConfigured === false} title="发送调度" aria-label="发送调度"><span className="dispatcher-send-glyph" aria-hidden="true" /></button></span>
@@ -3380,6 +3460,5 @@ export default function Studio({ initialRunId, initialWorkspaceId: requestedWork
         </div>
       )}
     </main>
-    </>
   );
 }
