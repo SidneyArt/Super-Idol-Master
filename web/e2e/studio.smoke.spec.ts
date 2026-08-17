@@ -13,6 +13,23 @@ test("首页加载并切换工作空间", async ({ page }) => {
   await expect(page.locator(".dispatcher-title h1")).toHaveText("宣传片资产");
 });
 
+test("创建工作空间入口位于工作空间侧栏", async ({ page }) => {
+  await page.goto("/");
+
+  const createWorkspaceButton = page.locator(".workspace-sidebar-footer").getByRole("button", { name: "创建工作空间" });
+  await expect(page.locator(".workspace-sidebar-header")).toContainText("工作空间");
+  await expect(page.locator(".workspace-sidebar-header")).toContainText(/\d+ 个工作空间/);
+  await expect(createWorkspaceButton).toBeVisible();
+  await expect(page.getByRole("button", { name: "设置 默认工作空间" })).toBeVisible();
+  await expect(page.locator(".topbar-right").getByRole("button", { name: "创建工作空间" })).toHaveCount(0);
+  await expect(page.locator(".topbar-right").getByRole("button", { name: /通知/ })).toBeVisible();
+  await expect(page.locator(".topbar-right").getByRole("button", { name: "切换浅色或深色主题" })).toBeVisible();
+  await expect(page.locator(".topbar-right").getByRole("button", { name: "打开全局设置面板" })).toBeVisible();
+
+  await createWorkspaceButton.click();
+  await expect(page.getByRole("heading", { name: "创建工作空间" })).toBeVisible();
+});
+
 test("打开任务并切换可查看的工作流阶段", async ({ page }) => {
   await page.goto("/?task=run-1");
   await expect(page.getByText("Nova", { exact: true }).first()).toBeVisible();
@@ -57,14 +74,16 @@ test("Agent 消息可发送、排队和取消", async ({ page }) => {
 
 test("Coordinator 可以切换历史会话", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: /历史会话/ }).click();
+  await waitForStudioReady(page);
+  const conversationButton = page.getByRole("button", { name: "历史会话", exact: true });
+  await conversationButton.click();
   const switchRequest = page.waitForRequest((request) => (
     request.url().endsWith("/api/dispatcher/sessions/current")
     && request.method() === "PUT"
   ));
   await page.getByRole("button", { name: /^角色方案 B / }).click();
   await switchRequest;
-  await expect(page.getByRole("button", { name: /历史会话/ })).toContainText("2 条消息");
+  await expect(conversationButton).toHaveAttribute("aria-expanded", "false");
 });
 
 test("Settings 可以打开、修改并保存", async ({ page }) => {

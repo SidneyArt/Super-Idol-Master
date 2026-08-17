@@ -15,6 +15,10 @@ export type DispatcherTimelineItem =
   | { kind: "taskBatch"; createdAt: string; item: DispatcherTaskBatch }
   | { kind: "approval"; createdAt: string; item: ApprovalRequest };
 
+export type DispatcherTimelineDisplayItem =
+  | DispatcherTimelineItem
+  | { kind: "subagentGroup"; createdAt: string; id: number; messages: ChatMessage[] };
+
 function timelineTime(createdAt: string) {
   const timestamp = Date.parse(createdAt);
   return Number.isNaN(timestamp) ? 0 : timestamp;
@@ -152,6 +156,70 @@ export function buildDispatcherTimeline(
       })),
     ];
   });
+}
+
+function isDispatcherSubagentMessage(entry: DispatcherTimelineItem) {
+  return entry.kind === "message"
+    && entry.item.role === "assistant"
+    && /^\s*\*{0,2}\s*子\s*Agent\s*[·•]/i.test(entry.item.content);
+}
+
+export function groupDispatcherSubagentMessages(
+  timeline: DispatcherTimelineItem[],
+): DispatcherTimelineDisplayItem[] {
+  const grouped: DispatcherTimelineDisplayItem[] = [];
+
+  timeline.forEach((entry) => {
+    if (!isDispatcherSubagentMessage(entry) || entry.kind !== "message") {
+      grouped.push(entry);
+      return;
+    }
+
+    const previous = grouped[grouped.length - 1];
+    if (previous?.kind === "subagentGroup") {
+      previous.messages.push(entry.item);
+      return;
+    }
+
+    grouped.push({
+      kind: "subagentGroup",
+      createdAt: entry.createdAt,
+      id: entry.item.id,
+      messages: [entry.item],
+    });
+  });
+
+  return grouped;
+}
+
+export function formatDispatcherSubagentDuration(messages: ChatMessage[]) {
+  if (messages.length < 2) return "";
+  const first = timelineTime(messages[0].createdAt);
+  const last = timelineTime(messages[messages.length - 1].createdAt);
+  const totalSeconds = Math.max(0, Math.round((last - first) / 1000));
+  if (totalSeconds < 60) return `${totalSeconds} 秒`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分`;
+}
+
+export function summarizeDispatcherSubagentStatuses(messages: ChatMessage[]) {
+  let completed = 0;
+  let failed = 0;
+  let process = 0;
+
+  messages.forEach((message) => {
+    const headline = message.content.split(/\r?\n/, 1)[0];
+    if (/[（(]已完成[）)]/.test(headline)) completed += 1;
+    else if (/[（(](失败|已暂停)[）)]/.test(headline)) failed += 1;
+    else process += 1;
+  });
+
+  return [
+    completed ? `完成 ${completed}` : "",
+    failed ? `失败 ${failed}` : "",
+    process ? `过程 ${process}` : "",
+  ].filter(Boolean).join(" · ");
 }
 
 export function preferredHomeWorkspaceId(
